@@ -1,0 +1,32 @@
+# Credentials must NEVER be committed
+credentails.txt
+credentials.txt
+*.credentials
+*.secret
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Scratch / temp
+scratch/
+Backend/uploads/
+Backend/.jest-cache/
+.descriptions.md
+.env
+.env.*
+!.env.sample
+!.env.production.example
+!Backend/.env.sample
+!Backend/.env.production.example
+!Frontend/.env.production.example
+description.md
+
+# Generated test/load artifacts
+Backend/coverage/
+Backend/.nyc_output/
+Backend/k6-summary*.json
+Backend/scripts/load/*.json
+Frontend/lint-output*.txt

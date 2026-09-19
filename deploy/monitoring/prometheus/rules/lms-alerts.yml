@@ -1,0 +1,110 @@
+groups:
+  - name: lms-portal
+    rules:
+      - alert: LmsApiMetricsDown
+        expr: up{job="lms-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: LMS API metrics endpoint is unreachable
+          description: Prometheus cannot scrape /api/metrics from the API container.
+
+      - alert: LmsMongoDbDown
+        expr: lms_mongodb_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: MongoDB health check is failing
+          description: The API cannot reach MongoDB.
+
+      - alert: LmsRedisUnavailable
+        expr: lms_redis_configured == 1 and lms_redis_available == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Redis is configured but unavailable
+          description: Caching, rate limiting, queues, and Socket.IO scaling are at risk.
+
+      - alert: LmsApiHighErrorRate
+        expr: lms_api_error_rate_percent > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: LMS API 5xx error rate is high
+          description: API 5xx error rate has exceeded 5 percent for five minutes.
+
+      - alert: LmsUploadDiskWarning
+        expr: lms_upload_disk_used_percent >= 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Upload disk usage is high
+          description: Upload storage has crossed the warning threshold.
+
+      - alert: LmsUploadDiskCritical
+        expr: lms_upload_disk_used_percent >= 90
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Upload disk usage is critical
+          description: Upload storage has crossed the critical threshold and uploads may fail soon.
+
+      - alert: LmsStaleTempUploads
+        expr: lms_upload_tmp_stale_files > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Temporary uploads are not being cleaned
+          description: One or more temporary upload files are older than the configured threshold.
+
+      - alert: LmsUploadMalwareScanDisabled
+        expr: lms_upload_malware_scan_required == 1 and lms_upload_malware_scan_enabled == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Required upload malware scanning is disabled
+          description: Upload AV scanning is required by configuration but not enabled.
+
+      - alert: LmsMongoBackupMissing
+        expr: lms_backup_mongodb_present == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: MongoDB backup is missing
+          description: No local MongoDB backup archive was detected.
+
+      - alert: LmsUploadsBackupMissing
+        expr: lms_backup_uploads_present == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Uploads backup is missing
+          description: No local uploads backup archive was detected.
+
+      - alert: LmsMongoBackupStale
+        expr: lms_backup_mongodb_latest_age_seconds > 93600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: MongoDB backup is stale
+          description: Latest MongoDB backup is older than 26 hours.
+
+      - alert: LmsUploadsBackupStale
+        expr: lms_backup_uploads_latest_age_seconds > 93600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Uploads backup is stale
+          description: Latest uploads backup is older than 26 hours.

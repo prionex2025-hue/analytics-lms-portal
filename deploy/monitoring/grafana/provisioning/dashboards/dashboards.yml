@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: LMS Portal
+    folder: LMS Portal
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

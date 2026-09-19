@@ -1,0 +1,13 @@
+[Unit]
+Description=LMS Portal backup restore drill
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/lms-portal
+Environment=ENV_FILE=/var/www/lms-portal/Backend/.env.production
+ExecStart=/bin/sh /var/www/lms-portal/Backend/scripts/backup/restore-drill.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

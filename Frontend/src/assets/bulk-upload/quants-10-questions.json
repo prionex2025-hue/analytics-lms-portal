@@ -1,0 +1,72 @@
+[
+  {
+    "type": "mcq",
+    "question": "What is 25% of 480?",
+    "options": ["100", "110", "120", "140"],
+    "correctAnswer": "120",
+    "marks": 1
+  },
+  {
+    "type": "mcq",
+    "question": "If x + 7 = 19, what is x?",
+    "options": ["10", "11", "12", "13"],
+    "correctAnswer": "12",
+    "marks": 1
+  },
+  {
+    "type": "mcq",
+    "question": "The ratio 3:5 is equal to which fraction?",
+    "options": ["3/8", "5/3", "3/5", "5/8"],
+    "correctAnswer": "3/5",
+    "marks": 1
+  },
+  {
+    "type": "mcq",
+    "question": "What is the average of 14, 18, 22 and 26?",
+    "options": ["18", "19", "20", "21"],
+    "correctAnswer": "20",
+    "marks": 1
+  },
+  {
+    "type": "mcq",
+    "question": "A number is increased by 20% and becomes 96. What was the original number?",
+    "options": ["70", "75", "80", "85"],
+    "correctAnswer": "80",
+    "marks": 1
+  },
+  {
+    "type": "mcq",
+    "question": "What is 15% of 260?",
+    "options": ["36", "39", "42", "45"],
+    "correctAnswer": "39",
+    "marks": 1
+  },
+  {
+    "type": "mcq",
+    "question": "If the simple interest on Rs. 2000 at 5% per annum for 3 years is what amount?",
+    "options": ["250", "275", "300", "325"],
+    "correctAnswer": "300",
+    "marks": 1
+  },
+  {
+    "type": "mcq",
+    "question": "The product of 12 and 14 is:",
+    "options": ["156", "164", "168", "172"],
+    "correctAnswer": "168",
+    "marks": 1
+  },
+  {
+    "type": "mcq",
+    "question": "If 3x = 45, what is 2x?",
+    "options": ["20", "25", "30", "35"],
+    "correctAnswer": "30",
+    "marks": 1
+  },
+  {
+    "type": "mcq",
+    "question": "A train covers 150 km in 3 hours. Its speed is:",
+    "options": ["40 km/h", "45 km/h", "50 km/h", "55 km/h"],
+    "correctAnswer": "50 km/h",
+    "marks": 1
+  }
+]

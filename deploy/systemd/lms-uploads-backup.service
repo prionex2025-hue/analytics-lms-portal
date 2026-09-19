@@ -1,0 +1,13 @@
+[Unit]
+Description=LMS Portal uploads backup
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/lms-portal
+Environment=ENV_FILE=/var/www/lms-portal/Backend/.env.production
+ExecStart=/bin/sh /var/www/lms-portal/Backend/scripts/backup/uploads-backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

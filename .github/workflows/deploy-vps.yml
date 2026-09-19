@@ -1,0 +1,49 @@
+name: Deploy VPS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Production VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/lms_key
+          chmod 600 ~/.ssh/lms_key
+          ssh-keyscan -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        run: |
+          ssh -i ~/.ssh/lms_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" << 'EOF'
+          set -e
+
+          cd "${{ secrets.VPS_PATH }}"
+
+          echo "Pulling latest code..."
+          git fetch origin
+          git reset --hard origin/main
+
+          echo "Rebuilding Docker stack..."
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml build
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml up -d
+
+          echo "Running database migrations..."
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:refresh-token-hashes
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:violations
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:create-indexes
+
+          echo "Running production readiness check..."
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run prod:check
+
+          echo "Checking application health..."
+          curl -fsS https://lms.analyticsedify.com/api/ready
+
+          echo "Deployment completed successfully."
+          EOF

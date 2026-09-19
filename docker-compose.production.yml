@@ -1,0 +1,301 @@
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    mem_limit: ${MONGO_MEMORY_LIMIT:-4g}
+    cpus: ${MONGO_CPU_LIMIT:-2.0}
+    pids_limit: 512
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-lms_portal}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:?MONGO_APP_USERNAME is required}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD is required}
+      MONGO_REPLICA_SET_NAME: ${MONGO_REPLICA_SET_NAME:-rs0}
+      MONGO_REPLICA_SET_KEY: ${MONGO_REPLICA_SET_KEY:?MONGO_REPLICA_SET_KEY is required}
+    entrypoint: ["/bin/sh", "/usr/local/bin/lms-mongo-entrypoint.sh"]
+    command: ["mongod", "--bind_ip_all", "--auth", "--replSet", "${MONGO_REPLICA_SET_NAME:-rs0}", "--keyFile", "/etc/mongo-keyfile/keyfile"]
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+      - ./deploy/mongo/docker-entrypoint-replset.sh:/usr/local/bin/lms-mongo-entrypoint.sh:ro
+      - ./deploy/mongo/init-app-user.sh:/docker-entrypoint-initdb.d/20-init-app-user.sh:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet -u \"$${MONGO_INITDB_ROOT_USERNAME}\" -p \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  mongo-init:
+    image: mongo:7.0
+    restart: "no"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
+      MONGO_REPLICA_SET_NAME: ${MONGO_REPLICA_SET_NAME:-rs0}
+      MONGO_REPLICA_SET_HOST: ${MONGO_REPLICA_SET_HOST:-mongo:27017}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./deploy/mongo/init-replica-set.sh:/usr/local/bin/init-replica-set.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/init-replica-set.sh"]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: ${REDIS_MEMORY_LIMIT:-2g}
+    cpus: ${REDIS_CPU_LIMIT:-1.0}
+    pids_limit: 256
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-1gb}
+      REDIS_MAXMEMORY_POLICY: ${REDIS_MAXMEMORY_POLICY:-noeviction}
+    command:
+      [
+        "sh",
+        "-c",
+        "redis-server --appendonly yes --appendfsync everysec --save 60 1 --maxmemory \"$${REDIS_MAXMEMORY:-4gb}\" --maxmemory-policy \"$${REDIS_MAXMEMORY_POLICY:-noeviction}\" --requirepass \"$${REDIS_PASSWORD:?REDIS_PASSWORD is required}\""
+      ]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  clamav:
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    mem_limit: ${CLAMAV_MEMORY_LIMIT:-2g}
+    cpus: ${CLAMAV_CPU_LIMIT:-1.0}
+    pids_limit: 256
+    environment:
+      CLAMD_CONF_StreamMaxLength: ${CLAMAV_STREAM_MAX_LENGTH:-100M}
+    volumes:
+      - clamav_data:/var/lib/clamav
+    expose:
+      - "3310"
+
+  # api1 is the anchor for all API replicas AND the sole worker replica
+  # (WORKER_ENABLED=true): it consumes BullMQ jobs and runs queue recovery.
+  # api2/api3 are web-only replicas. All three serve HTTP + Socket.io.
+  # NGINX (Frontend/nginx.conf) load-balances /api across all three and pins
+  # /socket.io per client. cpus default is 1.5 so 3 replicas fit alongside
+  # mongo/redis/clamav on an 8-vCPU host.
+  api1:
+    &api-base
+    build:
+      context: ./Backend
+      dockerfile: dockerfile
+    restart: unless-stopped
+    mem_limit: ${API_MEMORY_LIMIT:-2g}
+    cpus: ${API_CPU_LIMIT:-1.5}
+    pids_limit: 512
+    environment:
+      &api-env
+      NODE_ENV: production
+      PORT: 5000
+      WORKER_ENABLED: "true"
+      ALLOW_LOCAL_PRODUCTION_SMOKE: ${ALLOW_LOCAL_PRODUCTION_SMOKE:-false}
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-lms_portal}
+      REQUEST_BODY_LIMIT: ${REQUEST_BODY_LIMIT:-5mb}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-30d}
+      RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY is required}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-noreply@analyticsedify.com}
+      RESEND_FROM_NAME: ${RESEND_FROM_NAME:-Analytics Edify}
+      PASSWORD_RESET_TOKEN_TTL_MINUTES: ${PASSWORD_RESET_TOKEN_TTL_MINUTES:-30}
+      PASSWORD_RESET_DELIVERY_MODE: ${PASSWORD_RESET_DELIVERY_MODE:-resend}
+      PASSWORD_RESET_FRONTEND_BASE_URL: ${PASSWORD_RESET_FRONTEND_BASE_URL:-https://lms.analyticsedify.com}
+      PASSWORD_RESET_FRONTEND_URL: ${PASSWORD_RESET_FRONTEND_URL:-https://lms.analyticsedify.com/reset-password}
+      PASSWORD_RESET_ADMIN_FRONTEND_URL: ${PASSWORD_RESET_ADMIN_FRONTEND_URL:-https://lms.analyticsedify.com/admin/reset-password}
+      PASSWORD_RESET_COLLEGE_ADMIN_FRONTEND_URL: ${PASSWORD_RESET_COLLEGE_ADMIN_FRONTEND_URL:-https://lms.analyticsedify.com/college-admin/reset-password}
+      PASSWORD_RESET_SUPER_ADMIN_FRONTEND_URL: ${PASSWORD_RESET_SUPER_ADMIN_FRONTEND_URL:-https://lms.analyticsedify.com/super-admin/reset-password}
+      PASSWORD_RESET_RETURN_TOKEN: ${PASSWORD_RESET_RETURN_TOKEN:-false}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?FRONTEND_ORIGIN is required}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+      REDIS_ENABLED: ${REDIS_ENABLED:-true}
+      REDIS_QUEUE_ENABLED: ${REDIS_QUEUE_ENABLED:-true}
+      REDIS_CONNECT_TIMEOUT_MS: ${REDIS_CONNECT_TIMEOUT_MS:-10000}
+      REDIS_KEEP_ALIVE_MS: ${REDIS_KEEP_ALIVE_MS:-30000}
+      REDIS_MAX_RETRY_DELAY_MS: ${REDIS_MAX_RETRY_DELAY_MS:-2000}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-1gb}
+      REDIS_MAXMEMORY_POLICY: ${REDIS_MAXMEMORY_POLICY:-noeviction}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      RESOURCE_UPLOAD_ROOT: /app/uploads/resources
+      RESOURCE_MAX_FILE_SIZE_BYTES: ${RESOURCE_MAX_FILE_SIZE_BYTES:-52428800}
+      UPLOAD_DISK_WARNING_PERCENT: ${UPLOAD_DISK_WARNING_PERCENT:-80}
+      UPLOAD_DISK_CRITICAL_PERCENT: ${UPLOAD_DISK_CRITICAL_PERCENT:-90}
+      UPLOAD_TMP_MAX_AGE_HOURS: ${UPLOAD_TMP_MAX_AGE_HOURS:-24}
+      UPLOAD_AV_SCAN_ENABLED: ${UPLOAD_AV_SCAN_ENABLED:-true}
+      UPLOAD_AV_SCAN_REQUIRED: ${UPLOAD_AV_SCAN_REQUIRED:-true}
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
+      CLAMAV_PORT: ${CLAMAV_PORT:-3310}
+      CLAMAV_TIMEOUT_MS: ${CLAMAV_TIMEOUT_MS:-15000}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+      CLOUDINARY_FOLDER: ${CLOUDINARY_FOLDER:-lms-portal}
+      BACKUP_ROOT: /backups
+      UPLOADS_BACKUP_ROOT: /backups/uploads
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-26}
+      BACKUP_RCLONE_DESTINATION: ${BACKUP_RCLONE_DESTINATION:-}
+      BACKUP_SYNC_CONFIGURED: ${BACKUP_SYNC_CONFIGURED:-false}
+      RESPONSE_CACHE_ENABLED: ${RESPONSE_CACHE_ENABLED:-true}
+      RATE_LIMIT_DISABLED: ${RATE_LIMIT_DISABLED:-false}
+      RATE_LIMIT_GENERAL_API_WINDOW_MS: ${RATE_LIMIT_GENERAL_API_WINDOW_MS:-60000}
+      RATE_LIMIT_GENERAL_API_MAX: ${RATE_LIMIT_GENERAL_API_MAX:-240}
+      RATE_LIMIT_SUPER_ADMIN_API_WINDOW_MS: ${RATE_LIMIT_SUPER_ADMIN_API_WINDOW_MS:-60000}
+      RATE_LIMIT_SUPER_ADMIN_API_MAX: ${RATE_LIMIT_SUPER_ADMIN_API_MAX:-600}
+      RATE_LIMIT_AUTH_LOGIN_WINDOW_MS: ${RATE_LIMIT_AUTH_LOGIN_WINDOW_MS:-900000}
+      RATE_LIMIT_AUTH_LOGIN_MAX: ${RATE_LIMIT_AUTH_LOGIN_MAX:-15}
+      RATE_LIMIT_AUTH_REFRESH_WINDOW_MS: ${RATE_LIMIT_AUTH_REFRESH_WINDOW_MS:-300000}
+      RATE_LIMIT_AUTH_REFRESH_MAX: ${RATE_LIMIT_AUTH_REFRESH_MAX:-50}
+      RATE_LIMIT_AUTH_FORGOT_PASSWORD_WINDOW_MS: ${RATE_LIMIT_AUTH_FORGOT_PASSWORD_WINDOW_MS:-900000}
+      RATE_LIMIT_AUTH_FORGOT_PASSWORD_MAX: ${RATE_LIMIT_AUTH_FORGOT_PASSWORD_MAX:-5}
+      RATE_LIMIT_AUTH_RESET_PASSWORD_WINDOW_MS: ${RATE_LIMIT_AUTH_RESET_PASSWORD_WINDOW_MS:-900000}
+      RATE_LIMIT_AUTH_RESET_PASSWORD_MAX: ${RATE_LIMIT_AUTH_RESET_PASSWORD_MAX:-10}
+      RATE_LIMIT_SUPER_ADMIN_AUTH_LOGIN_WINDOW_MS: ${RATE_LIMIT_SUPER_ADMIN_AUTH_LOGIN_WINDOW_MS:-900000}
+      RATE_LIMIT_SUPER_ADMIN_AUTH_LOGIN_MAX: ${RATE_LIMIT_SUPER_ADMIN_AUTH_LOGIN_MAX:-5}
+      RATE_LIMIT_SUPER_ADMIN_PASSWORD_RESET_WINDOW_MS: ${RATE_LIMIT_SUPER_ADMIN_PASSWORD_RESET_WINDOW_MS:-3600000}
+      RATE_LIMIT_SUPER_ADMIN_PASSWORD_RESET_MAX: ${RATE_LIMIT_SUPER_ADMIN_PASSWORD_RESET_MAX:-3}
+      RATE_LIMIT_EXAM_START_WINDOW_MS: ${RATE_LIMIT_EXAM_START_WINDOW_MS:-60000}
+      RATE_LIMIT_EXAM_START_MAX: ${RATE_LIMIT_EXAM_START_MAX:-20}
+      RATE_LIMIT_EXAM_LIST_WINDOW_MS: ${RATE_LIMIT_EXAM_LIST_WINDOW_MS:-30000}
+      RATE_LIMIT_EXAM_LIST_MAX: ${RATE_LIMIT_EXAM_LIST_MAX:-20}
+      RATE_LIMIT_EXAM_SESSION_WINDOW_MS: ${RATE_LIMIT_EXAM_SESSION_WINDOW_MS:-30000}
+      RATE_LIMIT_EXAM_SESSION_MAX: ${RATE_LIMIT_EXAM_SESSION_MAX:-30}
+      RATE_LIMIT_EXAM_ANSWER_WINDOW_MS: ${RATE_LIMIT_EXAM_ANSWER_WINDOW_MS:-60000}
+      RATE_LIMIT_EXAM_ANSWER_MAX: ${RATE_LIMIT_EXAM_ANSWER_MAX:-100}
+      RATE_LIMIT_EXAM_HEARTBEAT_WINDOW_MS: ${RATE_LIMIT_EXAM_HEARTBEAT_WINDOW_MS:-60000}
+      RATE_LIMIT_EXAM_HEARTBEAT_MAX: ${RATE_LIMIT_EXAM_HEARTBEAT_MAX:-30}
+      RATE_LIMIT_EXAM_VIOLATION_WINDOW_MS: ${RATE_LIMIT_EXAM_VIOLATION_WINDOW_MS:-60000}
+      RATE_LIMIT_EXAM_VIOLATION_MAX: ${RATE_LIMIT_EXAM_VIOLATION_MAX:-12}
+      RATE_LIMIT_EXAM_SUBMIT_WINDOW_MS: ${RATE_LIMIT_EXAM_SUBMIT_WINDOW_MS:-15000}
+      RATE_LIMIT_EXAM_SUBMIT_MAX: ${RATE_LIMIT_EXAM_SUBMIT_MAX:-3}
+      RATE_LIMIT_EVENT_REGISTER_WINDOW_MS: ${RATE_LIMIT_EVENT_REGISTER_WINDOW_MS:-60000}
+      RATE_LIMIT_EVENT_REGISTER_MAX: ${RATE_LIMIT_EVENT_REGISTER_MAX:-6}
+      RATE_LIMIT_STUDENT_REPORT_WINDOW_MS: ${RATE_LIMIT_STUDENT_REPORT_WINDOW_MS:-60000}
+      RATE_LIMIT_STUDENT_REPORT_MAX: ${RATE_LIMIT_STUDENT_REPORT_MAX:-10}
+      RATE_LIMIT_REPORT_GENERATION_WINDOW_MS: ${RATE_LIMIT_REPORT_GENERATION_WINDOW_MS:-60000}
+      RATE_LIMIT_REPORT_GENERATION_MAX: ${RATE_LIMIT_REPORT_GENERATION_MAX:-10}
+      RATE_LIMIT_ADMIN_REPORT_READ_WINDOW_MS: ${RATE_LIMIT_ADMIN_REPORT_READ_WINDOW_MS:-30000}
+      RATE_LIMIT_ADMIN_REPORT_READ_MAX: ${RATE_LIMIT_ADMIN_REPORT_READ_MAX:-20}
+      RATE_LIMIT_ADMIN_TEST_LIST_WINDOW_MS: ${RATE_LIMIT_ADMIN_TEST_LIST_WINDOW_MS:-30000}
+      RATE_LIMIT_ADMIN_TEST_LIST_MAX: ${RATE_LIMIT_ADMIN_TEST_LIST_MAX:-30}
+      RATE_LIMIT_ADMIN_TEST_CREATE_WINDOW_MS: ${RATE_LIMIT_ADMIN_TEST_CREATE_WINDOW_MS:-60000}
+      RATE_LIMIT_ADMIN_TEST_CREATE_MAX: ${RATE_LIMIT_ADMIN_TEST_CREATE_MAX:-8}
+      RATE_LIMIT_ADMIN_TEST_UPDATE_WINDOW_MS: ${RATE_LIMIT_ADMIN_TEST_UPDATE_WINDOW_MS:-60000}
+      RATE_LIMIT_ADMIN_TEST_UPDATE_MAX: ${RATE_LIMIT_ADMIN_TEST_UPDATE_MAX:-20}
+      RATE_LIMIT_ADMIN_TEST_PUBLISH_WINDOW_MS: ${RATE_LIMIT_ADMIN_TEST_PUBLISH_WINDOW_MS:-60000}
+      RATE_LIMIT_ADMIN_TEST_PUBLISH_MAX: ${RATE_LIMIT_ADMIN_TEST_PUBLISH_MAX:-6}
+      RATE_LIMIT_ADMIN_TEST_CLONE_WINDOW_MS: ${RATE_LIMIT_ADMIN_TEST_CLONE_WINDOW_MS:-60000}
+      RATE_LIMIT_ADMIN_TEST_CLONE_MAX: ${RATE_LIMIT_ADMIN_TEST_CLONE_MAX:-5}
+      RATE_LIMIT_ADMIN_TEST_MONITORING_WRITE_WINDOW_MS: ${RATE_LIMIT_ADMIN_TEST_MONITORING_WRITE_WINDOW_MS:-60000}
+      RATE_LIMIT_ADMIN_TEST_MONITORING_WRITE_MAX: ${RATE_LIMIT_ADMIN_TEST_MONITORING_WRITE_MAX:-20}
+      RATE_LIMIT_ADMIN_QUESTION_BANK_BULK_IMPORT_WINDOW_MS: ${RATE_LIMIT_ADMIN_QUESTION_BANK_BULK_IMPORT_WINDOW_MS:-300000}
+      RATE_LIMIT_ADMIN_QUESTION_BANK_BULK_IMPORT_MAX: ${RATE_LIMIT_ADMIN_QUESTION_BANK_BULK_IMPORT_MAX:-5}
+      RATE_LIMIT_ADMIN_BATCH_GUARD_WINDOW_MS: ${RATE_LIMIT_ADMIN_BATCH_GUARD_WINDOW_MS:-60000}
+      RATE_LIMIT_ADMIN_BATCH_GUARD_MAX: ${RATE_LIMIT_ADMIN_BATCH_GUARD_MAX:-12}
+      RATE_LIMIT_SUPER_REPORT_WINDOW_MS: ${RATE_LIMIT_SUPER_REPORT_WINDOW_MS:-60000}
+      RATE_LIMIT_SUPER_REPORT_MAX: ${RATE_LIMIT_SUPER_REPORT_MAX:-20}
+      RATE_LIMIT_SUPER_REPORT_READ_WINDOW_MS: ${RATE_LIMIT_SUPER_REPORT_READ_WINDOW_MS:-60000}
+      RATE_LIMIT_SUPER_REPORT_READ_MAX: ${RATE_LIMIT_SUPER_REPORT_READ_MAX:-180}
+      RATE_LIMIT_LEADERBOARD_WINDOW_MS: ${RATE_LIMIT_LEADERBOARD_WINDOW_MS:-30000}
+      RATE_LIMIT_LEADERBOARD_MAX: ${RATE_LIMIT_LEADERBOARD_MAX:-20}
+      RATE_LIMIT_COLLEGE_ADMIN_API_WINDOW_MS: ${RATE_LIMIT_COLLEGE_ADMIN_API_WINDOW_MS:-60000}
+      RATE_LIMIT_COLLEGE_ADMIN_API_MAX: ${RATE_LIMIT_COLLEGE_ADMIN_API_MAX:-180}
+      RATE_LIMIT_ADMIN_ENTITY_READ_WINDOW_MS: ${RATE_LIMIT_ADMIN_ENTITY_READ_WINDOW_MS:-30000}
+      RATE_LIMIT_ADMIN_ENTITY_READ_MAX: ${RATE_LIMIT_ADMIN_ENTITY_READ_MAX:-40}
+      RATE_LIMIT_ADMIN_ENTITY_WRITE_WINDOW_MS: ${RATE_LIMIT_ADMIN_ENTITY_WRITE_WINDOW_MS:-60000}
+      RATE_LIMIT_ADMIN_ENTITY_WRITE_MAX: ${RATE_LIMIT_ADMIN_ENTITY_WRITE_MAX:-20}
+      RATE_LIMIT_ADMIN_ANALYTICS_READ_WINDOW_MS: ${RATE_LIMIT_ADMIN_ANALYTICS_READ_WINDOW_MS:-30000}
+      RATE_LIMIT_ADMIN_ANALYTICS_READ_MAX: ${RATE_LIMIT_ADMIN_ANALYTICS_READ_MAX:-20}
+      RATE_LIMIT_ADMIN_SETTINGS_WINDOW_MS: ${RATE_LIMIT_ADMIN_SETTINGS_WINDOW_MS:-60000}
+      RATE_LIMIT_ADMIN_SETTINGS_MAX: ${RATE_LIMIT_ADMIN_SETTINGS_MAX:-12}
+      RATE_LIMIT_RESOURCE_DOWNLOAD_WINDOW_MS: ${RATE_LIMIT_RESOURCE_DOWNLOAD_WINDOW_MS:-60000}
+      RATE_LIMIT_RESOURCE_DOWNLOAD_MAX: ${RATE_LIMIT_RESOURCE_DOWNLOAD_MAX:-20}
+      RATE_LIMIT_RESOURCE_SEARCH_WINDOW_MS: ${RATE_LIMIT_RESOURCE_SEARCH_WINDOW_MS:-60000}
+      RATE_LIMIT_RESOURCE_SEARCH_MAX: ${RATE_LIMIT_RESOURCE_SEARCH_MAX:-60}
+      RATE_LIMIT_RESOURCE_UPLOAD_WINDOW_MS: ${RATE_LIMIT_RESOURCE_UPLOAD_WINDOW_MS:-60000}
+      RATE_LIMIT_RESOURCE_UPLOAD_MAX: ${RATE_LIMIT_RESOURCE_UPLOAD_MAX:-10}
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads/resources
+      - type: bind
+        source: ${HOST_BACKUP_ROOT:-/var/backups/lms-portal}
+        target: /backups
+    expose:
+      - "5000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:5000/api/ready | grep '\"status\":\"ok\"'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Web-only replica: enqueues jobs but does not consume them.
+  api2:
+    <<: *api-base
+    environment:
+      <<: *api-env
+      WORKER_ENABLED: "false"
+
+  # Web-only replica: enqueues jobs but does not consume them.
+  api3:
+    <<: *api-base
+    environment:
+      <<: *api-env
+      WORKER_ENABLED: "false"
+
+  frontend:
+    build:
+      context: ./Frontend
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_SOCKET_URL: ""
+    restart: unless-stopped
+    mem_limit: ${FRONTEND_MEMORY_LIMIT:-256m}
+    cpus: ${FRONTEND_CPU_LIMIT:-0.5}
+    pids_limit: 128
+    depends_on:
+      api1:
+        condition: service_healthy
+      api2:
+        condition: service_healthy
+      api3:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${FRONTEND_BIND_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost/ >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongo_data:
+  mongo_config:
+  redis_data:
+  uploads_data:
+  clamav_data:
+
+networks:
+  default:
+    name: ${APP_NETWORK_NAME:-lms_portal_net}
