@@ -1,9 +1,12 @@
 import { NavLink } from "react-router-dom";
 import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { LayoutDashboard, School, ShieldUser, UserCog, Users, Building2, FileCheck2, BookOpen, BookOpenCheck, Layers3, CalendarDays, FileBarChart2, ChartNoAxesCombined, Settings, LogOut } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { LayoutDashboard, School, ShieldUser, UserCog, Users, Building2, FileCheck2, BookOpen, BookOpenCheck, Layers3, CalendarDays, FileBarChart2, ShieldAlert, ChartNoAxesCombined, Settings, LogOut } from "lucide-react";
 import { logoutSuperAdmin } from "@/features/SuperAdmin/superAdminAuthSlice";
 import ConfirmActionDialog from "@/components/Admin/ConfirmActionDialog";
+import { SUPER_ESCALATIONS_QUERY_KEY } from "@/hooks/useSuperAdminEscalationsRealtime";
+import { superAdminApi } from "@/services/api";
 
 const navItems = [
   { to: "/super-admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -18,6 +21,7 @@ const navItems = [
   { to: "/super-admin/batches", label: "Batches", icon: Layers3 },
   { to: "/super-admin/events", label: "Events", icon: CalendarDays },
   { to: "/super-admin/reports", label: "Reports", icon: FileBarChart2 },
+  { to: "/super-admin/escalations", label: "Escalations", icon: ShieldAlert, badgeKey: "pendingEscalations" },
   { to: "/super-admin/analytics", label: "Analytics", icon: ChartNoAxesCombined },
   { to: "/super-admin/settings", label: "Settings", icon: Settings },
 ];
@@ -27,6 +31,16 @@ export default function SuperAdminSidebar({ mobile = false, onNavigate }) {
   const desktopCollapsed = useSelector((state) => state.superAdminUi?.sidebarCollapsed);
   const collapsed = mobile ? false : desktopCollapsed;
   const [logoutOpen, setLogoutOpen] = useState(false);
+
+  // Pending-escalation count for the nav badge. Kept fresh by the layout's
+  // realtime subscription; the interval is only a fallback if the socket drops.
+  const pendingEscalationsQuery = useQuery({
+    queryKey: [...SUPER_ESCALATIONS_QUERY_KEY, "pending-count"],
+    queryFn: () => superAdminApi.getEscalatedAnomalies("?status=pending&limit=1"),
+    staleTime: 30000,
+    refetchInterval: 120000,
+  });
+  const badges = { pendingEscalations: Number(pendingEscalationsQuery.data?.summary?.pending || 0) };
 
   return (
     <aside
@@ -61,6 +75,8 @@ export default function SuperAdminSidebar({ mobile = false, onNavigate }) {
       <nav className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-1">
         {navItems.map((item) => {
           const IconComponent = item.icon;
+          const badgeCount = item.badgeKey ? badges[item.badgeKey] : 0;
+          const badgeLabel = badgeCount > 99 ? "99+" : String(badgeCount);
           return (
             <NavLink
               key={item.to}
@@ -73,10 +89,18 @@ export default function SuperAdminSidebar({ mobile = false, onNavigate }) {
                     : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                 }`
               }
-              title={collapsed ? item.label : undefined}
+              title={collapsed ? (badgeCount ? `${item.label} (${badgeCount} pending)` : item.label) : undefined}
             >
-              <IconComponent className="size-4" strokeWidth={2.1} />
-              {!collapsed ? item.label : null}
+              <span className="relative">
+                <IconComponent className="size-4" strokeWidth={2.1} />
+                {collapsed && badgeCount ? <span className="absolute -right-1 -top-1 size-2 rounded-full bg-danger" aria-hidden="true" /> : null}
+              </span>
+              {!collapsed ? <span className="min-w-0 flex-1 truncate">{item.label}</span> : null}
+              {!collapsed && badgeCount ? (
+                <span className="rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-bold leading-none text-white tabular-nums" aria-label={`${badgeCount} pending`}>
+                  {badgeLabel}
+                </span>
+              ) : null}
             </NavLink>
           );
         })}

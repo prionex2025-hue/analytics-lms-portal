@@ -7,6 +7,15 @@ const { computeIntegrityAnalytics } = require("../../services/integrity-analysis
 const { computeCohortTrends } = require("../../services/cohort-trends.service");
 const { computeAtRisk } = require("../../services/at-risk.service");
 const { collectSubmissions } = require("../../services/submission-batch.service");
+const { toCsv, buildFileName } = require("../../services/csv-export.service");
+const { buildXlsxBuffer, buildXlsxFileName } = require("../../services/xlsx-export.service");
+const {
+  resolveExportDatasetConfig,
+  buildAtRiskStudentInput,
+  buildTestResultRows,
+  parseExportTestIds,
+} = require("../../services/report-export-datasets.service");
+const { buildSuperReportTestsPayload } = require("./reports.controller");
 const { buildAdminTestVisibilityWhere, getDepartmentBatchIds } = require("../../utils/admin-test-access");
 const {
   REPORTABLE_SUBMISSION_STATUSES,
@@ -121,7 +130,8 @@ const loadSuperTestAttemptData = async ({ db, collegeId, testId }) => {
   return { ok: true, test, submissions, attempts, truncated };
 };
 
-const loadSuperScopedAttempts = async ({ db, collegeId, filters }) => {
+// onlyTestIds narrows the scope to a selection (the multi-test "results" export).
+const loadSuperScopedAttempts = async ({ db, collegeId, filters, onlyTestIds = null }) => {
   const scope = await resolveSuperTestScope({
     db,
     collegeId,
@@ -130,6 +140,11 @@ const loadSuperScopedAttempts = async ({ db, collegeId, filters }) => {
     testSelect: { id: true, title: true, totalMarks: true, endsAt: true, questions: { select: { marks: true } } },
   });
 
+  if (Array.isArray(onlyTestIds) && onlyTestIds.length > 0) {
+    const wanted = new Set(onlyTestIds.map(String));
+    scope.tests = scope.tests.filter((test) => wanted.has(String(test.id)));
+    scope.testIds = scope.testIds.filter((id) => wanted.has(String(id)));
+  }
   if (scope.testIds.length === 0) return { ok: false };
 
   const studentWhere = {
@@ -193,6 +208,7 @@ const loadSuperScopedAttempts = async ({ db, collegeId, filters }) => {
       accuracy: submission.accuracy,
       test: { totalMarks: testTotals.get(String(submission.testId)) },
     }),
+    totalMarks: testTotals.get(String(submission.testId)) || 0,
     date: submission.submittedAt || submission.createdAt,
     violations: Number(submission._count?.violations || 0),
   }));
@@ -215,20 +231,11 @@ const resolveSuperFilters = (query = {}) => {
   };
 };
 
-const getSuperReportItemAnalysis = asyncHandler(async (req, res) => {
-  const m = await models.init();
-  const db = m.dbClient;
-  const collegeId = normalizeId(req.query.collegeId);
-  const testId = normalizeId(req.query.testId);
-  await assertActiveCollege(db, collegeId);
-  if (!testId) {
-    throw new ApiError(400, "testId is required for item analysis", null, "TEST_ID_REQUIRED");
-  }
-
+// Item analysis for one test in the selected college. Shared by the JSON
+// endpoint and the item-analysis export so the two can never diverge.
+const computeSuperItemAnalysis = async ({ db, collegeId, testId }) => {
   const data = await loadSuperTestAttemptData({ db, collegeId, testId });
-  if (!data.ok) {
-    return res.status(200).json({ items: [], summary: { totalQuestions: 0, analysedQuestions: 0, flaggedQuestions: 0 }, test: null });
-  }
+  if (!data.ok) return { ok: false };
 
   const { test, submissions, attempts } = data;
   const questions = Array.isArray(test.questions) ? test.questions : [];
@@ -264,10 +271,28 @@ const getSuperReportItemAnalysis = asyncHandler(async (req, res) => {
   });
 
   const { items, summary } = computeItemAnalysis({ questions, submissions: attempts, answers });
+  return { ok: true, test, items, summary, attempts, truncated: Boolean(data.truncated) };
+};
 
+const getSuperReportItemAnalysis = asyncHandler(async (req, res) => {
+  const m = await models.init();
+  const db = m.dbClient;
+  const collegeId = normalizeId(req.query.collegeId);
+  const testId = normalizeId(req.query.testId);
+  await assertActiveCollege(db, collegeId);
+  if (!testId) {
+    throw new ApiError(400, "testId is required for item analysis", null, "TEST_ID_REQUIRED");
+  }
+
+  const result = await computeSuperItemAnalysis({ db, collegeId, testId });
+  if (!result.ok) {
+    return res.status(200).json({ items: [], summary: { totalQuestions: 0, analysedQuestions: 0, flaggedQuestions: 0 }, test: null });
+  }
+
+  const { test, items, summary, attempts, truncated } = result;
   res.status(200).json({
     test: { id: test.id, title: test.title, totalMarks: getTestTotalMarks(test) },
-    summary: { ...summary, attempts: attempts.length, truncated: Boolean(data.truncated) },
+    summary: { ...summary, attempts: attempts.length, truncated },
     items,
   });
 });
@@ -388,7 +413,64 @@ const getSuperReportAtRisk = asyncHandler(async (req, res) => {
   res.status(200).json({ ...computeAtRisk({ students: payload }), truncated: Boolean(data.truncated) });
 });
 
+/**
+ * Assembles super-admin export rows for a dataset, scoped by the selected college.
+ * Reuses the same loaders as the JSON endpoints (so an export can never show data
+ * the super admin cannot see in the UI) and the column definitions shared with the
+ * admin export (so both portals produce identical spreadsheets).
+ */
+const buildSuperExportDataset = async (req) => {
+  const m = await models.init();
+  const db = m.dbClient;
+  const collegeId = normalizeId(req.query.collegeId);
+  await assertActiveCollege(db, collegeId);
+  const { dataset, config } = resolveExportDatasetConfig(req.query.dataset);
+  const filters = resolveSuperFilters(req.query || {});
+  let rows = [];
+
+  if (dataset === "at-risk") {
+    const data = await loadSuperScopedAttempts({ db, collegeId, filters });
+    if (data.ok) {
+      rows = computeAtRisk({ students: buildAtRiskStudentInput(data) }).students;
+    }
+  } else if (dataset === "item-analysis") {
+    const testId = normalizeId(req.query.testId);
+    if (!testId) {
+      throw new ApiError(400, "testId is required to export item analysis", null, "TEST_ID_REQUIRED");
+    }
+    const result = await computeSuperItemAnalysis({ db, collegeId, testId });
+    rows = result.ok ? result.items : [];
+  } else if (dataset === "results") {
+    const testIds = parseExportTestIds(req.query.testIds);
+    const data = await loadSuperScopedAttempts({ db, collegeId, filters, onlyTestIds: testIds });
+    rows = data.ok ? buildTestResultRows(data) : [];
+  } else if (dataset === "tests") {
+    const payload = await buildSuperReportTestsPayload({ ...req, query: { ...req.query, page: 1, limit: 100 } });
+    rows = Array.isArray(payload?.data) ? payload.data : [];
+  }
+
+  return { config, rows };
+};
+
+const exportSuperReportCsv = asyncHandler(async (req, res) => {
+  const { config, rows } = await buildSuperExportDataset(req);
+  const csv = toCsv(config.columns, rows);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${buildFileName(config.prefix)}"`);
+  res.status(200).send(csv);
+});
+
+const exportSuperReportXlsx = asyncHandler(async (req, res) => {
+  const { config, rows } = await buildSuperExportDataset(req);
+  const buffer = await buildXlsxBuffer({ sheetName: config.prefix, columns: config.columns, rows });
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${buildXlsxFileName(config.prefix)}"`);
+  res.status(200).send(Buffer.from(buffer));
+});
+
 module.exports = {
+  exportSuperReportCsv,
+  exportSuperReportXlsx,
   getSuperReportItemAnalysis,
   getSuperReportIntegrity,
   getSuperReportTrends,

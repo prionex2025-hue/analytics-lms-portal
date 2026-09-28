@@ -1,0 +1,111 @@
+name: Rollback VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Release ref to roll back to (release/<timestamp> tag or commit SHA)"
+        required: true
+        default: "release/latest"
+      run_migrations:
+        description: "Also re-run migrations/DB index stage (forward-only; leave off for a pure code rollback)"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  rollback:
+    name: Roll back Production VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/lms_key
+          chmod 600 ~/.ssh/lms_key
+          ssh-keyscan -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Validate rollback ref
+        id: ref
+        run: |
+          REF_INPUT="${{ inputs.ref }}"
+          if ! printf '%s' "$REF_INPUT" | grep -qE '^[A-Za-z0-9._/-]*$'; then
+            echo "::error::Invalid ref (only alphanumeric, . _ / - allowed): $REF_INPUT"
+            exit 1
+          fi
+          echo "ref=${REF_INPUT}" >> "$GITHUB_OUTPUT"
+
+      - name: Roll back to previous release
+        env:
+          ROLLBACK_REF: ${{ steps.ref.outputs.ref }}
+          RUN_MIGRATIONS: ${{ inputs.run_migrations }}
+        run: |
+          ssh -i ~/.ssh/lms_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "ROLLBACK_REF='$ROLLBACK_REF' RUN_MIGRATIONS='$RUN_MIGRATIONS' bash -s" << 'EOF'
+          set -euo pipefail
+
+          cd "${{ secrets.VPS_PATH }}"
+
+          echo "Fetching repo (branches + tags)..."
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' --prune
+
+          if ! git rev-parse --verify --quiet "${ROLLBACK_REF}^{commit}" > /dev/null; then
+            git fetch origin "$ROLLBACK_REF"
+          fi
+
+          echo "Pinning build to ${ROLLBACK_REF}"
+          git checkout --detach "$ROLLBACK_REF"
+          GIT_ROLLBACK_SHA="$(git rev-parse HEAD)"
+          echo "Rolling back to commit ${GIT_ROLLBACK_SHA}"
+
+          echo "Rebuilding Docker stack..."
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml build
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml up -d
+
+          if [ "$RUN_MIGRATIONS" = "true" ]; then
+            echo "Re-running database migrations..."
+            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:objectid-ids
+            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:admin-access-profiles
+            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:refresh-token-hashes
+            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:violations
+            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:create-indexes
+          fi
+
+          echo "Running production readiness check..."
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run prod:check
+
+          echo "Waiting for /api/ready to come up healthy..."
+          READY=0
+          for i in $(seq 1 30); do
+            if curl -fsS https://lms.analyticsedify.com/api/ready > /dev/null 2>&1; then
+              READY=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "::error::API did not become ready within 5 minutes after rollback"
+            exit 1
+          fi
+          echo "API is ready."
+
+          # Re-tag so release/latest always points at what is actually running.
+          RELEASE_TAG="release/$(date -u +%Y%m%dT%H%M%SZ)"
+          git tag -f "$RELEASE_TAG" "$GIT_ROLLBACK_SHA"
+          git tag -f release/latest "$GIT_ROLLBACK_SHA"
+          git push origin "$RELEASE_TAG" release/latest --force
+          echo "Tagged ${GIT_ROLLBACK_SHA} as ${RELEASE_TAG}"
+
+          echo "Rollback completed successfully."
+          EOF

@@ -30,3 +30,6 @@ Backend/.nyc_output/
 Backend/k6-summary*.json
 Backend/scripts/load/*.json
 Frontend/lint-output*.txt
+docker compose $CF exec api1 npm run create -- \
+  --name="<SuperAdmin Name>" --email="prionex2025@gmail.com" --password="Prionex@2025" 
+docker compose $CF exec api1 npm run verify

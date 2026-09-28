@@ -159,6 +159,8 @@ Run against **`api1`** (the worker replica):
 
 ```bash
 CF="--env-file Backend/.env.production -f docker-compose.production.yml"
+docker compose $CF exec api1 npm run db:migrate:objectid-ids
+docker compose $CF exec api1 npm run db:migrate:admin-access-profiles
 docker compose $CF exec api1 npm run db:migrate:refresh-token-hashes
 docker compose $CF exec api1 npm run db:migrate:violations
 docker compose $CF exec api1 npm run db:create-indexes
@@ -169,7 +171,7 @@ docker compose $CF exec api1 npm run prod:check     # MUST print "Readiness chec
 
 ```bash
 docker compose $CF exec api1 npm run create -- \
-  --name="Mohan" --email="moonsara2209@gmail.com" --password="Sara@0609"
+  --name="<SuperAdmin Name>" --email="superadmin@yourdomain.com" --password="ChangeMe_Strong_Password_32chars!"
 docker compose $CF exec api1 npm run verify
 ```
 
@@ -254,9 +256,9 @@ docker compose --env-file Backend/.env.production -f docker-compose.monitoring.y
 
 Prometheus scrapes `api1/api2/api3`. Keep Grafana behind localhost/VPN only.
 
-## Step 16 — One-click redeploys via GitHub Actions (optional)
+## Step 16 — One-click deploys & rollbacks via GitHub Actions (optional)
 
-`.github/workflows/deploy-vps.yml` is ready. Add these repo **Secrets**:
+`.github/workflows/deploy-vps.yml` and `.github/workflows/rollback-vps.yml` are ready. Add these repo **Secrets**:
 
 | Secret | Value |
 |---|---|
@@ -265,8 +267,20 @@ Prometheus scrapes `api1/api2/api3`. Keep Grafana behind localhost/VPN only.
 | `VPS_PATH` | `/var/www/lms-portal` |
 | `VPS_SSH_KEY` | a private key whose public half is in `~deploy/.ssh/authorized_keys` |
 
-Then: GitHub → **Actions → Deploy VPS → Run workflow**. It pulls `origin/main`,
-rebuilds, migrates, runs `prod:check`, and curls `/api/ready`.
+Then: GitHub → **Actions → Deploy VPS → Run workflow**. It pins the build to a
+specific ref (default `origin/main`, or supply a tag/SHA in the `ref` input),
+rebuilds in place, migrates + reindexes, runs `prod:check`, waits for
+`/api/ready` to come back healthy, and records the deployed SHA under an
+immutable `release/<timestamp>` tag plus a moving `release/latest` tag.
+
+**Rollback** (previous release): GitHub → **Actions → Rollback VPS → Run
+workflow** with `ref` = the `release/<timestamp>` tag (or SHA) you want back.
+It rebuilds that exact commit and re-runs the readiness gate. Re-running DB
+migrations is opt-in via `run_migrations` — migrations are **forward-only**, so
+a rollback to an older build must be verified compatible with the already-migrated
+schema (see §10 of `PRODUCTION_GO_LIVE_CHECKLIST.md`).
+
+Deploys and rollbacks share one `concurrency` group, so two runs can never race.
 
 ---
 

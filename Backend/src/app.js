@@ -413,6 +413,21 @@ app.use(
     exposedHeaders: CORS_EXPOSED_HEADERS,
   })
 );
+
+const buildCspConnectSrc = () => {
+  const sources = new Set(["'self'"]);
+  for (const origin of env.frontendOrigins || []) {
+    try {
+      const parsed = new URL(origin);
+      sources.add(`https://${parsed.host}`);
+      sources.add(`wss://${parsed.host}`);
+    } catch {
+      sources.add(origin);
+    }
+  }
+  return [...sources];
+};
+
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -422,7 +437,7 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "https:"],
         fontSrc: ["'self'", "data:"],
-        connectSrc: ["'self'", "https://lms.analyticsedify.com", "wss://lms.analyticsedify.com"],
+        connectSrc: buildCspConnectSrc(),
         objectSrc: ["'none'"],
         workerSrc: ["'self'", "blob:"],
         frameAncestors: ["'none'"],

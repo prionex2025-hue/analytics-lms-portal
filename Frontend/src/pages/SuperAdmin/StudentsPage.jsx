@@ -104,6 +104,7 @@ export default function StudentsPage() {
     batchId: "",
   });
   const [createdCredentials, setCreatedCredentials] = useState(null);
+  const [importCredentials, setImportCredentials] = useState(null);
   const createCollegeId = studentForm.collegeId;
 
   useEffect(() => {
@@ -502,6 +503,7 @@ export default function StudentsPage() {
         title: "Import completed",
         message: "Refresh student list to review newly created accounts.",
       });
+      setImportCredentials(importJobQuery.data.result?.credentials || null);
       loadStudents(page);
       return;
     }
@@ -1089,6 +1091,18 @@ export default function StudentsPage() {
                 <p className="mt-1 text-danger">
                   Error: {importJobQuery.data.error}
                 </p>
+              ) : null}
+              {importCredentials && importCredentials.length > 0 ? (
+                <div className="mt-3 max-h-60 overflow-auto rounded-lg border border-success/30 bg-success/10 p-3 text-xs text-success">
+                  <p className="font-semibold">Generated credentials (shown once)</p>
+                  <ul className="mt-1 space-y-1">
+                    {importCredentials.map((entry) => (
+                      <li key={`${entry.row}-${entry.studentId}`}>
+                        {entry.identifier} • {entry.studentId} • {entry.password}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ) : null}
             </div>
           ) : null}

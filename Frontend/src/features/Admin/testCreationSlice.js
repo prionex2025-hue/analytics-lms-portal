@@ -277,7 +277,9 @@ export const validateCurrentStep = (state) => {
 
   if (step === 0) {
     if (!form.name.trim()) errors.name = "Test name is required";
-    if (!form.subject.trim()) errors.subject = "Subject is required";
+    // MODULE_TEST derives its categories from the per-question module `category`,
+    // so a test-level subject category is not applicable.
+    if (!isModuleFormat && !form.subject.trim()) errors.subject = "Subject is required";
     if (!Number.isFinite(Number(form.totalMarks)) || Number(form.totalMarks) < 1) {
       errors.totalMarks = "Total marks must be greater than 0";
     }
@@ -504,7 +506,7 @@ export const submitTestCreation = createAsyncThunk(
       name: form.name.trim(),
       description: form.description.trim(),
       instructions: String(form.instructions || "").trim(),
-      subject: form.subject.trim(),
+      subject: isModuleFormat ? null : form.subject.trim(),
       assessmentFormat,
       ...(isModuleFormat ? { modules: moduleList } : {}),
       durationMins: resolvedDurationMins,
@@ -701,6 +703,15 @@ const testCreationSlice = createSlice({
 
       if (key === "allColleges" && value) {
         state.form.collegeIds = [];
+      }
+
+      // The subject category field is not rendered for MODULE_TEST, so a stale
+      // error from a previous OPEN_TEST selection must not linger.
+      if (key === "assessmentFormat") {
+        state.form.assessmentFormat = normalizeAssessmentFormat(value);
+        if (state.form.assessmentFormat === ASSESSMENT_FORMATS.MODULE_TEST && state.errors) {
+          delete state.errors.subject;
+        }
       }
     },
     updateRestrictionsField: (state, action) => {

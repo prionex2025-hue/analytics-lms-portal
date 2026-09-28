@@ -22,9 +22,11 @@ const getSocketToken = (role = "student") => {
   return getAccessToken() || "";
 };
 
-export const connectTestSocket = (role = "student") => {
-  const normalizedRole = role || "student";
-  let socket = socketsByRole.get(normalizedRole);
+// Sockets are cached per key. Test rooms use the bare role as the key; other
+// long-lived listeners (e.g. portal notifications) use their own key so a page
+// that tears down its test socket on unmount cannot disconnect them.
+const connectSocketForKey = (key, role) => {
+  let socket = socketsByRole.get(key);
 
   if (socket?.connected) {
     return socket;
@@ -42,23 +44,23 @@ export const connectTestSocket = (role = "student") => {
       randomizationFactor: 0.5,
       timeout: 15000,
       auth: {
-        token: getSocketToken(normalizedRole) ? `Bearer ${getSocketToken(normalizedRole)}` : "",
+        token: getSocketToken(role) ? `Bearer ${getSocketToken(role)}` : "",
       },
     });
-    socketsByRole.set(normalizedRole, socket);
+    socketsByRole.set(key, socket);
 
     // Access tokens are short-lived: re-read the CURRENT token before every
     // reconnection attempt. Without this, an automatic reconnect replays the
     // token captured at first connect, and once that token expires the
     // handshake is rejected forever (infinite reconnect loop on a dead token).
     socket.io.on("reconnect_attempt", () => {
-      const freshToken = getSocketToken(normalizedRole);
+      const freshToken = getSocketToken(role);
       socket.auth = { token: freshToken ? `Bearer ${freshToken}` : "" };
     });
   }
 
   socket.auth = {
-    token: getSocketToken(normalizedRole) ? `Bearer ${getSocketToken(normalizedRole)}` : "",
+    token: getSocketToken(role) ? `Bearer ${getSocketToken(role)}` : "",
   };
 
   if (!socket.connected) {
@@ -66,6 +68,23 @@ export const connectTestSocket = (role = "student") => {
   }
 
   return socket;
+};
+
+export const connectTestSocket = (role = "student") => {
+  const normalizedRole = role || "student";
+  return connectSocketForKey(normalizedRole, normalizedRole);
+};
+
+const notificationKey = (role) => `${role}:notifications`;
+
+export const connectNotificationSocket = (role) => connectSocketForKey(notificationKey(role), role);
+
+export const disconnectNotificationSocket = (role) => {
+  const socket = socketsByRole.get(notificationKey(role));
+  if (socket?.connected) {
+    socket.disconnect();
+  }
+  socketsByRole.delete(notificationKey(role));
 };
 
 export const getTestSocket = (role = "student") => socketsByRole.get(role || "student") || null;

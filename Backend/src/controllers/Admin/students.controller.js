@@ -69,6 +69,27 @@ const createStudent = asyncHandler(async (req, res) => {
   res.status(201).json({ student: result.student, credentials: result.credentials });
 });
 
+const resetStudentPassword = asyncHandler(async (req, res) => {
+  const collegeId = req.collegeId;
+  const adminId = req.admin.id;
+  const { studentId } = req.params;
+  const scopedDepartmentId = getScopedDepartmentId(req, { requiredForDepartmentAdmin: false });
+  const m = await models.init();
+  const db = m.dbClient;
+
+  const result = await studentService.resetStudentPassword(collegeId, adminId, studentId, {
+    departmentId: scopedDepartmentId,
+  });
+
+  await revokeStudentRefreshTokens(db, studentId);
+
+  res.status(200).json({
+    message: "Student password reset",
+    student: result.student,
+    credentials: result.credentials,
+  });
+});
+
 const getStudentPerformance = asyncHandler(async (req, res) => {
   const collegeId = req.collegeId;
   const studentId = req.params.studentId;
@@ -134,6 +155,11 @@ const promoteStudentsYear = asyncHandler(async (req, res) => {
   const adminId = req.admin.id;
   const expectedConfirmation = "PROMOTE STUDENTS YEAR";
 
+  const scopedDepartmentId = getScopedDepartmentId(req, { requiredForDepartmentAdmin: false });
+  if (scopedDepartmentId) {
+    throw new ApiError(403, "Passout promotion applies to the entire college; only College Admins can run it", null, "DEPARTMENT_ADMIN_PROMOTION_DENIED");
+  }
+
   if (String(req.body.confirmationText || "").trim() !== expectedConfirmation) {
     throw new ApiError(400, `Typed acknowledgment mismatch. Expected: ${expectedConfirmation}`);
   }
@@ -175,13 +201,18 @@ const promoteStudentsYear = asyncHandler(async (req, res) => {
 const getStudentImportJob = asyncHandler(async (req, res) => {
   const collegeId = req.collegeId;
   const { jobId } = req.params;
-  const job = await studentService.getStudentImportJob(collegeId, jobId);
+  const scopedDepartmentId = getScopedDepartmentId(req, { requiredForDepartmentAdmin: false });
+  const job = await studentService.getStudentImportJob(collegeId, jobId, {
+    adminId: req.admin.id,
+    departmentId: scopedDepartmentId,
+  });
   res.status(200).json(job);
 });
 
 module.exports = {
   getStudents,
   createStudent,
+  resetStudentPassword,
   getStudentPerformance,
   getStudentProfile,
   assignStudentToBatch,

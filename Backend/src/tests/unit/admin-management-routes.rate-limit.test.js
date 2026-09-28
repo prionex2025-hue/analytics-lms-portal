@@ -58,6 +58,7 @@ describe("admin management route rate limit wiring", () => {
         getStudentPerformance: mockMiddleware,
         assignStudentToBatch: mockMiddleware,
         promoteStudentsYear: mockMiddleware,
+        resetStudentPassword: mockMiddleware,
       },
     });
 

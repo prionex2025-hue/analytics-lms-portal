@@ -58,6 +58,8 @@ export default function StudentsPage() {
     batch: "",
   });
   const [createdCredentials, setCreatedCredentials] = useState(null);
+  const [resetCredentials, setResetCredentials] = useState(null);
+  const [importCredentials, setImportCredentials] = useState(null);
   const canManageStudents = usePermission(ADMIN_PERMISSIONS.MANAGE_STUDENTS);
   const canViewStudents = usePermission(ADMIN_PERMISSIONS.VIEW_STUDENTS) || canManageStudents;
   const canManageBatches = usePermission(ADMIN_PERMISSIONS.MANAGE_BATCHES);
@@ -166,6 +168,19 @@ export default function StudentsPage() {
     },
   });
 
+  const resetPasswordMutation = useMutation({
+    mutationFn: (studentId) => adminApi.resetStudentPassword(studentId),
+    onSuccess: (payload) => {
+      setResetCredentials(payload?.credentials || null);
+      toast.success("Student password reset");
+      setBanner({ type: "success", title: "Password reset", message: "Student password regenerated using the default rule." });
+    },
+    onError: (error) => {
+      setBanner({ type: "error", title: "Reset failed", message: error?.message || "Could not reset the student password." });
+      toast.error(error?.message || "Failed to reset password.");
+    },
+  });
+
   const importMutation = useMutation({
     mutationFn: (body) => adminApi.bulkImportStudents(body),
     onSuccess: (payload) => {
@@ -256,6 +271,7 @@ export default function StudentsPage() {
     if (!importJobQuery.data) return;
     if (importJobQuery.data.status === "completed") {
       setBanner({ type: "success", title: "Import completed", message: "Refresh student list to review newly created accounts." });
+      setImportCredentials(importJobQuery.data.result?.credentials || null);
       queryClient.invalidateQueries({ queryKey: ["admin-students"] });
       return;
     }
@@ -418,6 +434,18 @@ export default function StudentsPage() {
                 </p>
               ) : null}
               {importJobQuery.data.error ? <p className="mt-1 text-danger">Error: {importJobQuery.data.error}</p> : null}
+              {importCredentials && importCredentials.length > 0 ? (
+                <div className="mt-3 max-h-60 overflow-auto rounded-lg border border-success/30 bg-success/10 p-3 text-xs text-success">
+                  <p className="font-semibold">Generated credentials (shown once)</p>
+                  <ul className="mt-1 space-y-1">
+                    {importCredentials.map((entry) => (
+                      <li key={`${entry.row}-${entry.studentId}`}>
+                        {entry.identifier} • {entry.studentId} • {entry.password}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </CardContent>
@@ -576,6 +604,30 @@ export default function StudentsPage() {
                       >
                         Add Batch
                       </Button>
+                    </div>
+                  ) : null}
+
+                  {canManageStudents ? (
+                    <div className="border-t border-border pt-2">
+                      <Button
+                        className="w-full"
+                        variant="outline"
+                        onClick={() => {
+                          setResetCredentials(null);
+                          resetPasswordMutation.mutate(selectedStudent.id);
+                        }}
+                        disabled={resetPasswordMutation.isPending}
+                      >
+                        {resetPasswordMutation.isPending ? "Resetting..." : "Reset Password to Default Rule"}
+                      </Button>
+                      {resetCredentials ? (
+                        <div className="mt-2 rounded-lg border border-success/30 bg-success/10 p-3 text-xs text-success">
+                          <p className="font-semibold">New credentials</p>
+                          <p>Email: {resetCredentials.identifier}</p>
+                          <p>Student ID: {resetCredentials.studentId}</p>
+                          <p>Password: {resetCredentials.password}</p>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 

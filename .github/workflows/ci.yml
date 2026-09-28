@@ -46,6 +46,60 @@ jobs:
       - run: npm run lint -- --quiet
       - run: npm test -- --runInBand
 
+  backend-redis:
+    runs-on: ubuntu-latest
+
+    services:
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: Backend
+
+    env:
+      NODE_ENV: test
+      MONGODB_URI: mongodb://127.0.0.1:27017/lms_ci_test
+      MONGODB_DB_NAME: lms_ci_test
+      JWT_ACCESS_SECRET: ci_access_secret_123456789012345678901234567890
+      JWT_REFRESH_SECRET: ci_refresh_secret_123456789012345678901234567890
+      FRONTEND_ORIGIN: http://localhost:5173
+      REDIS_ENABLED: "true"
+      REDIS_QUEUE_ENABLED: "true"
+      REDIS_URL: redis://127.0.0.1:6379
+      PASSWORD_RESET_DELIVERY_MODE: response
+      PASSWORD_RESET_RETURN_TOKEN: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Backend/package-lock.json
+      - run: npm ci
+      # Redis-backed paths (rate limiting, report queue, validation monitoring,
+      # socket adapter) are disabled by `npm test`; run the suite against a real
+      # Redis here. --forceExit closes un-reclaimed Redis client handles after
+      # the suites finish.
+      - run: npx jest --runInBand --forceExit
+
   frontend:
     runs-on: ubuntu-latest
 

@@ -4,7 +4,7 @@ const validate = require("../../middleware/validate");
 const { authenticateSuperAdmin } = require("../../middleware/auth");
 const { createRateLimiter } = require("../../middleware/rate-limit");
 const { createResponseCache } = require("../../middleware/response-cache");
-const { createSuperReportSchema, reportJobParamSchema } = require("../../schemas/SuperAdmin/super-admin-core.schema");
+const { createSuperReportSchema, escalatedAnomaliesQuerySchema, reviewSuperAnomalySchema, reportJobParamSchema } = require("../../schemas/SuperAdmin/super-admin-core.schema");
 const {
 	generateSuperReport,
 	getSuperReportAnalytics,
@@ -15,8 +15,12 @@ const {
 	downloadSuperReport,
 	regenerateSuperReportLink,
 	getEscalatedAnomalies,
+	getSuperReportJobStatus,
+	reviewSuperAnomaly,
 } = require("../../controllers/SuperAdmin/reports.controller");
 const {
+	exportSuperReportCsv,
+	exportSuperReportXlsx,
 	getSuperReportItemAnalysis,
 	getSuperReportIntegrity,
 	getSuperReportTrends,
@@ -60,7 +64,13 @@ router.get("/item-analysis", authenticateSuperAdmin, superReportReadLimiter, sup
 router.get("/integrity", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportIntegrity);
 router.get("/trends", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportTrends);
 router.get("/at-risk", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportAtRisk);
-router.get("/anomalies/escalations", authenticateSuperAdmin, superReportReadLimiter, getEscalatedAnomalies);
+router.get("/anomalies/escalations", authenticateSuperAdmin, superReportReadLimiter, validate(escalatedAnomaliesQuerySchema), getEscalatedAnomalies);
+router.post("/anomalies/review", authenticateSuperAdmin, superReportLimiter, validate(reviewSuperAnomalySchema), reviewSuperAnomaly);
+// Spreadsheet exports and job status are never cached: exports are generated
+// files and status must reflect the live job.
+router.get("/export.csv", authenticateSuperAdmin, superReportReadLimiter, exportSuperReportCsv);
+router.get("/export.xlsx", authenticateSuperAdmin, superReportReadLimiter, exportSuperReportXlsx);
+router.get("/jobs/:reportJobId/status", authenticateSuperAdmin, superReportReadLimiter, validate(reportJobParamSchema), getSuperReportJobStatus);
 router.post("/jobs/:reportJobId/regenerate-link", authenticateSuperAdmin, superReportLimiter, validate(reportJobParamSchema), regenerateSuperReportLink);
 router.get("/:reportJobId/download", authenticateSuperAdmin, superReportReadLimiter, validate(reportJobParamSchema), downloadSuperReport);
 

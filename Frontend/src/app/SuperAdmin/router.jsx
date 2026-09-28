@@ -43,6 +43,7 @@ const LiveMonitoringPage = lazyWithSuperAdminReducers(() => import("@/pages/Admi
 const BatchesPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/BatchesPage"));
 const EventsPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/EventsPage"));
 const ReportsPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/ReportsPage"));
+const EscalationsPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/EscalationsPage"));
 const AnalyticsPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/AnalyticsPage"));
 const SettingsPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/SettingsPage"));
 const QuestionBankPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/QuestionBankPage"));
@@ -156,6 +157,7 @@ const router = createBrowserRouter([
               { path: "/super-admin/batches", element: <PageRoute Page={BatchesPage} /> },
               { path: "/super-admin/events", element: <PageRoute Page={EventsPage} /> },
               { path: "/super-admin/reports", element: <PageRoute Page={ReportsPage} /> },
+              { path: "/super-admin/escalations", element: <PageRoute Page={EscalationsPage} /> },
               { path: "/super-admin/analytics", element: <PageRoute Page={AnalyticsPage} /> },
               { path: "/super-admin/settings", element: <PageRoute Page={SettingsPage} /> },
             ],

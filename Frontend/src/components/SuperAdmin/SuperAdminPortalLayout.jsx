@@ -5,10 +5,12 @@ import SuperAdminSidebar from "@/components/SuperAdmin/SuperAdminSidebar";
 import SuperAdminHeader from "@/components/SuperAdmin/SuperAdminHeader";
 import ImpersonationBanner from "@/components/SuperAdmin/ImpersonationBanner";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import useSuperAdminEscalationsRealtime from "@/hooks/useSuperAdminEscalationsRealtime";
 
 export default function SuperAdminPortalLayout() {
   const sidebarCollapsed = useSelector((state) => state.superAdminUi?.sidebarCollapsed);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  useSuperAdminEscalationsRealtime();
 
   return (
     <div className="min-h-screen bg-background lg:flex">

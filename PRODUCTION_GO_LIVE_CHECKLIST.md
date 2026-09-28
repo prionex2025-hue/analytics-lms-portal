@@ -175,7 +175,7 @@ if any are breached:
 ## 10. Deploy mechanics & rollback
 
 - [ ] Deploy performed per `DEPLOY.md` (Steps 1–13); firewall closed to all but 80/443 (+ SSH).
-- [ ] **Rollback path proven**: you can redeploy the previous image/commit and it comes up healthy (`/api/ready` 200). Note: DB migrations are forward-only — confirm the previous build is compatible with the migrated schema, or have a data rollback plan.
+- [ ] **Rollback path proven**: run the **Rollback VPS** workflow (`rollback-vps.yml`) against a previous `release/<timestamp>` tag in staging and confirm it comes up healthy (`/api/ready` 200). Note: DB migrations are forward-only — confirm the previous build is compatible with the migrated schema, or have a data rollback plan.
 - [ ] Zero-downtime consideration for deploys **during active exams**: draining/rolling restart keeps in-flight attempts alive (server-authoritative timers + resume-on-reconnect handle brief drops, but avoid deploying mid-exam if possible).
 - [ ] `local-production` smoke passes where applicable: `npm run smoke:local-production`.
 
@@ -203,3 +203,6 @@ if any are breached:
 - **Single points of failure** — see `DEPLOY.md` "Notes / known single points of failure". Confirm whether Mongo/Redis are single-node and accept or mitigate.
 - **Deeper testing not yet done**: property/chaos testing of dependency-down paths (Mongo/Redis/Cloudinary/SMTP mid-exam) beyond the readiness probe. Recommended post-launch.
 - **Report `errorMessage`** is surfaced to admins on failed report jobs — acceptable (admin-facing) but avoid putting sensitive data in aggregation errors.
+SHA256:yedZcN23ZHsQbTHNcqJqT6J2JCIgbomyD7dQ/qCG7vk root@srv1986922
+cat lms_deploy.pub | ssh root@89.116.122.180 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
+cat ~/lms_deploy.pub | ssh root@89.116.122.180 \

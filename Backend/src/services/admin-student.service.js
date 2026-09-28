@@ -10,6 +10,7 @@ const { getPagination } = require("../utils/pagination");
 const { invalidatePrincipalAuthCache } = require("./auth-revocation.service");
 const { appendLifecycleFilters } = require("./report-scope.service");
 const { toPublicStudent } = require("../utils/serializers");
+const { createStudentPassword } = require("../utils/student-password");
 const {
   buildDepartmentLookupIndex,
   getInvalidDepartmentReason,
@@ -29,20 +30,7 @@ try {
 let studentImportQueue = null;
 const queueConnection = getRedisQueueConnection();
 
-const createStudentPassword = (fullName, enrollNumber) => {
-  const nameLetters = String(fullName || "").replace(/[^a-zA-Z]/g, "");
-  const baseName = (nameLetters.slice(0, 3) || "Stu").padEnd(3, "x");
-  const namePart = `${baseName.charAt(0).toUpperCase()}${baseName.slice(1).toLowerCase()}`;
-
-  const enrollDigits = String(enrollNumber || "").replace(/\D/g, "");
-  if (enrollDigits.length < 3) {
-    throw new ApiError(400, "Enroll number must contain at least 3 digits");
-  }
-
-  return `${namePart}@${enrollDigits.slice(-3)}`;
-};
-
-const resolveStudentId = (enrollNumber, fallbackStudentId = "") => String(enrollNumber || fallbackStudentId || "").trim();
+const resolveStudentId =(enrollNumber, fallbackStudentId = "") => String(enrollNumber || fallbackStudentId || "").trim();
 const getStudentNumber = (student = {}) => student.enrollNumber || student.enrollmentNumber || student.studentId;
 
 const parseStudentYear = (value) => {
@@ -130,7 +118,7 @@ const parseCsv = (csvText) => {
 
 const processBulkImportJob = async ({ jobId, collegeId, adminId, adminDepartmentId, csvData }, db) => {
   const rows = parseCsv(csvData);
-  const result = { created: 0, failed: 0, duplicates: 0, errors: [] };
+  const result = { created: 0, failed: 0, duplicates: 0, errors: [], credentials: [] };
 
   try {
     await db.reportJob.update({ where: { id: jobId }, data: { status: "PROCESSING" } });
@@ -205,11 +193,13 @@ const processBulkImportJob = async ({ jobId, collegeId, adminId, adminDepartment
       });
 
       result.created += 1;
+      result.credentials.push({ row: row.__row, identifier: email, studentId, password: generatedPassword });
     }
 
     await db.reportJob.update({ where: { id: jobId }, data: { status: "COMPLETED", filters: { type: "STUDENT_IMPORT", result, completedAt: new Date().toISOString() } } });
 
-    await createAuditLog({ action: "ADMIN_STUDENT_BULK_IMPORT_COMPLETED", targetType: "STUDENT_IMPORT", targetId: jobId, collegeId, adminId, afterState: result });
+    const { credentials: _credentials, ...auditResult } = result;
+    await createAuditLog({ action: "ADMIN_STUDENT_BULK_IMPORT_COMPLETED", targetType: "STUDENT_IMPORT", targetId: jobId, collegeId, adminId, afterState: auditResult });
   } catch (error) {
     await db.reportJob.update({ where: { id: jobId }, data: { status: "FAILED", filters: { type: "STUDENT_IMPORT", result, failedAt: new Date().toISOString(), error: error?.message || "Unknown failure" } } });
   }
@@ -382,6 +372,31 @@ const createStudent = async (collegeId, adminId, payload) => {
   };
 };
 
+const resetStudentPassword = async (collegeId, adminId, studentId, { departmentId = null } = {}) => {
+  const m = await models.init();
+  const db = m.dbClient;
+
+  const student = await db.student.findFirst({ where: { id: studentId, collegeId } });
+  if (!student) throw new ApiError(404, "Student not found");
+
+  if (departmentId && String(student.departmentId || "") !== String(departmentId)) {
+    throw new ApiError(403, "Student is outside the admin department scope", null, "CROSS_DEPARTMENT_ACCESS_DENIED");
+  }
+
+  const plainPassword = createStudentPassword(student.fullName, getStudentNumber(student));
+  const passwordHash = await bcrypt.hash(plainPassword, 10);
+
+  const updated = await db.student.update({ where: { id: studentId }, data: { passwordHash } });
+
+  await invalidatePrincipalAuthCache("student", studentId);
+  await createAuditLog({ action: "ADMIN_STUDENT_PASSWORD_RESET", targetType: "STUDENT", targetId: studentId, collegeId, adminId });
+
+  return {
+    student: toPublicStudent(updated),
+    credentials: { identifier: student.email, studentId: getStudentNumber(student), password: plainPassword },
+  };
+};
+
 const getStudentPerformance = async (collegeId, studentId) => {
   const m = await models.init();
   const db = m.dbClient;
@@ -452,17 +467,23 @@ const bulkImportStudents = async (collegeId, adminId, csvData, adminDepartmentId
   return { jobId: job.id, status: job.status };
 };
 
-const getStudentImportJob = async (collegeId, jobId) => {
+const getStudentImportJob = async (collegeId, jobId, { adminId = null, departmentId = null } = {}) => {
   const m = await models.init();
   const db = m.dbClient;
   const job = await db.reportJob.findFirst({ where: { id: jobId, collegeId, type: "STUDENT_IMPORT" } });
   if (!job) throw new ApiError(404, "Import job not found");
+
+  if (departmentId && String(job.adminId || "") !== String(adminId || "")) {
+    throw new ApiError(403, "Import job is outside the admin scope", null, "CROSS_DEPARTMENT_ACCESS_DENIED");
+  }
+
   return { jobId: job.id, status: String(job.status || "QUEUED").toLowerCase(), result: job.filters?.result || null, error: job.filters?.error || null };
 };
 
 module.exports = {
   listStudents,
   createStudent,
+  resetStudentPassword,
   getStudentPerformance,
   getStudentProfile,
   assignStudentToBatch,

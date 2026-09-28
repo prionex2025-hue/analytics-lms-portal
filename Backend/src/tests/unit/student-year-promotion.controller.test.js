@@ -139,4 +139,34 @@ describe("student year promotion controllers", () => {
       "prior4",
     ]);
   });
+
+  it("denies department-scoped admins from promoting the whole college", async () => {
+    const { db } = createPromotionDb();
+    mockPromotionDependencies(db);
+    jest.doMock("../../services/admin-student.service", () => ({}));
+    let departmentIdToReturn = "dept-1";
+    jest.doMock("../../utils/admin-scope", () => ({
+      getScopedDepartmentId: jest.fn(() => departmentIdToReturn),
+      assertDepartmentScope: jest.fn(),
+    }));
+
+    const { promoteStudentsYear } = require("../../controllers/Admin/students.controller");
+
+    const res = createResponse();
+    const next = jest.fn();
+    const req = {
+      body: { confirmationText: "PROMOTE STUDENTS YEAR" },
+      collegeId: "college-1",
+      admin: { id: "admin-1" },
+    };
+
+    await new Promise((resolve) => {
+      promoteStudentsYear(req, res, next);
+      setTimeout(resolve, 10);
+    });
+
+    expect(res.json).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403 }));
+    expect(db.student.updateMany).not.toHaveBeenCalled();
+  });
 });

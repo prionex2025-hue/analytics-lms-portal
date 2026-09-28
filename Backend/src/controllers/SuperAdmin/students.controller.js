@@ -19,6 +19,7 @@ const {
   resolveDepartmentLookup,
 } = require("../../utils/student-import");
 const { toPublicStudent, toPublicStudents } = require("../../utils/serializers");
+const { createStudentPassword } = require("../../utils/student-password");
 
 let Queue = null;
 let Worker = null;
@@ -47,20 +48,7 @@ const revokeStudentRefreshTokens = async (db, studentId) => {
   await Promise.all(activeTokens.map((record) => invalidateRefreshTokenRecord("student", record)));
 };
 
-const createStudentPassword = (fullName, enrollNumber) => {
-  const nameLetters = String(fullName || "").replace(/[^a-zA-Z]/g, "");
-  const baseName = (nameLetters.slice(0, 3) || "Stu").padEnd(3, "x");
-  const namePart = `${baseName.charAt(0).toUpperCase()}${baseName.slice(1).toLowerCase()}`;
-
-  const enrollDigits = String(enrollNumber || "").replace(/\D/g, "");
-  if (enrollDigits.length < 3) {
-    throw new ApiError(400, "Enroll number must contain at least 3 digits");
-  }
-
-  return `${namePart}@${enrollDigits.slice(-3)}`;
-};
-
-const resolveStudentId = (enrollNumber, fallbackStudentId = "") => String(enrollNumber || fallbackStudentId || "").trim();
+const resolveStudentId =(enrollNumber, fallbackStudentId = "") => String(enrollNumber || fallbackStudentId || "").trim();
 const getStudentNumber = (student = {}) => student.enrollNumber || student.enrollmentNumber || student.studentId;
 
 const parseStudentYear = (value) => {
@@ -179,6 +167,7 @@ const processBulkImportJob = async ({ jobId, collegeId, superAdminId, csvData })
     failed: 0,
     duplicates: 0,
     errors: [],
+    credentials: [],
   };
 
   try {
@@ -258,6 +247,7 @@ const processBulkImportJob = async ({ jobId, collegeId, superAdminId, csvData })
       });
 
       result.created += 1;
+      result.credentials.push({ row: row.__row, identifier: email, studentId, password: generatedPassword });
     }
 
     await db.reportJob.update({
@@ -273,13 +263,15 @@ const processBulkImportJob = async ({ jobId, collegeId, superAdminId, csvData })
       },
     });
 
+    const { credentials: _credentials, ...auditResult } = result;
+
     await createAuditLog({
       action: "SUPER_ADMIN_STUDENT_BULK_IMPORT_COMPLETED",
       targetType: "STUDENT_IMPORT",
       targetId: jobId,
       collegeId,
       superAdminId,
-      afterState: result,
+      afterState: auditResult,
     });
   } catch (error) {
     await db.reportJob.update({

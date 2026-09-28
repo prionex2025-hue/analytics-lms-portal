@@ -156,7 +156,7 @@ const REPORT_INCOMPLETE_INCLUDE = {
   },
 };
 
-const buildTestScope = async ({ db, collegeId, departmentId, batchIds, testId }) => {
+const buildTestScope = async ({ db, collegeId, departmentId, batchIds, testId, testIds = [] }) => {
   const orFilters = [];
 
   orFilters.push({ assignmentMethod: "everyone" });
@@ -179,10 +179,11 @@ const buildTestScope = async ({ db, collegeId, departmentId, batchIds, testId })
 
   if (orFilters.length === 0) return [];
 
+  const onlyIds = uniqIds([...(Array.isArray(testIds) ? testIds : []), testId]);
   const testWhere = {
     collegeId,
     OR: orFilters,
-    ...(testId ? { id: testId } : {}),
+    ...(onlyIds.length === 1 ? { id: onlyIds[0] } : onlyIds.length > 1 ? { id: { in: onlyIds } } : {}),
   };
 
   return db.test.findMany({
@@ -557,6 +558,93 @@ const aggregateInstitutionReport = ({ meta, students = [], submissions = [], inc
   };
 };
 
+// The tests a report was asked to cover: an explicit multi-test selection
+// (filters.testIds) and/or the legacy single filters.testId, de-duplicated.
+const resolveSelectedTestIds = (filters = {}) =>
+  uniqIds([...(Array.isArray(filters.testIds) ? filters.testIds : []), filters.testId]);
+
+/**
+ * Multi-test reports: each student's result in each selected test (best attempt
+ * per test), plus a per-test summary. The main aggregation keeps one best score
+ * per student across all tests, which would hide how a student did in each one.
+ */
+const buildTestWiseResults = ({ tests = [], students = [], submissions = [], departmentNameById = new Map(), fallbackDeptName = "-" }) => {
+  const ordered = [...tests].sort((a, b) => {
+    const at = new Date(a.startsAt || a.endsAt || 0).getTime() || 0;
+    const bt = new Date(b.startsAt || b.endsAt || 0).getTime() || 0;
+    return at - bt || String(a.title || "").localeCompare(String(b.title || ""));
+  });
+  const codeByTestId = new Map(ordered.map((test, index) => [String(test.id), `T${index + 1}`]));
+
+  // Best attempt per (student, test).
+  const best = new Map();
+  const studentInfo = new Map(students.map((student) => [String(student.id), student]));
+  submissions.forEach((submission) => {
+    const sid = String(submission.user?.id || submission.userId || "");
+    const tid = String(submission.testId || submission.test?.id || "");
+    if (!sid || !codeByTestId.has(tid)) return;
+    const scorePercent = formatScorePercent(submission.score, submission.test?.totalMarks || 0);
+    const key = `${sid}:${tid}`;
+    const current = best.get(key);
+    if (!current || scorePercent > current.scorePercent) {
+      best.set(key, {
+        scorePercent,
+        timeMin: secondsToMinutes(submission.timeSpentSeconds),
+        violations: toNumber(submission.violationCount || submission.violations?.length || 0),
+      });
+    }
+    if (!studentInfo.has(sid) && submission.user) studentInfo.set(sid, { id: sid, ...submission.user });
+  });
+
+  const testSummaries = ordered.map((test) => {
+    const tid = String(test.id);
+    const registered = students.filter((student) => isStudentAssignedToTest(student, test)).length;
+    const scores = [];
+    best.forEach((value, key) => {
+      if (key.endsWith(`:${tid}`)) scores.push(value.scorePercent);
+    });
+    const attempted = scores.length;
+    return {
+      code: codeByTestId.get(tid),
+      testId: tid,
+      title: test.title || "Untitled test",
+      subject: test.subject || "",
+      date: test.startsAt || test.endsAt || null,
+      registered,
+      attempted,
+      notAttended: Math.max(registered - attempted, 0),
+      averageScore: attempted ? round1(scores.reduce((sum, value) => sum + value, 0) / attempted) : 0,
+      passRate: attempted ? round1((scores.filter((value) => value >= PASS_THRESHOLD_PERCENT).length / attempted) * 100) : 0,
+    };
+  });
+
+  const rows = Array.from(studentInfo.values())
+    .map((student) => {
+      const sid = String(student.id);
+      const cells = ordered.map((test) => {
+        const tid = String(test.id);
+        const result = best.get(`${sid}:${tid}`);
+        if (result) return { code: codeByTestId.get(tid), status: "scored", scorePercent: round1(result.scorePercent), violations: result.violations };
+        return { code: codeByTestId.get(tid), status: isStudentAssignedToTest(student, test) ? "absent" : "not_assigned" };
+      });
+      const scored = cells.filter((cell) => cell.status === "scored");
+      if (!scored.length && !cells.some((cell) => cell.status === "absent")) return null;
+      return {
+        studentId: sid,
+        name: student.fullName || "Student",
+        registerNumber: getStudentNumber(student),
+        department: departmentNameById.get(String(student.departmentId)) || fallbackDeptName,
+        cells,
+        testsTaken: scored.length,
+        averageScore: scored.length ? round1(scored.reduce((sum, cell) => sum + cell.scorePercent, 0) / scored.length) : null,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (b.averageScore ?? -1) - (a.averageScore ?? -1) || a.name.localeCompare(b.name));
+
+  return { tests: testSummaries, students: rows };
+};
+
 /**
  * Role-agnostic core that assembles the full "Institution Assessment Report"
  * payload for an already-resolved college / department / batch scope. This is the
@@ -578,7 +666,11 @@ const buildInstitutionReportPayload = async ({
   const filters = job.filters || {};
   const scopedDepartmentId = departmentId ? String(departmentId) : null;
   const scopedBatchId = batchId ? String(batchId) : null;
-  const testId = filters.testId ? String(filters.testId) : null;
+  const selectedTestIds = resolveSelectedTestIds(filters);
+  // One selected test keeps the single-test report exactly as before; several
+  // selected tests produce a multi-test report scoped to just those tests.
+  const testId = selectedTestIds.length === 1 ? selectedTestIds[0] : null;
+  const isMultiTest = selectedTestIds.length > 1;
   const year = filters.year ? Number(filters.year) : null;
   const studentLifecycleWhere = buildStudentLifecycleWhere(filters);
 
@@ -606,13 +698,16 @@ const buildInstitutionReportPayload = async ({
     departmentId: scopedDepartmentId,
     batchIds: scopeBatchIds,
     testId,
+    testIds: isMultiTest ? selectedTestIds : [],
   });
 
   const testIds = tests.map((test) => test.id);
   const selectedTest = testId ? tests.find((test) => String(test.id) === testId) || tests[0] : null;
   const testTitle = testId
     ? selectedTest?.title || "Selected Test"
-    : tests.length > 1
+    : isMultiTest
+      ? tests.map((test) => test.title || "Untitled test").join(", ") || "Selected Tests"
+      : tests.length > 1
       ? "All Tests"
       : tests[0]?.title || "All Tests";
   const durationMins = selectedTest?.durationMins || (tests.length === 1 ? tests[0]?.durationMins : null) || null;
@@ -643,11 +738,16 @@ const buildInstitutionReportPayload = async ({
     departmentName: scopedDepartmentId ? departmentNameById.get(scopedDepartmentId) || departmentFallbackName : "All Departments",
     collegeName: collegeName || "-",
     testTitle,
-    subject: selectedTest?.subject || (tests.length === 1 ? tests[0]?.subject : "") || "Placement Assessment",
+    subject: selectedTest?.subject
+      || (tests.length === 1 ? tests[0]?.subject : "")
+      || (isMultiTest ? [...new Set(tests.map((test) => test.subject).filter(Boolean))].join(", ") : "")
+      || "Placement Assessment",
     semester: resolveSemester(filters),
     academicYear: resolveAcademicYear({ filters, batch: scopedBatch }),
     logoUrl: resolveLogoUrl(filters),
-    hasSelectedTest: Boolean(testId),
+    hasSelectedTest: Boolean(testId) || isMultiTest,
+    isMultiTest: isMultiTest || undefined,
+    selectedTestCount: isMultiTest ? tests.length : undefined,
     reportScope: buildReportScopeMetadata(filters),
     reportId: buildReportId(job),
     generatedBy: "Analytics Edify LMS",
@@ -700,9 +800,24 @@ const buildInstitutionReportPayload = async ({
   // A single selected test only "registers" the students actually assigned to it,
   // so a batch-assigned test counts just that batch — not the whole department —
   // as registered / not-attended.
-  const scopedStudents = singleTest ? students.filter((student) => isStudentAssignedToTest(student, singleTest)) : students;
+  // Several selected tests register the students assigned to any of them.
+  const scopedStudents = singleTest
+    ? students.filter((student) => isStudentAssignedToTest(student, singleTest))
+    : isMultiTest
+      ? students.filter((student) => tests.some((test) => isStudentAssignedToTest(student, test)))
+      : students;
 
   const report = aggregateInstitutionReport({ meta, students: scopedStudents, submissions, incompleteSubmissions, departmentNameById, questionAnalytics });
+
+  if (isMultiTest) {
+    report.testWiseResults = buildTestWiseResults({
+      tests,
+      students: scopedStudents,
+      submissions,
+      departmentNameById,
+      fallbackDeptName: meta.departmentName,
+    });
+  }
 
   // Test-type-aware report generation: a MODULE_TEST renders per-module analytics
 // (each module score + overall score per student). No-op for OPEN_TEST or
@@ -765,6 +880,9 @@ module.exports = {
   buildQuestionAnalytics,
   isStudentAssignedToTest,
   buildReportId,
+  buildTestScope,
+  buildTestWiseResults,
+  resolveSelectedTestIds,
   REPORT_SUBMISSION_INCLUDE,
   REPORT_INCOMPLETE_INCLUDE,
 };

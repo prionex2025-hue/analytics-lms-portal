@@ -97,7 +97,6 @@ describe("Super Admin MODULE_TEST (integration)", () => {
       superAdmin,
       body: {
         title: "Global Aptitude Module Test",
-        subject: "Aptitude",
         instructions: INSTRUCTIONS,
         assessmentFormat: "MODULE_TEST",
         modules: modulesInput,

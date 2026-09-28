@@ -1,19 +1,16 @@
 import { useState } from "react";
 import {
-  AreaTrendChart,
   Avatar,
   ChartCard,
-  DumbbellChart,
   EmptyState,
-  HorizontalBarChart,
-  ItemQualityScatter,
   MultiSeriesTrendChart,
   ScoreBadge,
-  StatCard,
   StatusBadge,
   Th,
   ViolationBadge,
 } from "@/components/Reports/components";
+import { MetricStrip } from "@/components/Reports/summary-blocks";
+import { formatPercent } from "@/components/Reports/utils";
 
 // Shared advanced-report views used by both the Admin/College-Admin and
 // Super-Admin report pages. They are purely presentational: pass a react-query
@@ -23,194 +20,219 @@ import {
 const RISK_VARIANT = { CRITICAL: "danger", HIGH: "danger", MODERATE: "warning", LOW: "default" };
 const formatViolationType = (type) => String(type || "UNKNOWN").replace(/_/g, " ").toLowerCase();
 
+// Plain-language versions of the item-analysis flags (item-analysis.service).
+const QUESTION_FLAG_TEXT = {
+  VERY_HARD: "Most students got this wrong",
+  TOO_EASY: "Almost everyone got this right",
+  DISTRACTOR_BEATS_KEY: "A wrong option was chosen more than the answer",
+  LOW_DISCRIMINATION: "Doesn't separate strong and weak students",
+  NEGATIVE_DISCRIMINATION: "Weaker students did better — check the answer key",
+};
+
+const LoadingCard = ({ children }) => (
+  <div className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">{children}</div>
+);
+const ErrorCard = ({ children }) => (
+  <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">{children}</div>
+);
+
 export function ItemAnalysisView({ query }) {
   const [itemSort, setItemSort] = useState({ key: "order", dir: "asc" });
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
   const payload = query?.data || {};
   const items = Array.isArray(payload.items) ? payload.items : [];
   const summary = payload.summary || {};
-  const sorted = [...items].sort((a, b) => {
-    const dir = itemSort.dir === "asc" ? 1 : -1;
-    const av = a[itemSort.key];
-    const bv = b[itemSort.key];
-    if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
-    return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
-  });
-  const toggleItemSort = (key) =>
-    setItemSort((prev) => (prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
 
-  if (query?.isLoading) {
-    return <div className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">Analysing questions…</div>;
-  }
-  if (query?.isError) {
-    return <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load question analysis.</div>;
-  }
+  if (query?.isLoading) return <LoadingCard>Analysing questions…</LoadingCard>;
+  if (query?.isError) return <ErrorCard>Unable to load question analysis.</ErrorCard>;
   if (!items.length) {
     return <EmptyState title="No question data" description="Question analysis appears once this test has submissions." />;
   }
 
+  const flaggedCount = items.filter((item) => item.flagged).length;
+  const visible = (onlyFlagged ? items.filter((item) => item.flagged) : items).slice().sort((a, b) => {
+    const dir = itemSort.dir === "asc" ? 1 : -1;
+    return ((a[itemSort.key] ?? 0) - (b[itemSort.key] ?? 0)) * dir;
+  });
+  const toggleItemSort = (key) =>
+    setItemSort((prev) => (prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard iconName="score" iconTone="navy" label="Questions" value={summary.totalQuestions ?? 0} sub="In this test" />
-        <StatCard iconName="target" iconTone="primary" label="Avg Difficulty" value={`${Math.round((summary.averageDifficulty || 0) * 100)}%`} sub="Higher = easier" />
-        <StatCard iconName="participation" iconTone="success" label="Avg Discrimination" value={(summary.averageDiscrimination || 0).toFixed(2)} sub="0.2+ is acceptable" />
-        <StatCard
-          iconName="alert"
-          iconTone={(summary.flaggedQuestions ?? 0) > 0 ? "danger" : "warning"}
-          label="Flagged Items"
-          value={summary.flaggedQuestions ?? 0}
-          sub="Need review"
-          flag={(summary.flaggedQuestions ?? 0) > 0}
-        />
+    <article className="rounded-2xl border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 p-4">
+        <p className="text-sm text-text-secondary">
+          <strong className="text-text-primary">{summary.totalQuestions ?? items.length}</strong> questions ·{" "}
+          <strong className={flaggedCount ? "text-red-500" : "text-text-primary"}>{flaggedCount}</strong> need review · students answered{" "}
+          <strong className="text-text-primary">{Math.round((summary.averageDifficulty || 0) * 100)}%</strong> correctly on average
+        </p>
+        <div className="flex overflow-hidden rounded-lg border border-border text-xs font-medium">
+          {[
+            { value: false, label: "All questions" },
+            { value: true, label: "Needs review" },
+          ].map((option) => (
+            <button
+              key={option.label}
+              type="button"
+              onClick={() => setOnlyFlagged(option.value)}
+              className={`px-3 py-1.5 ${onlyFlagged === option.value ? "bg-primary text-white" : "bg-background text-text-primary hover:bg-muted"}`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <ChartCard title="Item quality — difficulty vs discrimination" height="h-[260px]">
-        <ItemQualityScatter items={items} />
-      </ChartCard>
-
-      <article className="overflow-x-auto rounded-2xl border border-border bg-card">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr>
-              <Th sortKey="order" sortState={itemSort} onSort={toggleItemSort}>Q</Th>
-              <Th>Prompt</Th>
-              <Th sortKey="difficulty" sortState={itemSort} onSort={toggleItemSort}>Difficulty</Th>
-              <Th sortKey="discrimination" sortState={itemSort} onSort={toggleItemSort}>Discrimination</Th>
-              <Th sortKey="medianTimeSeconds" sortState={itemSort} onSort={toggleItemSort}>Median Time</Th>
-              <Th>Top Distractor</Th>
-              <Th>Status</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((item) => (
-              <tr key={item.questionId} className="border-t border-border/70 hover:bg-muted/40">
-                <td className="px-4 py-3 tabular-nums text-text-secondary">{item.order}</td>
-                <td className="max-w-xs truncate px-4 py-3 font-medium text-text-primary" title={item.prompt}>{item.prompt}</td>
-                <td className="px-4 py-3 tabular-nums">{Math.round(item.difficulty * 100)}%</td>
-                <td className="px-4 py-3 tabular-nums">{item.discrimination.toFixed(2)}</td>
-                <td className="px-4 py-3 tabular-nums text-text-secondary">{item.medianTimeSeconds}s</td>
-                <td className="px-4 py-3 text-text-secondary">{item.topDistractor || "-"}</td>
-                <td className="px-4 py-3">
-                  {item.flagged ? (
-                    <StatusBadge label={formatViolationType(item.flagReasons[0])} variant="danger" />
-                  ) : (
-                    <StatusBadge label={item.discriminationLabel.toLowerCase()} variant="success" />
-                  )}
-                </td>
+      {visible.length === 0 ? (
+        <EmptyState title="No questions need review" description="Every question in this test behaved as expected." />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr>
+                <Th sortKey="order" sortState={itemSort} onSort={toggleItemSort}>Q</Th>
+                <Th>Question</Th>
+                <Th sortKey="difficulty" sortState={itemSort} onSort={toggleItemSort}>Answered correctly</Th>
+                <Th>Most chosen wrong answer</Th>
+                <Th>Review note</Th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </article>
-    </div>
+            </thead>
+            <tbody>
+              {visible.map((item) => (
+                <tr key={item.questionId} className="border-t border-border/70 align-top hover:bg-muted/40">
+                  <td className="px-4 py-3 tabular-nums text-text-secondary">{item.order}</td>
+                  <td className="max-w-md px-4 py-3 text-text-primary">
+                    <p className="line-clamp-2" title={item.prompt}>{item.prompt || "-"}</p>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <ScoreBadge score={Math.round((item.difficulty || 0) * 100)} />
+                    <span className="ml-1.5 text-xs tabular-nums text-text-secondary">{item.correct}/{item.attempts}</span>
+                  </td>
+                  <td className="max-w-xs px-4 py-3 text-text-secondary">
+                    <p className="line-clamp-2">{item.topDistractor || "—"}</p>
+                  </td>
+                  <td className="max-w-xs px-4 py-3">
+                    {item.flagged ? (
+                      <ul className="space-y-0.5 text-xs text-red-500">
+                        {(item.flagReasons || []).map((reason) => (
+                          <li key={reason}>{QUESTION_FLAG_TEXT[reason] || formatViolationType(reason)}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span className="text-xs text-text-secondary">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </article>
   );
 }
 
 export function IntegrityView({ query }) {
   const payload = query?.data || {};
   const summary = payload.summary || {};
-  const byType = Array.isArray(payload.byType) ? payload.byType : [];
-  const timeline = Array.isArray(payload.timeline) ? payload.timeline : [];
+  const byType = (Array.isArray(payload.byType) ? payload.byType : []).slice().sort((a, b) => (b.count || 0) - (a.count || 0));
   const repeatOffenders = Array.isArray(payload.repeatOffenders) ? payload.repeatOffenders : [];
-  const bands = Array.isArray(payload.scoreByViolationBand) ? payload.scoreByViolationBand : [];
 
-  if (query?.isLoading) {
-    return <div className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">Loading integrity analytics…</div>;
-  }
-  if (query?.isError) {
-    return <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load integrity analytics.</div>;
-  }
+  if (query?.isLoading) return <LoadingCard>Loading integrity analytics…</LoadingCard>;
+  if (query?.isError) return <ErrorCard>Unable to load integrity analytics.</ErrorCard>;
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard iconName="alert" iconTone="warning" label="Violations" value={summary.totalViolations ?? 0} sub="Across all attempts" />
-        <StatCard iconName="participation" iconTone="navy" label="Flagged Attempts" value={summary.flaggedAttempts ?? 0} sub={`${summary.flaggedRate ?? 0}% of attempts`} />
-        <StatCard iconName="target" iconTone="success" label="Clean Attempts" value={summary.cleanAttempts ?? 0} sub="No flags raised" />
-        <StatCard
-          iconName="alert"
-          iconTone={(summary.repeatOffenders ?? 0) > 0 ? "danger" : "warning"}
-          label="Repeat Offenders"
-          value={summary.repeatOffenders ?? 0}
-          sub="3+ violations"
-          flag={(summary.repeatOffenders ?? 0) > 0}
-        />
-      </div>
+      <MetricStrip
+        items={[
+          { key: "violations", label: "Violations", value: summary.totalViolations ?? 0, hint: "Across all attempts" },
+          {
+            key: "flagged",
+            label: "Flagged attempts",
+            value: summary.flaggedAttempts ?? 0,
+            hint: `${summary.flaggedRate ?? 0}% of ${summary.attempts ?? 0} attempts`,
+          },
+          {
+            key: "repeat",
+            label: "Repeat offenders",
+            value: summary.repeatOffenders ?? 0,
+            hint: "3 or more violations",
+            tone: (summary.repeatOffenders ?? 0) > 0 ? "danger" : "default",
+          },
+        ]}
+      />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Violations by Type" height="h-[240px]">
-          <HorizontalBarChart
-            data={byType.map((row) => ({ subject: formatViolationType(row.type), score: row.count }))}
-            labelKey="subject"
-            dataKey="score"
-            height="h-full"
-          />
-        </ChartCard>
-        <ChartCard title="When Violations Happen" height="h-[240px]">
-          <AreaTrendChart data={timeline} xKey="label" dataKey="count" name="Violations" />
-        </ChartCard>
-      </div>
-
-      <ChartCard title="Score by Violation Band" height="h-[200px]">
-        <HorizontalBarChart
-          data={bands.map((row) => ({ subject: row.label, score: row.avgScore }))}
-          labelKey="subject"
-          dataKey="score"
-          height="h-full"
-          threshold={40}
-        />
-      </ChartCard>
-
-      <article className="overflow-x-auto rounded-2xl border border-border bg-card">
-        <div className="border-b border-border/70 p-4">
-          <h3 className="text-lg font-semibold text-text-primary">Repeat Offenders</h3>
-        </div>
-        {repeatOffenders.length === 0 ? (
-          <EmptyState title="No repeat offenders" description="No student exceeded the violation threshold for this test." />
-        ) : (
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr>
-                <Th>Student</Th>
-                <Th>Violations</Th>
-                <Th>Types</Th>
-                <Th>Score</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {repeatOffenders.map((row) => (
-                <tr key={row.studentId} className="border-t border-border/70 hover:bg-muted/40">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <Avatar name={row.studentName} seed={row.studentId} />
-                      <span className="font-medium text-text-primary">{row.studentName}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3"><ViolationBadge count={row.count} /></td>
-                  <td className="px-4 py-3 text-xs text-text-secondary">{row.types.map(formatViolationType).join(", ")}</td>
-                  <td className="px-4 py-3"><ScoreBadge score={row.scorePercent} /></td>
-                </tr>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <article className="rounded-2xl border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-semibold text-text-primary">Violations by type</h3>
+          {byType.length ? (
+            <ul className="space-y-1.5">
+              {byType.map((row) => (
+                <li key={row.type} className="flex items-baseline justify-between gap-3 text-sm">
+                  <span className="capitalize text-text-primary">{formatViolationType(row.type)}</span>
+                  <span className="font-semibold tabular-nums text-text-primary">{row.count}</span>
+                </li>
               ))}
-            </tbody>
-          </table>
-        )}
-      </article>
+            </ul>
+          ) : (
+            <p className="text-sm text-text-secondary">No violations recorded for this test.</p>
+          )}
+        </article>
+
+        <article className="rounded-2xl border border-border bg-card">
+          <h3 className="border-b border-border/70 p-4 text-sm font-semibold text-text-primary">Repeat offenders</h3>
+          {repeatOffenders.length === 0 ? (
+            <EmptyState title="No repeat offenders" description="No student reached 3 violations in this test." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr>
+                    <Th>Student</Th>
+                    <Th>Violations</Th>
+                    <Th>Types</Th>
+                    <Th>Score</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {repeatOffenders.map((row) => (
+                    <tr key={row.studentId} className="border-t border-border/70 hover:bg-muted/40">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar name={row.studentName} seed={row.studentId} />
+                          <span className="font-medium text-text-primary">{row.studentName}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3"><ViolationBadge count={row.count} /></td>
+                      <td className="px-4 py-3 text-xs capitalize text-text-secondary">{row.types.map(formatViolationType).join(", ")}</td>
+                      <td className="px-4 py-3"><ScoreBadge score={row.scorePercent} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </article>
+      </div>
     </div>
   );
 }
 
-export function TrendsView({ query, groupBy, onGroupByChange, indexed, onIndexedChange, showGroupBy = true }) {
+const formatChange = (value) => {
+  if (value == null || !Number.isFinite(value)) return { text: "—", tone: "text-text-secondary" };
+  const rounded = Math.round(value * 10) / 10;
+  if (rounded > 0) return { text: `▲ ${rounded} pts`, tone: "text-green-600" };
+  if (rounded < 0) return { text: `▼ ${Math.abs(rounded)} pts`, tone: "text-red-500" };
+  return { text: "No change", tone: "text-text-secondary" };
+};
+
+export function TrendsView({ query, groupBy, onGroupByChange, showGroupBy = true }) {
   const payload = query?.data || {};
   const series = Array.isArray(payload.series) ? payload.series : [];
   const periods = Array.isArray(payload.periods) ? payload.periods : [];
   const summary = payload.summary || {};
 
-  if (query?.isLoading) {
-    return <section className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">Loading trends…</section>;
-  }
-  if (query?.isError) {
-    return <section className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load trends.</section>;
-  }
+  if (query?.isLoading) return <LoadingCard>Loading trends…</LoadingCard>;
+  if (query?.isError) return <ErrorCard>Unable to load trends.</ErrorCard>;
 
   const chartRows = periods.map((period) => {
     const row = { period };
@@ -221,27 +243,26 @@ export function TrendsView({ query, groupBy, onGroupByChange, indexed, onIndexed
     return row;
   });
 
-  const dumbbellRows = series
-    .filter((entity) => entity.firstScore != null && entity.lastScore != null)
-    .map((entity) => ({ id: entity.entityId, label: entity.name, before: entity.firstScore, after: entity.lastScore }));
+  // Biggest declines first: those are the cohorts that need attention.
+  const changeRows = series
+    .map((entity) => ({
+      id: entity.entityId,
+      name: entity.name,
+      first: entity.firstScore,
+      last: entity.lastScore,
+      change: entity.firstScore != null && entity.lastScore != null ? entity.lastScore - entity.firstScore : null,
+    }))
+    .sort((a, b) => (a.change ?? 0) - (b.change ?? 0));
 
   return (
     <section className="space-y-4">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard iconName="students" iconTone="navy" label="Cohorts" value={summary.entities ?? 0} sub={`Across ${summary.periods ?? 0} periods`} />
-        <StatCard iconName="target" iconTone="success" label="Improving" value={summary.improving ?? 0} sub="Trending up" />
-        <StatCard iconName="participation" iconTone="primary" label="Stable" value={summary.stable ?? 0} sub="No clear movement" />
-        <StatCard
-          iconName="alert"
-          iconTone={(summary.declining ?? 0) > 0 ? "danger" : "warning"}
-          label="Declining"
-          value={summary.declining ?? 0}
-          sub="Trending down"
-          flag={(summary.declining ?? 0) > 0}
-        />
-      </div>
-
-      <article className="flex flex-wrap items-center gap-4 rounded-2xl border border-border bg-card p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+      <article className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4">
+        <p className="text-sm text-text-secondary">
+          <strong className="text-green-600">{summary.improving ?? 0}</strong> improving ·{" "}
+          <strong className="text-text-primary">{summary.stable ?? 0}</strong> stable ·{" "}
+          <strong className={(summary.declining ?? 0) > 0 ? "text-red-500" : "text-text-primary"}>{summary.declining ?? 0}</strong> declining
+          <span> across {summary.periods ?? periods.length} months</span>
+        </p>
         {showGroupBy ? (
           <label className="flex items-center gap-2 text-xs text-text-secondary">
             <span>Group by</span>
@@ -255,19 +276,45 @@ export function TrendsView({ query, groupBy, onGroupByChange, indexed, onIndexed
             </select>
           </label>
         ) : null}
-        <label className="flex items-center gap-2 text-xs text-text-secondary">
-          <input type="checkbox" checked={indexed} onChange={(event) => onIndexedChange?.(event.target.checked)} />
-          <span>Index to first period (=100)</span>
-        </label>
       </article>
 
-      <ChartCard title={indexed ? "Cohort Trend (indexed to 100)" : "Cohort Performance Over Time"} height="h-[300px]">
-        <MultiSeriesTrendChart rows={chartRows} seriesNames={series.map((entity) => entity.name)} xKey="period" />
-      </ChartCard>
+      {series.length === 0 ? (
+        <article className="rounded-2xl border border-border bg-card">
+          <EmptyState title="No trend data yet" description="Trends appear once tests have been submitted across more than one month." />
+        </article>
+      ) : (
+        <>
+          <ChartCard title="Average score by month" height="h-[280px]">
+            <MultiSeriesTrendChart rows={chartRows} seriesNames={series.map((entity) => entity.name)} xKey="period" />
+          </ChartCard>
 
-      <ChartCard title="First vs Latest Period" height="h-auto">
-        <DumbbellChart rows={dumbbellRows} />
-      </ChartCard>
+          <article className="overflow-x-auto rounded-2xl border border-border bg-card">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr>
+                  <Th>{groupBy === "batch" ? "Batch" : "Department"}</Th>
+                  <Th>First month</Th>
+                  <Th>Latest month</Th>
+                  <Th>Change</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {changeRows.map((row) => {
+                  const change = formatChange(row.change);
+                  return (
+                    <tr key={row.id || row.name} className="border-t border-border/70 hover:bg-muted/40">
+                      <td className="px-4 py-3 font-medium text-text-primary">{row.name}</td>
+                      <td className="px-4 py-3 tabular-nums text-text-secondary">{row.first == null ? "—" : formatPercent(row.first)}</td>
+                      <td className="px-4 py-3 tabular-nums text-text-secondary">{row.last == null ? "—" : formatPercent(row.last)}</td>
+                      <td className={`px-4 py-3 font-semibold tabular-nums ${change.tone}`}>{change.text}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </article>
+        </>
+      )}
     </section>
   );
 }
@@ -277,93 +324,73 @@ export function AtRiskView({ query, canViewStudent = false, onViewStudent }) {
   const students = Array.isArray(payload.students) ? payload.students : [];
   const summary = payload.summary || {};
 
-  if (query?.isLoading) {
-    return <section className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">Assessing students…</section>;
-  }
-  if (query?.isError) {
-    return <section className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load at-risk analysis.</section>;
-  }
+  if (query?.isLoading) return <LoadingCard>Assessing students…</LoadingCard>;
+  if (query?.isError) return <ErrorCard>Unable to load at-risk analysis.</ErrorCard>;
 
   return (
-    <section className="space-y-4">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard iconName="students" iconTone="navy" label="Assessed" value={summary.assessed ?? 0} sub="Students in scope" />
-        <StatCard iconName="participation" iconTone="warning" label="At Risk" value={summary.atRisk ?? 0} sub="Above the risk bar" />
-        <StatCard iconName="alert" iconTone="warning" label="High" value={summary.high ?? 0} sub="Multiple signals" />
-        <StatCard
-          iconName="alert"
-          iconTone={(summary.critical ?? 0) > 0 ? "danger" : "warning"}
-          label="Critical"
-          value={summary.critical ?? 0}
-          sub="Immediate attention"
-          flag={(summary.critical ?? 0) > 0}
-        />
+    <article className="rounded-2xl border border-border bg-card">
+      <div className="border-b border-border/70 p-4">
+        <p className="text-sm text-text-secondary">
+          <strong className={(summary.atRisk ?? 0) > 0 ? "text-red-500" : "text-text-primary"}>{summary.atRisk ?? 0}</strong> of{" "}
+          <strong className="text-text-primary">{summary.assessed ?? 0}</strong> students need attention
+          {(summary.atRisk ?? 0) > 0 ? (
+            <span> — {summary.critical ?? 0} critical, {summary.high ?? 0} high, {summary.moderate ?? 0} moderate</span>
+          ) : null}
+        </p>
       </div>
 
-      <article className="rounded-2xl border border-border bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        <div className="border-b border-border/70 p-4">
-          <h3 className="text-lg font-semibold text-text-primary">Ranked At-Risk Students</h3>
-          <p className="text-xs text-text-secondary">Every flag lists the signals that produced it — no hidden scoring.</p>
+      {students.length === 0 ? (
+        <EmptyState title="No students at risk" description="No student in this scope crossed the risk threshold." />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr>
+                <Th>Student</Th>
+                <Th>Risk</Th>
+                <Th>Why</Th>
+                <Th>Avg score</Th>
+                {canViewStudent ? <Th>Action</Th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {students.map((student) => (
+                <tr key={student.studentId} className="border-t border-border/70 align-top hover:bg-muted/40">
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-text-primary">{student.name}</p>
+                    <p className="text-xs text-text-secondary">{student.rollNo} · {student.department} · {student.batch}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge label={String(student.riskLevel || "").toLowerCase()} variant={RISK_VARIANT[student.riskLevel] || "default"} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <ul className="space-y-0.5 text-xs">
+                      {student.reasons.map((reason) => (
+                        <li key={reason.code}>
+                          <span className="font-medium text-text-primary">{reason.label}</span>
+                          <span className="text-text-secondary"> — {reason.detail}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </td>
+                  <td className="px-4 py-3"><ScoreBadge score={student.averageScore} /></td>
+                  {canViewStudent ? (
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => onViewStudent?.(student.studentId)}
+                        className="whitespace-nowrap text-xs font-semibold text-primary hover:opacity-70"
+                      >
+                        View report
+                      </button>
+                    </td>
+                  ) : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-
-        {students.length === 0 ? (
-          <EmptyState title="No students at risk" description="No student in this scope crossed the risk threshold." />
-        ) : (
-          <div className="space-y-2 p-4">
-            {students.map((student) => (
-              <div key={student.studentId} className="rounded-xl border border-border bg-background p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <Avatar name={student.name} seed={student.studentId} />
-                    <div className="min-w-0">
-                      <p className="font-semibold text-text-primary">{student.name}</p>
-                      <p className="text-xs text-text-secondary">{student.rollNo} · {student.department} · {student.batch}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <StatusBadge label={student.riskLevel.toLowerCase()} variant={RISK_VARIANT[student.riskLevel] || "default"} />
-                    <div className="text-right">
-                      <p className="text-lg font-bold text-text-primary">{student.riskScore}</p>
-                      <p className="text-[10px] uppercase tracking-wider text-text-secondary">risk score</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
-                  <span className="text-text-secondary">Avg <strong className="tabular-nums text-text-primary">{student.averageScore}%</strong></span>
-                  <span className="text-text-secondary">Attempts <strong className="tabular-nums text-text-primary">{student.attempts}/{student.assignedTests}</strong></span>
-                  <span className="text-text-secondary">Participation <strong className="tabular-nums text-text-primary">{student.participation}%</strong></span>
-                  <span className="text-text-secondary">Violations <strong className="tabular-nums text-text-primary">{student.violations}</strong></span>
-                </div>
-
-                <ul className="mt-3 flex flex-wrap gap-2">
-                  {student.reasons.map((reason) => (
-                    <li
-                      key={reason.code}
-                      className="rounded-full border border-border bg-card px-3 py-1 text-[11px] text-text-secondary"
-                      title={`+${reason.points} risk points`}
-                    >
-                      <strong className="text-text-primary">{reason.label}</strong> · {reason.detail}
-                    </li>
-                  ))}
-                </ul>
-
-                {canViewStudent ? (
-                  <div className="mt-3 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => onViewStudent?.(student.studentId)}
-                      className="rounded-lg border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
-                    >
-                      View student report
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </article>
-    </section>
+      )}
+    </article>
   );
 }

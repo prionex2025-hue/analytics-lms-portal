@@ -1,15 +1,37 @@
 const mongoose = require("mongoose");
 const { asyncHandler } = require("../../utils/http");
 const { toObjectIdIfValid, withSubmissionScorePercent } = require("../../utils/analytics-aggregation");
+const { getScopedDepartmentId } = require("../../utils/admin-scope");
 const { REPORTABLE_SUBMISSION_STATUSES } = require("../../services/report-scope.service");
 
 const getCollegeAnalytics = asyncHandler(async (req, res) => {
   const db = mongoose.connection.db;
   const collegeId = toObjectIdIfValid(req.collegeId);
+  const scopedDepartmentId = getScopedDepartmentId(req, { requiredForDepartmentAdmin: false });
+  const departmentId = scopedDepartmentId ? toObjectIdIfValid(String(scopedDepartmentId)) : null;
+
   const submissionMatch = {
     collegeId,
     status: { $in: REPORTABLE_SUBMISSION_STATUSES },
+    ...(departmentId ? { departmentId } : {}),
   };
+  const studentMatch = {
+    collegeId,
+    isActive: true,
+    ...(departmentId ? { departmentId } : {}),
+  };
+  const testMatch = departmentId
+    ? {
+      collegeId,
+      $or: [
+        { assignmentMethod: "everyone" },
+        { assignmentMethod: "department_wise", departmentId },
+        { assignmentMethod: "department_wise", assignedTo: departmentId },
+        { assignmentMethod: null, departmentId },
+        { assignmentMethod: null, assignedTo: departmentId },
+      ],
+    }
+    : { collegeId };
 
   const [
     totalStudents,
@@ -26,14 +48,17 @@ const getCollegeAnalytics = asyncHandler(async (req, res) => {
     scoreTrendRaw,
     modulePerformanceRaw,
   ] = await Promise.all([
-    db.collection("student").countDocuments({ collegeId, isActive: true }),
+    db.collection("student").countDocuments(studentMatch),
     db.collection("admin").countDocuments({
       collegeId,
       role: { $in: ["ADMIN", "COLLEGE_ADMIN"] },
       isActive: true,
+      ...(departmentId ? { departmentId } : {}),
     }),
-    db.collection("department").countDocuments({ collegeId }),
-    db.collection("test").countDocuments({ collegeId }),
+    db.collection("department").countDocuments(
+      departmentId ? { collegeId, id: departmentId } : { collegeId }
+    ),
+    db.collection("test").countDocuments(testMatch),
     db.collection("submission").countDocuments(submissionMatch),
     db.collection("submission").distinct("userId", submissionMatch),
     db.collection("submission").aggregate([

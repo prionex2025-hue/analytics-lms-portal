@@ -2,6 +2,19 @@ name: Deploy VPS
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (branch, tag, or full SHA). Default: origin/main"
+        required: false
+        default: ""
+
+# A deploy must never race another deploy/rollback.
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
   deploy:
@@ -19,22 +32,46 @@ jobs:
           chmod 600 ~/.ssh/lms_key
           ssh-keyscan -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Deploy to VPS
+      - name: Validate deploy ref
+        id: ref
         run: |
-          ssh -i ~/.ssh/lms_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" << 'EOF'
-          set -e
+          REF_INPUT="${{ inputs.ref }}"
+          if ! printf '%s' "$REF_INPUT" | grep -qE '^[A-Za-z0-9._/-]*$'; then
+            echo "::error::Invalid ref (only alphanumeric, . _ / - allowed): $REF_INPUT"
+            exit 1
+          fi
+          echo "ref=${REF_INPUT:-origin/main}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to VPS
+        env:
+          DEPLOY_REF: ${{ steps.ref.outputs.ref }}
+        run: |
+          ssh -i ~/.ssh/lms_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "DEPLOY_REF='$DEPLOY_REF' bash -s" << 'EOF'
+          set -euo pipefail
 
           cd "${{ secrets.VPS_PATH }}"
 
-          echo "Pulling latest code..."
-          git fetch origin
-          git reset --hard origin/main
+          echo "Fetching repo (branches + tags)..."
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' --prune
+
+          # Support bare SHAs that aren't on any branch/tag yet.
+          if ! git rev-parse --verify --quiet "${DEPLOY_REF}^{commit}" > /dev/null; then
+            git fetch origin "$DEPLOY_REF"
+          fi
+
+          echo "Pinning build to ${DEPLOY_REF}"
+          git checkout --detach "$DEPLOY_REF"
+          GIT_DEPLOYED_SHA="$(git rev-parse HEAD)"
+          echo "Deploying commit ${GIT_DEPLOYED_SHA}"
 
           echo "Rebuilding Docker stack..."
           docker compose --env-file Backend/.env.production -f docker-compose.production.yml build
           docker compose --env-file Backend/.env.production -f docker-compose.production.yml up -d
 
           echo "Running database migrations..."
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:objectid-ids
+          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:admin-access-profiles
           docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:refresh-token-hashes
           docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:violations
           docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:create-indexes
@@ -42,8 +79,27 @@ jobs:
           echo "Running production readiness check..."
           docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run prod:check
 
-          echo "Checking application health..."
-          curl -fsS https://lms.analyticsedify.com/api/ready
+          echo "Waiting for /api/ready to come up healthy..."
+          READY=0
+          for i in $(seq 1 30); do
+            if curl -fsS https://lms.analyticsedify.com/api/ready > /dev/null 2>&1; then
+              READY=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "::error::API did not become ready within 5 minutes after deploy"
+            exit 1
+          fi
+          echo "API is ready."
+
+          # Record an immutable release tag for one-click rollbacks.
+          RELEASE_TAG="release/$(date -u +%Y%m%dT%H%M%SZ)"
+          git tag -f "$RELEASE_TAG" "$GIT_DEPLOYED_SHA"
+          git tag -f release/latest "$GIT_DEPLOYED_SHA"
+          git push origin "$RELEASE_TAG" release/latest --force
+          echo "Tagged ${GIT_DEPLOYED_SHA} as ${RELEASE_TAG}"
 
           echo "Deployment completed successfully."
           EOF

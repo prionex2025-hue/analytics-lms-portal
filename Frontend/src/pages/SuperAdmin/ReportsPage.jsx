@@ -2,35 +2,35 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { superAdminApi } from "@/services/api";
+import useSavedReportViews from "@/hooks/useSavedReportViews";
 import {
   AbsentStudentsCard,
   AnalyticsSkeleton,
-  AreaTrendChart,
   Avatar,
-  ChartCard,
-  DeepDiveHeader,
   EmptyState,
   ExportButton,
-  GroupedBarChart,
-  InsightCard,
-  LineTrendChart,
   Pagination,
+  RecentExports,
   ResultBadge,
   ScoreBadge,
-  DistributionSummary,
-  ScoreDonutChart,
-  StatCard,
-  StatusBadge,
+  ScoreDistributionChart,
+  SectionCard,
+  StudentSummary,
   TabNav,
   Th,
-  TopicPieChart,
   ViolationBadge,
 } from "@/components/Reports/components";
 import { AtRiskView, IntegrityView, ItemAnalysisView, TrendsView } from "@/components/Reports/advanced-views";
+import { GroupPerformanceList, MetricStrip, ScoreWithMarks, TopicStrengths } from "@/components/Reports/summary-blocks";
+import ReportTestsTable from "@/components/Reports/ReportTestsTable";
+import { moduleColumnDefs, moduleMarksFor, moduleShortLabel, overallModuleMarks } from "@/components/Reports/module-columns";
+import ReportBuilderDialog, { toReportTestFilters } from "@/components/Admin/Reports/ReportBuilderDialog";
+import ViolationReviewDialog from "@/components/Reports/ViolationReviewDialog";
+import { SUPER_REVIEW_ACTIONS } from "@/components/Reports/reviewActions";
 import { clampPercent, formatDateLabel, formatPercent, toExportErrorMessage, toQueryString } from "@/components/Reports/utils";
 
 const REPORT_MODES = [
-  { key: "overview", label: "College" },
+  { key: "overview", label: "Overview" },
   { key: "departments", label: "Departments" },
   { key: "batch", label: "Batch" },
   { key: "student", label: "Student" },
@@ -39,18 +39,13 @@ const REPORT_MODES = [
 ];
 
 const DEEP_DIVE_VIEWS = [
-  { key: "performance", label: "Performance" },
-  { key: "items", label: "Question Analysis" },
+  { key: "performance", label: "Results" },
+  { key: "items", label: "Questions" },
   { key: "integrity", label: "Integrity" },
 ];
 
-const TEST_STATUS_VARIANT = {
-  LIVE: "info",
-  COMPLETED: "success",
-  SCHEDULED: "warning",
-  DRAFT: "default",
-  ARCHIVED: "default",
-};
+// Tabs rendered from the scoped analytics payload (the others have their own endpoints).
+const ANALYTICS_MODES = new Set(["overview", "departments", "student"]);
 
 const MODE_DEFAULT_SORT = {
   overview: { key: "avgScore", dir: "desc" },
@@ -61,13 +56,6 @@ const MODE_DEFAULT_SORT = {
   "at-risk": { key: "avgScore", dir: "desc" },
 };
 
-const TEST_SORT_OPTIONS = [
-  { value: "startsAt", label: "Most recent" },
-  { value: "avgScore", label: "Avg score" },
-  { value: "participation", label: "Participation" },
-  { value: "passRate", label: "Pass rate" },
-  { value: "violations", label: "Violations" },
-];
 const YEAR_OPTIONS = ["1", "2", "3", "4"];
 const STUDENT_SCOPE_OPTIONS = [
   { value: "current", label: "Current" },
@@ -123,110 +111,13 @@ const sortRows = (rows, sortState) => {
   });
 };
 
-const MODULE_SHORT_LABEL = { QUANT: "Quant", REASONING: "Reasoning", VERBAL: "Verbal" };
-const moduleShortLabel = (key) => MODULE_SHORT_LABEL[key] || key;
-
-// MODULE_TEST only: module columns come from the analytics payload's server
-// module definitions (test-type driven and pagination-independent), falling back
-// to the first result row's moduleScores for legacy responses.
-const moduleColumnDefs = (rows, modulePerformance = {}) =>
-  Array.isArray(modulePerformance.modules) && modulePerformance.modules.length
-    ? modulePerformance.modules
-    : Array.isArray(rows) && rows[0]?.moduleScores?.length
-      ? rows[0].moduleScores
-      : [];
-
-const modulePercentageFor = (row, mod) => {
-  const score = (Array.isArray(row?.moduleScores) ? row.moduleScores : []).find((item) => item.key === mod.key);
-  return score ? score.percentage : null;
+// Compact "Xm Ys" (or "Ys") for durations.
+const formatSecondsShort = (seconds) => {
+  const safe = Math.max(0, Math.round(toNumber(seconds)));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 };
-
-function RecentExports({ reports, onDownload }) {
-  const rows = Array.isArray(reports) ? reports.slice(0, 4) : [];
-
-  return (
-    <article className="rounded-2xl border border-border bg-card p-5">
-      <div className="mb-4">
-        <h3 className="text-sm font-semibold text-text-primary">Recent Exports</h3>
-        <p className="text-xs text-text-secondary">Generated PDFs for super admin reports.</p>
-      </div>
-      {rows.length ? (
-        <div className="space-y-2">
-          {rows.map((job) => {
-            const status = String(job.status || "QUEUED").toLowerCase();
-            return (
-              <div key={job.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-background px-3 py-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-text-primary">{String(job.type || "REPORT").replace(/_/g, " ")}</p>
-                  <p className="text-xs text-text-secondary">{formatDateLabel(job.createdAt)}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge label={status} variant={status === "completed" ? "success" : status === "failed" ? "danger" : "warning"} />
-                  {status === "completed" ? (
-                    <button
-                      type="button"
-                      onClick={() => onDownload(job.id)}
-                      className="rounded-lg border border-border px-3 py-1 text-xs font-semibold hover:bg-muted"
-                    >
-                      Download
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <EmptyState title="No exports yet" description="Generated report PDFs will appear here." />
-      )}
-    </article>
-  );
-}
-
-function StudentSummary({ student, metrics }) {
-  if (!student) return null;
-  return (
-    <article className="rounded-2xl border border-border bg-card p-5">
-      <div className="flex flex-wrap items-center gap-5">
-        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-chart-1/10 text-xl font-bold text-chart-1">
-          {String(student.name || "?")
-            .split(" ")
-            .map((part) => part[0])
-            .join("")
-            .slice(0, 2)
-            .toUpperCase()}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-base font-bold text-text-primary">{student.name}</p>
-          <p className="text-xs text-text-secondary">
-            {student.studentId || "-"} - {student.college || "-"} - {student.department || "-"} - {student.batch || "-"}
-          </p>
-          <p className="text-xs text-text-secondary">Year: {student.year ? `${student.year} YEAR` : "-"}</p>
-        </div>
-        <div className="grid min-w-60 grid-cols-2 gap-4 text-center sm:grid-cols-4">
-          <div>
-            <p className="text-2xl font-bold tabular-nums text-text-primary">{formatPercent(metrics?.avgScore)}</p>
-            <p className="text-[11px] text-text-secondary">avg score</p>
-          </div>
-          <div>
-            <p className="text-2xl font-bold tabular-nums text-text-primary">#{student.rank || "-"}</p>
-            <p className="text-[11px] text-text-secondary">rank</p>
-          </div>
-          <div>
-            <p className="text-2xl font-bold tabular-nums text-text-primary">{toNumber(metrics?.totalSubmissions)}</p>
-            <p className="text-[11px] text-text-secondary">attempts</p>
-          </div>
-          <div>
-            <p className={`text-2xl font-bold tabular-nums ${toNumber(metrics?.violations) > 0 ? "text-red-500" : "text-green-500"}`}>
-              {toNumber(metrics?.violations)}
-            </p>
-            <p className="text-[11px] text-text-secondary">violations</p>
-          </div>
-        </div>
-      </div>
-    </article>
-  );
-}
 
 export default function ReportsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -252,7 +143,6 @@ export default function ReportsPage() {
   const [testsPage, setTestsPage] = useState(1);
   const [deepDiveView, setDeepDiveView] = useState("performance");
   const [trendGroupBy, setTrendGroupBy] = useState("department");
-  const [trendIndexed, setTrendIndexed] = useState(false);
   // Deep-dive ("view details") student results table: server-side search + sort +
   // pagination, matching the College Admin per-test results table.
   const [detailSearch, setDetailSearch] = useState("");
@@ -260,6 +150,10 @@ export default function ReportsPage() {
   const [detailPage, setDetailPage] = useState(1);
   const [sortState, setSortState] = useState(MODE_DEFAULT_SORT[mode]);
   const [error, setError] = useState(null);
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [csvBusy, setCsvBusy] = useState(false);
+  const [violationDialog, setViolationDialog] = useState({ open: false, studentName: "", events: [] });
+  const { views: savedViews, saveView, removeView } = useSavedReportViews("super-admin-report");
   const [exportState, setExportState] = useState({
     status: "idle",
     progress: 0,
@@ -423,7 +317,7 @@ export default function ReportsPage() {
   });
 
   const trendsQuery = useQuery({
-    queryKey: ["super-report-trends-v1", collegeId, departmentId, batchId, trendGroupBy, trendIndexed, studentYear, studentScope, passoutYear, passoutCohortId],
+    queryKey: ["super-report-trends-v1", collegeId, departmentId, batchId, trendGroupBy, studentYear, studentScope, passoutYear, passoutCohortId],
     queryFn: () =>
       superAdminApi.getReportTrends(
         toQueryString({
@@ -431,7 +325,6 @@ export default function ReportsPage() {
           departmentId: departmentId || undefined,
           batchId: batchId || undefined,
           groupBy: trendGroupBy,
-          indexed: trendIndexed ? "true" : undefined,
           year: studentYear || undefined,
           studentScope,
           passoutYear: passoutYear || undefined,
@@ -524,7 +417,6 @@ export default function ReportsPage() {
   const visiblePassoutCohorts = passoutCohorts.filter((cohort) => !passoutYear || String(cohort.passoutYear) === String(passoutYear));
   const scope = scopeQuery.data || {};
   const testsList = Array.isArray(testsListQuery.data?.data) ? testsListQuery.data.data : [];
-  const testsPagination = testsListQuery.data?.pagination || { page: 1, totalPages: 1, total: 0 };
   const selectedTestMeta = testsList.find((item) => String(item.testId) === String(testId)) || null;
   const studentDetail = studentDetailQuery.data || {};
   const reports = Array.isArray(reportsQuery.data) ? reportsQuery.data : [];
@@ -577,11 +469,6 @@ export default function ReportsPage() {
         }))
     : [];
 
-  const trendData = (scope.scoreTrend || []).map((item, index) => ({
-    month: item.month || `Period ${index + 1}`,
-    score: clampPercent(item.score),
-  }));
-
   const subjectData = (scope.subjectPerformance || []).map((item) => ({
     subject: item.subject || "General",
     score: clampPercent(item.score),
@@ -603,6 +490,7 @@ export default function ReportsPage() {
     status: row.status || "-",
     date: row.date,
     violationsCount: toNumber(row.violationsCount),
+    violationEvents: Array.isArray(row.violationEvents) ? row.violationEvents : [],
     questionAnalysis: row.questionAnalysis || { correct: 0, total: 0 },
   }));
 
@@ -620,6 +508,7 @@ export default function ReportsPage() {
     .sort((a, b) => b.avgScore - a.avgScore)
     .slice(0, 12)
     .map((row) => ({
+      departmentId: row.departmentId,
       department: row.department,
       avgScore: clampPercent(row.avgScore),
       passRate: clampPercent(row.passRate),
@@ -660,19 +549,17 @@ export default function ReportsPage() {
 
     pollRef.current = setInterval(async () => {
       try {
-        const jobs = await superAdminApi.getReports(toQueryString({ collegeId }));
-        const job = (jobs || []).find((item) => item.id === jobId);
-        if (!job) return;
-        const normalized = String(job.status || "").toLowerCase();
+        const status = await superAdminApi.getReportJobStatus(jobId);
         setExportState((prev) => ({
           ...prev,
-          status: normalized === "completed" ? "complete" : normalized === "failed" ? "failed" : "polling",
-          progress: normalized === "completed" ? 100 : normalized === "processing" ? 60 : 15,
-          downloadUrl: job.resultUrl || job.downloadUrl || prev.downloadUrl || `/api/super-admin/reports/${jobId}/download`,
-          expiresAt: job.downloadExpiresAt || job?.filters?.resultUrlExpiresAt || prev.expiresAt,
+          status: status.status === "completed" ? "complete" : status.status === "failed" ? "failed" : "polling",
+          progress: toNumber(status.progress),
+          downloadUrl: status.download_url || prev.downloadUrl || `/api/super-admin/reports/${jobId}/download`,
+          expiresAt: status.expires_at || prev.expiresAt,
+          errorMessage: status.status === "failed" ? status.error_message || "Report generation failed." : prev.errorMessage,
           jobId,
         }));
-        if (normalized === "completed" || normalized === "failed") {
+        if (status.status === "completed" || status.status === "failed") {
           clearInterval(pollRef.current);
           pollRef.current = null;
           reportsQuery.refetch();
@@ -685,15 +572,27 @@ export default function ReportsPage() {
     }, 1800);
   };
 
-  const handleExport = async () => {
-    const reportType = mode === "student" ? "STUDENT_WISE" : mode === "departments" ? "DEPARTMENT_WISE" : "TEST_WISE";
+  // Report type implied by the active tab (the Report Builder can override it).
+  // Includes BATCH_WISE for the Batch tab, which the old export never produced.
+  const defaultReportType = isTestDeepDive
+    ? "TEST_WISE"
+    : mode === "batch"
+      ? "BATCH_WISE"
+      : mode === "student"
+        ? "STUDENT_WISE"
+        : "DEPARTMENT_WISE";
+
+  const handleExport = async (overrides = {}) => {
+    const reportType = overrides.type || defaultReportType;
+    // The builder always sends its test selection (empty = every test in scope).
+    const { testIds: pickedTestIds = [], ...extraFilters } = overrides.filters || {};
 
     if (!collegeId) {
       setError("Select a college before exporting a report.");
       return;
     }
 
-    if (mode === "student" && !studentId) {
+    if (reportType === "STUDENT_WISE" && !studentId) {
       setError("Select a student before exporting a student report.");
       return;
     }
@@ -705,19 +604,18 @@ export default function ReportsPage() {
       const result = await superAdminApi.generateReport({
         type: reportType,
         filters: {
-          collegeId: collegeId || undefined,
+          collegeId,
           departmentId: departmentId || undefined,
-          // Carry the active batch filter through to the export so the generated
-          // PDF is batch-scoped exactly like the College Admin report (whose core,
-          // buildInstitutionReportPayload, narrows students to this batch). Without
-          // it the report silently ignores the batch selection.
+          // Carry the active batch through so the PDF is batch-scoped exactly like
+          // the College Admin report (buildInstitutionReportPayload narrows to it).
           batchId: batchId || undefined,
-          studentId: mode === "student" ? studentId || undefined : undefined,
-          testId: testId === "all" ? undefined : testId,
+          studentId: studentId || undefined,
+          ...toReportTestFilters(pickedTestIds),
           year: studentYear || undefined,
           studentScope,
           passoutYear: passoutYear || undefined,
           passoutCohortId: passoutCohortId || undefined,
+          ...extraFilters,
         },
       });
       const jobId = result?.jobId || result?.id;
@@ -733,6 +631,66 @@ export default function ReportsPage() {
       setError(message);
       setExportState({ status: "failed", progress: 0, downloadUrl: "", expiresAt: null, jobId: "", errorMessage: message });
     }
+  };
+
+  // Spreadsheet export in either format, backed by the same super-scoped dataset
+  // builder on the server, so CSV and Excel can never disagree.
+  const handleSpreadsheetExport = async (format = "csv", { testIds: pickedTestIds = [] } = {}) => {
+    if (!collegeId || csvBusy) return;
+    // Selected tests export each student's result in each test; otherwise the
+    // export follows the current tab.
+    const dataset = pickedTestIds.length
+      ? "results"
+      : isTestDeepDive && deepDiveView === "items" ? "item-analysis" : mode === "at-risk" ? "at-risk" : "tests";
+    setCsvBusy(true);
+    try {
+      const params = toQueryString({
+        dataset,
+        collegeId,
+        testId: dataset === "item-analysis" ? testId : undefined,
+        testIds: dataset === "results" ? pickedTestIds.join(",") : undefined,
+        departmentId: departmentId || undefined,
+        batchId: batchId || undefined,
+        year: studentYear || undefined,
+        studentScope,
+        passoutYear: passoutYear || undefined,
+        passoutCohortId: passoutCohortId || undefined,
+      });
+      const blob = format === "xlsx" ? await superAdminApi.exportReportXlsx(params) : await superAdminApi.exportReportCsv(params);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${dataset}.${format}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(toExportErrorMessage(err));
+    } finally {
+      setCsvBusy(false);
+    }
+  };
+
+  const handleGenerate = ({ type, format, filters }) => {
+    if (format === "csv" || format === "xlsx") {
+      handleSpreadsheetExport(format, filters);
+    } else {
+      handleExport({ type, filters });
+    }
+  };
+
+  const handleSaveView = () => {
+    const name = window.prompt("Name this view (filters + tab will be saved)");
+    if (name) saveView(name, window.location.search);
+  };
+
+  const handleViolationClick = (studentName, events) => {
+    setViolationDialog({ open: true, studentName: studentName || "Student", events: Array.isArray(events) ? events : [] });
+  };
+
+  const handleViolationReview = async (review) => {
+    await superAdminApi.reviewReportAnomaly(review);
+    testTableQuery.refetch();
+    studentDetailQuery.refetch();
   };
 
   const downloadJob = async (jobId, retried = false) => {
@@ -850,61 +808,39 @@ export default function ReportsPage() {
 
   const loading = collegesQuery.isLoading || (hasCollegeSelected && scopeQuery.isLoading);
 
+  const analyticsReady = hasCollegeSelected && !isTestDeepDive && !loading && !scopeQuery.isError;
+
+  // One strip of the numbers that matter, instead of badge-heavy stat cards.
   const violationCount = toNumber(metrics.violations);
-  const avgScoreTier =
-    metrics.avgScore >= 75
-      ? { badge: "Distinction", badgeTone: "success" }
-      : metrics.avgScore >= 50
-        ? { badge: "Average", badgeTone: "info" }
-        : { badge: "Below Avg", badgeTone: "warning" };
+  const attemptedStudents = toNumber(metrics.attemptedStudents);
+  const totalStudents = toNumber(metrics.totalStudents);
+  const flagsMetric = {
+    key: "flags",
+    label: "Integrity flags",
+    value: violationCount.toLocaleString(),
+    hint: "Proctoring violations",
+    tone: violationCount > 0 ? "danger" : "default",
+  };
+  const passMetric = { key: "pass", label: "Pass rate", value: formatPercent(metrics.passRate), hint: "Scored 40% or more" };
 
-  const overviewStatCards = [
-    {
-      key: "students",
-      iconName: "students",
-      iconTone: "navy",
-      label: "Total Students",
-      value: toNumber(metrics.totalStudents).toLocaleString(),
-      sub: "In current scope",
-      badge: `${toNumber(metrics.attemptedStudents).toLocaleString()} active`,
-      badgeTone: "info",
-    },
-    { key: "avg", iconName: "score", iconTone: "primary", label: "Avg Score", value: formatPercent(metrics.avgScore), sub: "Submitted attempts", ...avgScoreTier },
-    { key: "pass", iconName: "target", iconTone: "success", label: "Pass Rate", value: formatPercent(metrics.passRate), sub: "Score 40% and above", badge: "Target 40%", badgeTone: "info" },
-    {
-      key: "viol",
-      iconName: "alert",
-      iconTone: violationCount > 10 ? "danger" : "warning",
-      label: "Pending Reviews",
-      value: violationCount,
-      sub: violationCount > 10 ? "High violation volume" : "Integrity flags",
-      badge: violationCount > 10 ? "High Priority" : "Monitored",
-      badgeTone: violationCount > 10 ? "danger" : "muted",
-      flag: violationCount > 10,
-    },
+  const overviewMetrics = [
+    { key: "students", label: "Students attempted", value: attemptedStudents.toLocaleString(), hint: `of ${totalStudents.toLocaleString()} in this scope` },
+    { key: "avg", label: "Average score", value: formatPercent(metrics.avgScore), hint: `${toNumber(metrics.totalSubmissions).toLocaleString()} submissions` },
+    passMetric,
+    flagsMetric,
   ];
 
-  const superTestKpis = [
-    { key: "avg", iconName: "score", iconTone: "primary", label: "Avg Score", value: formatPercent(metrics.avgScore), sub: "Submitted attempts", ...avgScoreTier },
-    { key: "pass", iconName: "target", iconTone: "success", label: "Pass Rate", value: formatPercent(metrics.passRate), sub: "Score 40%+", badge: "Target 40%", badgeTone: "info" },
-    { key: "part", iconName: "participation", iconTone: "navy", label: "Participation", value: formatPercent(metrics.participationRate), sub: "Students who attempted", badge: `${toNumber(metrics.totalTests)} tests`, badgeTone: "muted" },
+  const deepDiveMetrics = [
     {
-      key: "viol",
-      iconName: "alert",
-      iconTone: violationCount > 10 ? "danger" : "warning",
-      label: "Violations",
-      value: violationCount,
-      sub: violationCount > 10 ? "High violation volume" : "Proctoring flags",
-      badge: violationCount > 10 ? "High Priority" : "Monitored",
-      badgeTone: violationCount > 10 ? "danger" : "muted",
-      flag: violationCount > 10,
+      key: "attempted",
+      label: "Attempted",
+      value: formatPercent(metrics.participationRate),
+      hint: totalStudents ? `${attemptedStudents} of ${totalStudents} students` : "Of assigned students",
     },
+    { key: "avg", label: "Average score", value: formatPercent(metrics.avgScore), hint: "Submitted attempts" },
+    passMetric,
+    flagsMetric,
   ];
-
-  const healthLabel = metrics.avgScore >= 75 ? "Excellent" : metrics.avgScore >= 50 ? "Healthy" : "Needs Attention";
-  const insightMessage = hasCollegeSelected
-    ? `Average score is ${formatPercent(metrics.avgScore)} across ${toNumber(metrics.totalSubmissions).toLocaleString()} submissions with a ${formatPercent(metrics.passRate)} pass rate. ${violationCount > 10 ? `${violationCount} integrity flags need review.` : "Integrity flags are within healthy limits."}`
-    : "Select a college to view institutional health.";
 
   const testsScopeLabel = selectedBatch
     ? `Batch: ${selectedBatch.name}`
@@ -912,292 +848,304 @@ export default function ReportsPage() {
       ? `Department: ${selectedDepartment.name}`
       : selectedCollege?.name || "Selected college";
 
-  // Shared tests listing rendered on every tab, scoped by the active filters.
-  const renderTestsListCard = () => {
-    const pageSize = Number(testsPagination.limit) || 9;
-    const startIndex = (Number(testsPagination.page || 1) - 1) * pageSize;
+  const reportScopeSummary = [
+    selectedCollege?.name ? `College: ${selectedCollege.name}` : null,
+    testsScopeLabel !== (selectedCollege?.name || "Selected college") ? testsScopeLabel : null,
+    selectedStudent?.name ? `Student: ${selectedStudent.name}` : null,
+    studentYear ? `${studentYear} year` : null,
+    studentScope !== "current" ? STUDENT_SCOPE_OPTIONS.find((option) => option.value === studentScope)?.label : null,
+  ].filter(Boolean).join(" · ");
+
+  const renderTestsListCard = () => (
+    <ReportTestsTable
+      query={testsListQuery}
+      scopeLabel={testsScopeLabel}
+      search={testsSearch}
+      onSearchChange={setTestsSearch}
+      status={testsStatus}
+      onStatusChange={setTestsStatus}
+      sort={testsSort}
+      onSortChange={setTestsSort}
+      onPageChange={setTestsPage}
+      onOpenTest={handleTestOpen}
+    />
+  );
+
+  // Per-module averages for MODULE_TEST results, weakest module called out.
+  const renderModuleSummary = (moduleStats) => {
+    if (moduleStats.length === 0) return null;
+    const ranked = [...moduleStats].sort((a, b) => toNumber(a.averagePercentage) - toNumber(b.averagePercentage));
+    const weakest = moduleStats.length > 1 ? ranked[0] : null;
+    return (
+      <SectionCard
+        title="Modules"
+        subtitle={weakest ? `Weakest: ${weakest.name} (${formatPercent(weakest.averagePercentage)} average)` : "Average per module"}
+        bodyClassName="p-0"
+      >
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr>
+                <Th>Module</Th>
+                <Th>Average</Th>
+                <Th>Completed</Th>
+                <Th>Avg time</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {moduleStats.map((stat) => (
+                <tr key={stat.key} className="border-t border-border/70">
+                  <td className="px-4 py-3 font-medium text-text-primary">{stat.name}</td>
+                  <td className="px-4 py-3">
+                    <ScoreWithMarks
+                      percent={stat.averagePercentage}
+                      obtained={toNumber(stat.averageScore).toFixed(1)}
+                      total={toNumber(stat.averageMaxScore).toFixed(1)}
+                    />
+                  </td>
+                  <td className="px-4 py-3 tabular-nums text-text-secondary">{formatPercent(stat.completionRate)}</td>
+                  <td className="px-4 py-3 tabular-nums text-text-secondary">{formatSecondsShort(stat.averageTimeSeconds)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+    );
+  };
+
+  // Ranked students in scope; the Student tab uses it as the picker.
+  const renderStudentRanking = (title) => (
+    <SectionCard title={title} subtitle="Ranked by average score. Select a student to see their results." bodyClassName="p-0">
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr>
+              <Th sortKey="rank" sortState={sortState} onSort={handleSort}>#</Th>
+              <Th sortKey="name" sortState={sortState} onSort={handleSort}>Student</Th>
+              <Th sortKey="department" sortState={sortState} onSort={handleSort}>Department</Th>
+              <Th sortKey="year" sortState={sortState} onSort={handleSort}>Year</Th>
+              <Th sortKey="avgScore" sortState={sortState} onSort={handleSort}>Avg score</Th>
+              <Th sortKey="testsTaken" sortState={sortState} onSort={handleSort}>Tests</Th>
+              <Th sortKey="violations" sortState={sortState} onSort={handleSort}>Violations</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleStudentRows.map((row) => (
+              <tr key={row.studentId} className="border-t border-border/70 hover:bg-muted/40">
+                <td className="px-4 py-3 tabular-nums text-text-secondary">{row.rank || "-"}</td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => updateParams({ college: row.collegeId || collegeId || "", department: row.departmentId || departmentId, student_id: row.studentId, mode: "student" })}
+                    className="flex items-center gap-3 text-left"
+                  >
+                    <Avatar name={row.name} seed={row.studentId} />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-text-primary hover:text-primary">{row.name}</span>
+                      <span className="block truncate text-xs text-text-secondary">{row.rollNo}</span>
+                    </span>
+                  </button>
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 text-text-secondary">{row.department}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-text-secondary">{row.year ? `Year ${row.year}` : "-"}</td>
+                <td className="px-4 py-3">{row.testsTaken > 0 ? <ScoreBadge score={row.avgScore} /> : <span className="text-text-secondary">—</span>}</td>
+                <td className="px-4 py-3 tabular-nums">{row.testsTaken}</td>
+                <td className="px-4 py-3"><ViolationBadge count={row.violations} /></td>
+              </tr>
+            ))}
+            {visibleStudentRows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-8">
+                  <EmptyState title="No students in this scope" description="Adjust the filters above to find students." />
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+      {sortedStudentRows.length > visibleStudentRows.length ? (
+        <div className="flex items-center justify-between gap-3 border-t border-border/70 px-4 py-3 text-xs text-text-secondary">
+          <span>Showing {visibleStudentRows.length} of {sortedStudentRows.length} students.</span>
+          <button
+            type="button"
+            onClick={() => setStudentVisibleLimit((value) => value + 100)}
+            className="rounded-lg border border-border px-3 py-1 font-semibold text-text-primary hover:bg-muted"
+          >
+            Show more
+          </button>
+        </div>
+      ) : null}
+    </SectionCard>
+  );
+
+  const renderSuperTestDeepDive = () => {
+    const moduleColumns = moduleColumnDefs(testTableRows, scope?.modulePerformance);
+    const moduleStats = Array.isArray(scope?.modulePerformance?.moduleStats) ? scope.modulePerformance.moduleStats : [];
     return (
       <section className="space-y-4">
-        <article className="rounded-2xl border border-border bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 p-4">
-            <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z" />
-                </svg>
-              </span>
-              <div>
-                <h3 className="text-lg font-semibold text-text-primary">Test Reports</h3>
-                <p className="text-xs text-text-secondary">Per-test performance · {testsScopeLabel}</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                value={testsSearch}
-                onChange={(event) => setTestsSearch(event.target.value)}
-                placeholder="Search tests…"
-                className="h-9 w-full max-w-xs rounded-lg border border-border bg-background px-3 text-sm"
-              />
-              <select
-                value={testsStatus}
-                onChange={(event) => setTestsStatus(event.target.value)}
-                aria-label="Filter by status"
-                className="h-9 rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
-              >
-                <option value="all">All statuses</option>
-                <option value="LIVE">Live</option>
-                <option value="COMPLETED">Completed</option>
-                <option value="SCHEDULED">Scheduled</option>
-                <option value="DRAFT">Draft</option>
-                <option value="ARCHIVED">Archived</option>
-              </select>
-              <select
-                value={testsSort}
-                onChange={(event) => setTestsSort(event.target.value)}
-                aria-label="Sort tests"
-                className="h-9 rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
-              >
-                {TEST_SORT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
+        <article className="rounded-2xl border border-border bg-card p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleTestBack}
+              className="inline-flex h-9 items-center gap-1 rounded-xl border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-muted"
+            >
+              ← Back
+            </button>
+            <div className="min-w-0">
+              <h2 className="truncate text-lg font-bold text-text-primary">{selectedTestMeta?.title || selectedTestName || "Test results"}</h2>
+              <p className="text-xs text-text-secondary">
+                {[selectedCollege?.name, testsScopeLabel !== selectedCollege?.name ? testsScopeLabel : null].filter(Boolean).join(" · ")}
+              </p>
             </div>
           </div>
+          <div className="mt-3">
+            <TabNav tabs={DEEP_DIVE_VIEWS} active={deepDiveView} onChange={setDeepDiveView} />
+          </div>
+        </article>
 
-          {testsListQuery.isLoading ? (
-            <div className="p-6 text-sm text-text-secondary">Loading tests…</div>
-          ) : testsListQuery.isError ? (
-            <div className="m-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load tests.</div>
-          ) : testsList.length === 0 ? (
-            <EmptyState title="No tests found" description="Adjust your search or filters to see test performance." />
-          ) : (
-            <>
+        {deepDiveView === "items" ? <ItemAnalysisView query={itemAnalysisQuery} /> : null}
+        {deepDiveView === "integrity" ? <IntegrityView query={integrityQuery} /> : null}
+
+        {deepDiveView !== "performance" ? null : scopeQuery.isLoading ? (
+          <div className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">Loading test results…</div>
+        ) : scopeQuery.isError ? (
+          <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load test results.</div>
+        ) : (
+          <>
+            <MetricStrip items={deepDiveMetrics} />
+
+            {renderModuleSummary(moduleStats)}
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <SectionCard title="Score distribution">
+                <ScoreDistributionChart data={scope.distribution || []} height="h-[200px]" />
+              </SectionCard>
+              <SectionCard title="Topics">
+                <TopicStrengths topics={subjectData} />
+              </SectionCard>
+            </div>
+
+            <SectionCard
+              title="Student results"
+              subtitle={testTableQuery.isFetching ? "Updating…" : `${toNumber(testTablePagination.total)} submissions`}
+              bodyClassName="p-0"
+              right={
+                <>
+                  <input
+                    value={detailSearch}
+                    onChange={(event) => setDetailSearch(event.target.value)}
+                    placeholder="Search student or roll no"
+                    aria-label="Search student results"
+                    className="h-9 w-full basis-full rounded-lg border border-border bg-background px-3 text-sm sm:w-56 sm:basis-auto"
+                  />
+                  <select
+                    value={deepDiveSort}
+                    onChange={(event) => setDeepDiveSort(event.target.value)}
+                    aria-label="Sort student results"
+                    className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-text-primary"
+                  >
+                    <option value="score">Highest score</option>
+                    <option value="studentName">Name (A–Z)</option>
+                    <option value="violationCount">Most violations</option>
+                    <option value="timeTaken">Longest time</option>
+                    <option value="date">Most recent</option>
+                  </select>
+                </>
+              }
+            >
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr>
-                      <Th>S.No</Th>
-                      <Th>Assessment Name</Th>
-                      <Th>Status</Th>
-                      <Th>Date</Th>
-                      <Th>Submissions</Th>
-                      <Th>Avg Score</Th>
-                      <Th>Pass Rate</Th>
+                      <Th>Student</Th>
+                      <Th>Department · Batch</Th>
+                      <Th>Score</Th>
+                      {moduleColumns.map((mod) => (
+                        <Th key={mod.key}>{moduleShortLabel(mod.key)}</Th>
+                      ))}
+                      <Th>Result</Th>
                       <Th>Violations</Th>
-                      <Th>Actions</Th>
                     </tr>
                   </thead>
                   <tbody>
-                    {testsList.map((test, index) => (
-                      <tr key={test.testId} className="border-t border-border/70 hover:bg-muted/40">
-                        <td className="px-4 py-3 tabular-nums text-text-secondary">{String(startIndex + index + 1).padStart(2, "0")}</td>
-                        <td className="px-4 py-3">
-                          <p className="font-medium text-text-primary">{test.title || "Untitled test"}</p>
-                          <p className="text-xs text-text-secondary">{test.department || "-"} · {test.batch || "-"}</p>
-                        </td>
-                        <td className="px-4 py-3"><StatusBadge label={test.status || "-"} variant={TEST_STATUS_VARIANT[test.status] || "default"} /></td>
-                        <td className="whitespace-nowrap px-4 py-3 text-text-secondary">{test.startsAt ? formatDateLabel(test.startsAt) : "-"}</td>
-                        <td className="px-4 py-3 tabular-nums">{toNumber(test.submissionCount)}</td>
-                        <td className="px-4 py-3"><ScoreBadge score={test.avgScore} /></td>
-                        <td className="px-4 py-3 tabular-nums">{formatPercent(test.passRate)}</td>
-                        <td className="px-4 py-3"><ViolationBadge count={test.violations} /></td>
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => handleTestOpen(test.testId)}
-                            className="text-xs font-semibold text-primary transition-opacity hover:opacity-70"
-                          >
-                            View Details
-                          </button>
+                    {testTableRows.map((row) => {
+                      const overall = moduleColumns.length > 0 ? overallModuleMarks(row) : null;
+                      return (
+                        <tr key={row.submissionId || row.id} className="border-t border-border/70 hover:bg-muted/40">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <Avatar name={row.studentName} seed={row.studentId} />
+                              <div className="min-w-0">
+                                <p className="truncate font-medium text-text-primary">{row.studentName || "-"}</p>
+                                <p className="truncate text-xs text-text-secondary">{row.studentRollNo || "-"}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-text-secondary">{row.department || "-"} · {row.batch || "-"}</td>
+                          <td className="px-4 py-3">
+                            <ScoreWithMarks
+                              percent={row.scorePercent ?? row.score}
+                              obtained={overall ? overall.obtained : row.obtainedMarks}
+                              total={overall ? overall.max : row.totalMarks}
+                            />
+                          </td>
+                          {moduleColumns.map((mod) => {
+                            const marks = moduleMarksFor(row, mod);
+                            return (
+                              <td key={mod.key} className="px-4 py-3 tabular-nums text-text-primary">
+                                {marks == null ? <span className="text-text-secondary">—</span> : marks}
+                              </td>
+                            );
+                          })}
+                          <td className="px-4 py-3">
+                            <ResultBadge status={row.status} score={row.scorePercent ?? row.score} />
+                            {row.status && row.status !== "SUBMITTED" ? (
+                              <p className="mt-1 text-[11px] text-text-secondary">{String(row.status).replace(/_/g, " ").toLowerCase()}</p>
+                            ) : null}
+                          </td>
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              onClick={() => handleViolationClick(row.studentName, row.violations)}
+                              className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                              title="Review violations"
+                            >
+                              <ViolationBadge count={row.violationCount} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {testTableRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={5 + moduleColumns.length} className="px-4 py-8">
+                          <EmptyState title="No submissions yet" description="Student results appear once this test has submissions." />
                         </td>
                       </tr>
-                    ))}
+                    ) : null}
                   </tbody>
                 </table>
               </div>
               <div className="border-t border-border/70 p-4">
-                <Pagination
-                  page={testsPagination.page}
-                  totalPages={testsPagination.totalPages}
-                  total={testsPagination.total}
-                  onPageChange={setTestsPage}
-                />
+                <Pagination page={testTablePagination.page} totalPages={testTablePagination.totalPages} total={testTablePagination.total} onPageChange={setDetailPage} />
               </div>
-            </>
-          )}
-        </article>
+            </SectionCard>
+
+            {notAttendedStudents.length > 0 ? (
+              <AbsentStudentsCard
+                title="Did not attempt"
+                subtitle="Assigned students with no submission for this test."
+                students={notAttendedStudents}
+                count={notAttendedStudents.length}
+              />
+            ) : null}
+          </>
+        )}
       </section>
     );
   };
-
-  const renderSuperTestDeepDive = () => {
-    const moduleColumns = moduleColumnDefs(testTableRows, scope?.modulePerformance);
-    const moduleStats = Array.isArray(scope?.modulePerformance?.moduleStats)
-      ? scope.modulePerformance.moduleStats
-      : [];
-    return (
-    <section className="space-y-4">
-      <DeepDiveHeader
-        title={selectedTestMeta?.title || selectedTestName || "Test performance"}
-        subtitle={`${selectedCollege?.name || "College"} · deep-dive performance and integrity.`}
-        onBack={handleTestBack}
-      />
-
-      <TabNav
-        tabs={DEEP_DIVE_VIEWS.map((view) => ({ key: view.key, label: view.label }))}
-        active={deepDiveView}
-        onChange={setDeepDiveView}
-      />
-
-      {deepDiveView === "items" ? <ItemAnalysisView query={itemAnalysisQuery} /> : null}
-      {deepDiveView === "integrity" ? <IntegrityView query={integrityQuery} /> : null}
-
-      {deepDiveView !== "performance" ? null : scopeQuery.isLoading ? (
-        <div className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">Loading test analytics…</div>
-      ) : scopeQuery.isError ? (
-        <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load test analytics.</div>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {superTestKpis.map((item) => (
-              <StatCard key={item.key} {...item} />
-            ))}
-          </div>
-
-          {moduleStats.length > 0 ? (
-            <article className="rounded-2xl border border-border bg-card p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-              <div className="border-b border-border/70 pb-3">
-                <h3 className="text-lg font-semibold text-text-primary">Module Performance</h3>
-                <p className="text-xs text-text-secondary">Per-module average score, completion, and attempts</p>
-              </div>
-              <div className="grid gap-3 pt-4 md:grid-cols-3">
-                {moduleStats.map((stat) => (
-                  <div key={stat.key} className="rounded-xl border border-border bg-background p-3">
-                    <p className="text-sm font-semibold text-text-primary">{stat.name}</p>
-                    <p className="mt-1 text-3xl font-bold text-text-primary">{formatPercent(stat.averagePercentage)}</p>
-                    <p className="text-xs text-text-secondary">avg score · {toNumber(stat.attempts)} attempts</p>
-                    <div className="mt-2 flex items-center gap-1">
-                      <span className={`h-1.5 flex-1 rounded-full ${clampPercent(stat.averagePercentage) >= 60 ? "bg-success" : clampPercent(stat.averagePercentage) >= 40 ? "bg-amber-500" : "bg-red-500"}`} />
-                    </div>
-                    <p className="mt-1 text-xs text-text-secondary">{formatPercent(stat.completionRate)} completion rate</p>
-                  </div>
-                ))}
-              </div>
-            </article>
-          ) : null}
-
-          <div className="grid gap-4 lg:grid-cols-[2fr_2fr]">
-            <ChartCard title="Score Distribution" height="h-[220px]">
-              <ScoreDonutChart data={scope.distribution || []} total={studentRows.length} />
-            </ChartCard>
-            <ChartCard title="Subject-wise Scores" height="h-[240px]">
-              <TopicPieChart data={subjectData} />
-            </ChartCard>
-          </div>
-
-          <ChartCard title="Score Spread" height="h-[220px]">
-            <DistributionSummary stats={scope.distributionStats} />
-          </ChartCard>
-
-          <article className="rounded-2xl border border-border bg-card">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 p-4">
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-semibold text-text-primary">Student Results</h3>
-                {testTableQuery.isFetching ? <span className="text-xs text-text-secondary">Updating…</span> : null}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  value={detailSearch}
-                  onChange={(event) => setDetailSearch(event.target.value)}
-                  placeholder="Search student, roll no, batch…"
-                  className="h-9 w-full max-w-xs rounded-lg border border-border bg-background px-3 text-sm"
-                />
-                <select
-                  value={deepDiveSort}
-                  onChange={(event) => setDeepDiveSort(event.target.value)}
-                  aria-label="Sort student results"
-                  className="h-9 rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
-                >
-                  <option value="score">Highest score</option>
-                  <option value="studentName">Name (A–Z)</option>
-                  <option value="violationCount">Most violations</option>
-                  <option value="timeTaken">Longest time</option>
-                  <option value="date">Most recent</option>
-                </select>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr>
-                    <Th>Student</Th>
-                    <Th>Roll No</Th>
-                    <Th>Department</Th>
-                    <Th>Batch</Th>
-                    <Th>Score</Th>
-                    {moduleColumns.map((mod) => (
-                      <Th key={mod.key}>{moduleShortLabel(mod.key)}</Th>
-                    ))}
-                    <Th>Result</Th>
-                    <Th>Status</Th>
-                    <Th>Violations</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {testTableRows.map((row) => (
-                    <tr key={row.submissionId || row.id} className="border-t border-border/70 hover:bg-muted/40">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <Avatar name={row.studentName} seed={row.studentId} />
-                          <span className="font-medium text-text-primary">{row.studentName || "-"}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-text-secondary">{row.studentRollNo || "-"}</td>
-                      <td className="px-4 py-3 text-text-secondary">{row.department || "-"}</td>
-                      <td className="px-4 py-3 text-text-secondary">{row.batch || "-"}</td>
-                      <td className="px-4 py-3"><ScoreBadge score={row.scorePercent ?? row.score} /></td>
-                      {moduleColumns.map((mod) => (
-                        <td key={mod.key} className="px-4 py-3"><ScoreBadge score={modulePercentageFor(row, mod)} /></td>
-                      ))}
-                      <td className="px-4 py-3"><ResultBadge status={row.status} score={row.scorePercent ?? row.score} /></td>
-                      <td className="px-4 py-3"><StatusBadge label={String(row.status || "-").toLowerCase()} variant={row.status === "SUBMITTED" ? "success" : "warning"} /></td>
-                      <td className="px-4 py-3"><ViolationBadge count={row.violationCount} /></td>
-                    </tr>
-                  ))}
-                  {testTableRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={8 + moduleColumns.length} className="px-4 py-8">
-                        <EmptyState title="No submissions yet" description="Student results appear once this test has submissions." />
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-            <div className="border-t border-border/70 p-4">
-              <Pagination
-                page={testTablePagination.page}
-                totalPages={testTablePagination.totalPages}
-                total={testTablePagination.total}
-                onPageChange={setDetailPage}
-              />
-            </div>
-          </article>
-
-          {notAttendedStudents.length > 0 ? (
-            <AbsentStudentsCard
-              title="Not Attended Students"
-              subtitle="Students who did not submit this test."
-              students={notAttendedStudents}
-              count={notAttendedStudents.length}
-            />
-          ) : null}
-        </>
-      )}
-    </section>
-  );
-  };
-
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-4 sm:px-6">
@@ -1214,13 +1162,25 @@ export default function ReportsPage() {
               College, department, and student performance analytics with integrity tracking.
             </p>
           </div>
-          <ExportButton
-            exportState={exportState}
-            onExport={handleExport}
-            onDownload={handleDownload}
-            disabled={!hasCollegeSelected}
-            disabledReason={!hasCollegeSelected ? "Select a college before exporting reports." : ""}
-          />
+          {exportState.status === "idle" ? (
+            <button
+              type="button"
+              onClick={() => setBuilderOpen(true)}
+              disabled={!hasCollegeSelected || csvBusy}
+              title={!hasCollegeSelected ? "Select a college before exporting reports." : ""}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {csvBusy ? "Preparing…" : "Generate Report"}
+            </button>
+          ) : (
+            <ExportButton
+              exportState={exportState}
+              onExport={() => setBuilderOpen(true)}
+              onDownload={handleDownload}
+              disabled={!hasCollegeSelected}
+              disabledReason={!hasCollegeSelected ? "Select a college before exporting reports." : ""}
+            />
+          )}
         </div>
         <div className="mt-4">
           <TabNav
@@ -1381,24 +1341,51 @@ export default function ReportsPage() {
             ) : null}
           </div>
         ) : null}
-      </section>
 
-      {!isTestDeepDive && ["overview", "departments", "student"].includes(mode) && loading ? <AnalyticsSkeleton /> : null}
-      {!isTestDeepDive && ["overview", "departments", "student"].includes(mode) && hasCollegeSelected && scopeQuery.isError ? <section className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load report data.</section> : null}
+        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          <span className="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">Saved views</span>
+          {savedViews.length === 0 ? (
+            <span className="text-xs text-text-secondary">None yet — save the current filters to reuse them.</span>
+          ) : (
+            savedViews.map((view) => (
+              <span key={view.id} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-xs">
+                <button type="button" onClick={() => setSearchParams(new URLSearchParams(view.search))} className="font-medium text-text-primary hover:underline">
+                  {view.name}
+                </button>
+                <button type="button" onClick={() => removeView(view.id)} aria-label={`Remove saved view ${view.name}`} className="text-text-secondary hover:text-red-500">
+                  ×
+                </button>
+              </span>
+            ))
+          )}
+          <button
+            type="button"
+            onClick={handleSaveView}
+            className="rounded-full border border-dashed border-border px-3 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+          >
+            + Save current view
+          </button>
+        </div>
+      </section>
 
       {!hasCollegeSelected && !collegesQuery.isLoading ? (
         <section className="rounded-2xl border border-border bg-card">
-          <EmptyState title="Select a college" description="Choose a college first to view reports for that college." />
+          <EmptyState title="Select a college" description="Choose a college above to see its reports." />
         </section>
       ) : null}
 
       {hasCollegeSelected && isTestDeepDive ? renderSuperTestDeepDive() : null}
 
+      {hasCollegeSelected && !isTestDeepDive && (ANALYTICS_MODES.has(mode) || mode === "batch") && loading ? <AnalyticsSkeleton /> : null}
+      {hasCollegeSelected && !isTestDeepDive && (ANALYTICS_MODES.has(mode) || mode === "batch") && scopeQuery.isError ? (
+        <section className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load report data.</section>
+      ) : null}
+
       {hasCollegeSelected && !isTestDeepDive && mode === "batch" ? (
         <section className="space-y-4">
-          <article className="rounded-2xl border border-border bg-card p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+          <article className="rounded-2xl border border-border bg-card p-4">
             <label className="block max-w-sm space-y-1 text-xs text-text-secondary">
-              <span>Select Batch</span>
+              <span>Batch</span>
               <select
                 value={batchId}
                 onChange={(event) => handleBatchChange(event.target.value)}
@@ -1410,431 +1397,190 @@ export default function ReportsPage() {
                 ))}
               </select>
             </label>
-            {selectedBatch ? (
-              <p className="mt-2 text-xs text-text-secondary">
-                Showing the report scoped to <span className="font-medium text-text-primary">{selectedBatch.name}</span>.
-              </p>
-            ) : null}
           </article>
-
-          {loading ? (
-            <AnalyticsSkeleton />
-          ) : scopeQuery.isError ? (
-            <section className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load batch report data.</section>
-          ) : (
+          {analyticsReady ? (
             <>
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                {overviewStatCards.map((item) => (
-                  <StatCard key={item.key} {...item} />
-                ))}
-              </div>
-
-              <div className="grid gap-4 lg:grid-cols-2">
-                <ChartCard title="Score Distribution" height="h-[240px]">
-                  <ScoreDonutChart data={scope.distribution || []} total={toNumber(metrics.attemptedStudents)} />
-                </ChartCard>
-                <ChartCard title="Topic-wise Performance" height="h-[240px]">
-                  <TopicPieChart data={subjectData} />
-                </ChartCard>
-              </div>
-
-              <article className="overflow-x-auto rounded-2xl border border-border bg-card">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 p-4">
-                  <div>
-                    <h3 className="text-lg font-semibold text-text-primary">
-                      {selectedBatch ? `${selectedBatch.name} — Student Performance` : "Batch Student Performance"}
-                    </h3>
-                    <p className="text-xs text-text-secondary">Ranked by average score. Click a student to open their report.</p>
-                  </div>
-                  <span className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-text-secondary">
-                    {sortedStudentRows.length} {sortedStudentRows.length === 1 ? "entry" : "entries"}
-                  </span>
-                </div>
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr>
-                      <Th sortKey="rank" sortState={sortState} onSort={handleSort}>S.No</Th>
-                      <Th sortKey="name" sortState={sortState} onSort={handleSort}>Student Name</Th>
-                      <Th sortKey="department" sortState={sortState} onSort={handleSort}>Department</Th>
-                      <Th sortKey="year" sortState={sortState} onSort={handleSort}>Year</Th>
-                      <Th sortKey="avgScore" sortState={sortState} onSort={handleSort}>Avg Score</Th>
-                      <Th>Result</Th>
-                      <Th sortKey="testsTaken" sortState={sortState} onSort={handleSort}>Tests</Th>
-                      <Th sortKey="violations" sortState={sortState} onSort={handleSort}>Violations</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleStudentRows.map((row) => (
-                      <tr key={row.studentId} className="border-t border-border/70 hover:bg-muted/40">
-                        <td className="px-4 py-3 tabular-nums text-text-secondary">{row.rank ? `#${row.rank}` : "-"}</td>
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => updateParams({ college: row.collegeId || collegeId || "", department: row.departmentId || departmentId, student_id: row.studentId, mode: "student" })}
-                            className="flex items-center gap-3 text-left"
-                          >
-                            <Avatar name={row.name} seed={row.studentId} />
-                            <span className="min-w-0">
-                              <span className="block truncate font-medium text-text-primary hover:text-chart-1">{row.name}</span>
-                              <span className="block truncate text-xs font-normal text-text-secondary">{row.rollNo}</span>
-                            </span>
-                          </button>
-                        </td>
-                        <td className="px-4 py-3 text-text-secondary">{row.department}</td>
-                        <td className="px-4 py-3 text-text-secondary">{row.year ? `${row.year} YEAR` : "-"}</td>
-                        <td className="px-4 py-3"><ScoreBadge score={row.avgScore} /></td>
-                        <td className="px-4 py-3">{row.testsTaken > 0 ? <ResultBadge score={row.avgScore} /> : <span className="text-text-secondary">-</span>}</td>
-                        <td className="px-4 py-3">{row.testsTaken}</td>
-                        <td className="px-4 py-3"><ViolationBadge count={row.violations} /></td>
-                      </tr>
-                    ))}
-                    {visibleStudentRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} className="px-4 py-8">
-                          <EmptyState title="No students in this batch scope" description="Students appear once they are assigned to the selected batch." />
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-                {sortedStudentRows.length > visibleStudentRows.length ? (
-                  <div className="flex items-center justify-between gap-3 border-t border-border/70 px-4 py-3 text-xs text-text-secondary">
-                    <span>Showing {visibleStudentRows.length} of {sortedStudentRows.length} students.</span>
-                    <button
-                      type="button"
-                      onClick={() => setStudentVisibleLimit((value) => value + 100)}
-                      className="rounded-lg border border-border px-3 py-1 font-semibold text-text-primary hover:bg-muted"
-                    >
-                      Show more
-                    </button>
-                  </div>
-                ) : null}
-              </article>
+              <MetricStrip items={overviewMetrics} />
+              {renderStudentRanking(selectedBatch ? `${selectedBatch.name} — students` : "Students")}
             </>
-          )}
-
+          ) : null}
           {renderTestsListCard()}
         </section>
       ) : null}
 
       {hasCollegeSelected && !isTestDeepDive && mode === "trends" ? (
-        <TrendsView
-          query={trendsQuery}
-          groupBy={trendGroupBy}
-          onGroupByChange={setTrendGroupBy}
-          indexed={trendIndexed}
-          onIndexedChange={setTrendIndexed}
-          showGroupBy
-        />
+        <TrendsView query={trendsQuery} groupBy={trendGroupBy} onGroupByChange={setTrendGroupBy} showGroupBy />
       ) : null}
 
       {hasCollegeSelected && !isTestDeepDive && mode === "at-risk" ? (
-        <AtRiskView
-          query={atRiskQuery}
-          canViewStudent
-          onViewStudent={(id) => updateParams({ mode: "student", student_id: id })}
-        />
+        <AtRiskView query={atRiskQuery} canViewStudent onViewStudent={(id) => updateParams({ mode: "student", student_id: id })} />
       ) : null}
 
-      {hasCollegeSelected && !isTestDeepDive && ["overview", "departments", "student"].includes(mode) && !loading && !scopeQuery.isError ? (
+      {analyticsReady && mode === "overview" ? (
         <section className="space-y-4">
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {overviewStatCards.map((item) => (
-              <StatCard key={item.key} {...item} />
-            ))}
+          <MetricStrip items={overviewMetrics} />
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <SectionCard title="Score distribution">
+              <ScoreDistributionChart data={scope.distribution || []} height="h-[200px]" />
+            </SectionCard>
+            <SectionCard title="Topics">
+              <TopicStrengths topics={subjectData} />
+            </SectionCard>
           </div>
 
-          {mode === "overview" ? (
-            <>
-              <div className="grid gap-4 lg:grid-cols-3">
-                <ChartCard title="Score Distribution" height="h-[240px]">
-                  <ScoreDonutChart data={scope.distribution || []} total={toNumber(metrics.attemptedStudents)} />
-                </ChartCard>
-                <ChartCard title="Topic-wise Performance" height="h-[240px]">
-                  <TopicPieChart data={subjectData} />
-                </ChartCard>
-                <InsightCard
-                  title={`Institutional Health · ${healthLabel}`}
-                  message={insightMessage}
-                  action={{ label: "View Departments", onClick: () => handleModeSwitch("departments") }}
-                />
-              </div>
-
-              <ChartCard title="Score Spread" height="h-[200px]">
-                <DistributionSummary stats={scope.distributionStats} />
-              </ChartCard>
-
-              <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
-                <ChartCard title="Score Trend" height="h-[240px]">
-                  <AreaTrendChart data={trendData} xKey="month" dataKey="score" name="Avg Score" color="var(--chart-1)" />
-                </ChartCard>
-                <RecentExports reports={reports} onDownload={downloadJob} />
-              </div>
-
-              <ChartCard title={collegeId ? "Department Performance Comparison" : "Department Overview Across Colleges"} height="h-auto">
-                <GroupedBarChart
-                  data={departmentChartRows}
-                  xKey="department"
-                  series={[
-                    { key: "avgScore", label: "Avg Score" },
-                    { key: "passRate", label: "Pass Rate" },
-                    { key: "participation", label: "Participation" },
-                  ]}
-                  onBarClick={(name) => {
-                    const dep = departments.find((item) => item.name === name);
-                    if (dep) updateParams({ mode: "departments", department: dep.id });
-                  }}
-                />
-              </ChartCard>
-            </>
-          ) : null}
-
-          {mode === "departments" ? (
-            <>
-              {!collegeId ? (
-                <EmptyState title="Select a college" description="Choose a college to view all departments or one particular department." />
-              ) : (
-                <>
-                  <div className="grid gap-4 lg:grid-cols-3">
-                    <ChartCard title="Score Distribution" height="h-[240px]">
-                      <ScoreDonutChart data={scope.distribution || []} total={toNumber(metrics.attemptedStudents)} />
-                    </ChartCard>
-                    <ChartCard title="Topic-wise Performance" height="h-[240px]">
-                      <TopicPieChart data={subjectData} />
-                    </ChartCard>
-                    <ChartCard title={selectedDepartment ? `${selectedDepartment.name} Performance` : "All Departments Performance"} height="h-[240px]">
-                      <div className="h-full overflow-auto">
-                        <GroupedBarChart
-                          data={departmentChartRows}
-                          xKey="department"
-                          series={[
-                            { key: "avgScore", label: "Avg Score" },
-                            { key: "passRate", label: "Pass Rate" },
-                          ]}
-                        />
-                      </div>
-                    </ChartCard>
-                  </div>
-
-                  <ChartCard title="Score Spread" height="h-[200px]">
-                    <DistributionSummary stats={scope.distributionStats} />
-                  </ChartCard>
-
-                  <article className="overflow-x-auto rounded-2xl border border-border bg-card">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr>
-                          <Th sortKey="department" sortState={sortState} onSort={handleSort}>Department</Th>
-                          <Th sortKey="students" sortState={sortState} onSort={handleSort}>Students</Th>
-                          <Th sortKey="submissions" sortState={sortState} onSort={handleSort}>Submissions</Th>
-                          <Th sortKey="avgScore" sortState={sortState} onSort={handleSort}>Avg Score</Th>
-                          <Th sortKey="passRate" sortState={sortState} onSort={handleSort}>Pass Rate</Th>
-                          <Th sortKey="participation" sortState={sortState} onSort={handleSort}>Participation</Th>
-                          <Th>Status</Th>
-                          <Th sortKey="violations" sortState={sortState} onSort={handleSort}>Violations</Th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedDepartmentRows.map((row) => {
-                          const health = row.avgScore >= 75
-                            ? { label: "Healthy", variant: "success" }
-                            : row.avgScore >= 50
-                              ? { label: "Average", variant: "warning" }
-                              : { label: "Needs Review", variant: "danger" };
-                          return (
-                          <tr key={row.departmentId || row.department} className="border-t border-border/70 hover:bg-muted/40">
-                            <td className="px-4 py-3 font-medium text-text-primary">{row.department}</td>
-                            <td className="px-4 py-3">{row.students}</td>
-                            <td className="px-4 py-3">{row.submissions}</td>
-                            <td className="px-4 py-3"><ScoreBadge score={row.avgScore} /></td>
-                            <td className="px-4 py-3">{formatPercent(row.passRate)}</td>
-                            <td className="px-4 py-3">{formatPercent(row.participation)}</td>
-                            <td className="px-4 py-3"><StatusBadge label={health.label} variant={health.variant} /></td>
-                            <td className="px-4 py-3"><ViolationBadge count={row.violations} /></td>
-                          </tr>
-                          );
-                        })}
-                        {sortedDepartmentRows.length === 0 ? (
-                          <tr>
-                            <td colSpan={8} className="px-4 py-8">
-                              <EmptyState title="No department reports yet" description="Department metrics appear after students submit tests." />
-                            </td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </article>
-                </>
-              )}
-            </>
-          ) : null}
-
-          {mode === "student" ? (
-            <>
-              
-
-              {!studentId ? (
-                <EmptyState title="Select a student" description="Search above or click a student row to view test-by-test performance." />
-              ) : studentDetailQuery.isLoading ? (
-                <section className="rounded-2xl border border-border bg-card p-4 text-sm text-text-secondary">Loading student performance...</section>
-              ) : (
-                <>
-                  <StudentSummary student={selectedStudent} metrics={selectedStudentMetrics} />
-
-                  <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
-                    <ChartCard title="Student Score Trend" height="h-[220px]">
-                      <LineTrendChart
-                        data={attemptRows.map((row) => ({ month: formatDateLabel(row.date), score: row.scorePercent })).reverse()}
-                        xKey="month"
-                        dataKey="score"
-                        name="Score"
-                        color="var(--chart-2)"
-                      />
-                    </ChartCard>
-                    <ChartCard title="Topic-wise Performance" height="h-[220px]">
-                      <TopicPieChart data={(studentDetail.subjectPerformance || []).map((row) => ({ subject: row.subject, score: toNumber(row.score) }))} />
-                    </ChartCard>
-                  </div>
-
-                  <article className="overflow-x-auto rounded-2xl border border-border bg-card">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr>
-                          <Th sortKey="date" sortState={sortState} onSort={handleSort}>Date</Th>
-                          <Th sortKey="testName" sortState={sortState} onSort={handleSort}>Test</Th>
-                          <Th sortKey="subject" sortState={sortState} onSort={handleSort}>Subject</Th>
-                          <Th sortKey="scorePercent" sortState={sortState} onSort={handleSort}>Score</Th>
-                          <Th>Result</Th>
-                          <Th sortKey="obtainedMarks" sortState={sortState} onSort={handleSort}>Marks</Th>
-                          <Th sortKey="timeTaken" sortState={sortState} onSort={handleSort}>Time</Th>
-                          <Th sortKey="violationsCount" sortState={sortState} onSort={handleSort}>Violations</Th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedAttemptRows.map((row) => (
-                          <tr key={row.id} className="border-t border-border/70 hover:bg-muted/40">
-                            <td className="whitespace-nowrap px-4 py-3 text-text-secondary">{formatDateLabel(row.date)}</td>
-                            <td className="px-4 py-3 font-medium text-text-primary">{row.testName}</td>
-                            <td className="px-4 py-3 text-text-secondary">{row.subject}</td>
-                            <td className="px-4 py-3"><ScoreBadge score={row.scorePercent} /></td>
-                            <td className="px-4 py-3"><ResultBadge status={row.status} score={row.scorePercent} /></td>
-                            <td className="px-4 py-3">
-                              {row.totalMarks > 0 ? `${row.obtainedMarks.toFixed(2)} / ${row.totalMarks.toFixed(2)}` : "-"}
-                            </td>
-                            <td className="px-4 py-3">{Math.round(row.timeTaken / 60)} min</td>
-                            <td className="px-4 py-3"><ViolationBadge count={row.violationsCount} /></td>
-                          </tr>
-                        ))}
-                        {sortedAttemptRows.length === 0 ? (
-                          <tr>
-                            <td colSpan={8} className="px-4 py-8">
-                              <EmptyState title="No submitted tests" description="This student's completed tests will appear here." />
-                            </td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </article>
-                  <article className="overflow-x-auto rounded-2xl border border-border bg-card">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 p-4">
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5" />
-                      </svg>
-                    </span>
-                    <div>
-                      <h3 className="text-lg font-semibold text-text-primary">Student Performance Log</h3>
-                      <p className="text-xs text-text-secondary">Select a student to open complete test performance.</p>
-                    </div>
-                  </div>
-                  <span className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-text-secondary">
-                    {sortedStudentRows.length} {sortedStudentRows.length === 1 ? "entry" : "entries"}
-                  </span>
-                </div>
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr>
-                      <Th sortKey="rank" sortState={sortState} onSort={handleSort}>S.No</Th>
-                      <Th sortKey="name" sortState={sortState} onSort={handleSort}>Student Name</Th>
-                      <Th sortKey="department" sortState={sortState} onSort={handleSort}>Department</Th>
-                      <Th sortKey="year" sortState={sortState} onSort={handleSort}>Year</Th>
-                      <Th sortKey="avgScore" sortState={sortState} onSort={handleSort}>Avg Score</Th>
-                      <Th>Result</Th>
-                      <Th sortKey="testsTaken" sortState={sortState} onSort={handleSort}>Tests</Th>
-                      <Th sortKey="violations" sortState={sortState} onSort={handleSort}>Violations</Th>
-                      <Th>Actions</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleStudentRows.map((row) => (
-                      <tr key={row.studentId} className="border-t border-border/70 hover:bg-muted/40">
-                        <td className="px-4 py-3 tabular-nums text-text-secondary">{row.rank ? `#${row.rank}` : "-"}</td>
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => updateParams({ college: row.collegeId || collegeId || "", department: row.departmentId || departmentId, student_id: row.studentId })}
-                            className="flex items-center gap-3 text-left"
-                          >
-                            <Avatar name={row.name} seed={row.studentId} />
-                            <span className="min-w-0">
-                              <span className="block truncate font-medium text-text-primary hover:text-chart-1">{row.name}</span>
-                              <span className="block truncate text-xs font-normal text-text-secondary">{row.rollNo}</span>
-                            </span>
-                          </button>
-                        </td>
-                        <td className="px-4 py-3 text-text-secondary">{row.department}</td>
-                        <td className="px-4 py-3 text-text-secondary">{row.year ? `${row.year} YEAR` : "-"}</td>
-                        <td className="px-4 py-3"><ScoreBadge score={row.avgScore} /></td>
-                        <td className="px-4 py-3">{row.testsTaken > 0 ? <ResultBadge score={row.avgScore} /> : <span className="text-text-secondary">-</span>}</td>
-                        <td className="px-4 py-3">{row.testsTaken}</td>
-                        <td className="px-4 py-3"><ViolationBadge count={row.violations} /></td>
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            title="View student report"
-                            onClick={() => updateParams({ college: row.collegeId || collegeId || "", department: row.departmentId || departmentId, student_id: row.studentId })}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary transition-colors hover:bg-muted hover:text-primary"
-                          >
-                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {sortedStudentRows.length > visibleStudentRows.length ? (
-                  <div className="flex items-center justify-between gap-3 border-t border-border/70 px-4 py-3 text-xs text-text-secondary">
-                    <span>Showing {visibleStudentRows.length} of {sortedStudentRows.length} students.</span>
-                    <button
-                      type="button"
-                      onClick={() => setStudentVisibleLimit((value) => value + 100)}
-                      className="rounded-lg border border-border px-3 py-1 font-semibold text-text-primary hover:bg-muted"
-                    >
-                      Show more
-                    </button>
-                  </div>
-                ) : null}
-              </article>
-                </>
-              )}
-            </>
-          ) : null}
-          {showNotAttendedCard ? (
-            <AbsentStudentsCard
-              title={selectedTestName ? `Not Attended: ${selectedTestName}` : "Not Attended Students"}
-              subtitle="Students who did not submit the selected test."
-              students={notAttendedStudents}
-              count={notAttendedStudents.length}
+          <SectionCard title="Departments" subtitle="Ranked by average score — select one to focus the report">
+            <GroupPerformanceList
+              rows={departmentChartRows}
+              labelKey="department"
+              onSelect={(row) => row.departmentId && handleDepartmentChange(row.departmentId)}
             />
-          ) : null}
+          </SectionCard>
 
           {renderTestsListCard()}
+
+          <RecentExports reports={reports} onDownload={downloadJob} subtitle="Generated PDFs for this college." />
         </section>
       ) : null}
+
+      {analyticsReady && mode === "departments" ? (
+        <SectionCard title="Departments" subtitle="Select a department to open its report" bodyClassName="p-0">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr>
+                  <Th sortKey="department" sortState={sortState} onSort={handleSort}>Department</Th>
+                  <Th sortKey="students" sortState={sortState} onSort={handleSort}>Students</Th>
+                  <Th sortKey="submissions" sortState={sortState} onSort={handleSort}>Submissions</Th>
+                  <Th sortKey="avgScore" sortState={sortState} onSort={handleSort}>Avg score</Th>
+                  <Th sortKey="passRate" sortState={sortState} onSort={handleSort}>Pass rate</Th>
+                  <Th sortKey="participation" sortState={sortState} onSort={handleSort}>Participation</Th>
+                  <Th sortKey="violations" sortState={sortState} onSort={handleSort}>Violations</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedDepartmentRows.map((row) => (
+                  <tr key={row.departmentId || row.department} className="border-t border-border/70 hover:bg-muted/40">
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => updateParams({ department: row.departmentId || "", mode: "", student_id: "", batch_id: "" })}
+                        className="text-left font-medium text-text-primary hover:text-primary"
+                      >
+                        {row.department}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 tabular-nums">{row.students}</td>
+                    <td className="px-4 py-3 tabular-nums">{row.submissions}</td>
+                    <td className="px-4 py-3"><ScoreBadge score={row.avgScore} /></td>
+                    <td className="px-4 py-3 tabular-nums">{formatPercent(row.passRate)}</td>
+                    <td className="px-4 py-3 tabular-nums">{formatPercent(row.participation)}</td>
+                    <td className="px-4 py-3"><ViolationBadge count={row.violations} /></td>
+                  </tr>
+                ))}
+                {sortedDepartmentRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8">
+                      <EmptyState title="No department results yet" description="Department results appear after students submit tests." />
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+      ) : null}
+
+      {analyticsReady && mode === "student" && studentId ? (
+        <section className="space-y-4">
+          <button
+            type="button"
+            onClick={() => updateParams({ student_id: "" })}
+            className="inline-flex h-9 items-center gap-1 rounded-xl border border-border bg-card px-3 text-sm font-medium text-text-primary transition-colors hover:bg-muted"
+          >
+            ← All students
+          </button>
+
+          {studentDetailQuery.isLoading ? (
+            <section className="rounded-2xl border border-border bg-card p-4 text-sm text-text-secondary">Loading student results…</section>
+          ) : (
+            <>
+              <StudentSummary student={selectedStudent} metrics={selectedStudentMetrics} />
+
+              <SectionCard title="Topics">
+                <TopicStrengths topics={(studentDetail.subjectPerformance || []).map((row) => ({ subject: row.subject, score: toNumber(row.score) }))} />
+              </SectionCard>
+
+              <SectionCard title="Test attempts" subtitle={`${attemptRows.length} submitted`} bodyClassName="p-0">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr>
+                        <Th sortKey="date" sortState={sortState} onSort={handleSort}>Date</Th>
+                        <Th sortKey="testName" sortState={sortState} onSort={handleSort}>Test</Th>
+                        <Th sortKey="scorePercent" sortState={sortState} onSort={handleSort}>Score</Th>
+                        <Th>Result</Th>
+                        <Th sortKey="timeTaken" sortState={sortState} onSort={handleSort}>Time</Th>
+                        <Th sortKey="violationsCount" sortState={sortState} onSort={handleSort}>Violations</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedAttemptRows.map((row) => (
+                        <tr key={row.id} className="border-t border-border/70 hover:bg-muted/40">
+                          <td className="whitespace-nowrap px-4 py-3 text-text-secondary">{formatDateLabel(row.date)}</td>
+                          <td className="px-4 py-3 font-medium text-text-primary">{row.testName}</td>
+                          <td className="px-4 py-3"><ScoreWithMarks percent={row.scorePercent} obtained={row.obtainedMarks} total={row.totalMarks} /></td>
+                          <td className="px-4 py-3"><ResultBadge status={row.status} score={row.scorePercent} /></td>
+                          <td className="whitespace-nowrap px-4 py-3 tabular-nums text-text-secondary">{formatSecondsShort(row.timeTaken)}</td>
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              onClick={() => handleViolationClick(selectedStudent?.name, row.violationEvents)}
+                              className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                              title="Review violations"
+                            >
+                              <ViolationBadge count={row.violationsCount} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {sortedAttemptRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-4 py-8">
+                            <EmptyState title="No submitted tests" description="This student's submitted tests will appear here." />
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </SectionCard>
+            </>
+          )}
+        </section>
+      ) : null}
+
+      {analyticsReady && mode === "student" && !studentId ? renderStudentRanking("Students") : null}
+
+      <ReportBuilderDialog
+        open={builderOpen}
+        onOpenChange={setBuilderOpen}
+        defaultType={defaultReportType}
+        scopeSummary={reportScopeSummary}
+        hasStudent={Boolean(studentId)}
+        tests={tests}
+        defaultTestIds={isTestDeepDive ? [testId] : []}
+        onGenerate={handleGenerate}
+      />
+
+      <ViolationReviewDialog
+        open={violationDialog.open}
+        onOpenChange={(open) => setViolationDialog((prev) => ({ ...prev, open }))}
+        studentName={violationDialog.studentName}
+        events={violationDialog.events}
+        actions={SUPER_REVIEW_ACTIONS}
+        onReview={handleViolationReview}
+      />
     </div>
   );
 }

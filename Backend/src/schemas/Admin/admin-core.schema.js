@@ -1,4 +1,6 @@
 const { z } = require("zod");
+const { REVIEWABLE_ANOMALY_TYPES } = require("../../constants/report-anomaly-types");
+const { MAX_REPORT_TESTS } = require("../../constants/report-limits");
 const mongoose = require("mongoose");
 const { TEST_TYPES, PROCTORING_PRESETS, ALLOWED_MODULE_CATEGORIES } = require("../../services/test-config.service");
 const idSchema = z.string().trim().refine((value) => {
@@ -423,6 +425,8 @@ const generateReportSchema = z.object({
       .object({
         studentId: z.string().trim().min(1).optional(),
         testId: z.string().trim().min(1).optional(),
+        // Multi-test reports; a single entry is treated exactly like testId.
+        testIds: z.array(z.string().trim().min(1)).max(MAX_REPORT_TESTS, `Select at most ${MAX_REPORT_TESTS} tests`).optional(),
         departmentId: z.string().trim().min(1).optional(),
         batchId: z.string().trim().min(1).optional(),
         year: z.coerce.number().int().min(1).max(4).optional(),
@@ -447,11 +451,7 @@ const reviewReportAnomalySchema = z.object({
   body: z.object({
     testId: z.string().trim().min(1),
     anomalyId: z.string().trim().min(1),
-    anomalyType: z.enum([
-      "UNUSUALLY_FAST_HIGH_SCORE",
-      "HIGH_VIOLATIONS_HIGH_SCORE",
-      "IDENTICAL_ANSWER_PATTERN",
-    ]),
+    anomalyType: z.enum(REVIEWABLE_ANOMALY_TYPES),
     action: z.enum(["DISMISS", "ESCALATE"]),
     reason: z.string().trim().min(5).max(500),
   }),

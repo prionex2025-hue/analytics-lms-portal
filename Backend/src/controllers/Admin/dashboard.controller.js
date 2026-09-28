@@ -1,6 +1,8 @@
 const models = require("../../models");
 const { asyncHandler } = require("../../utils/http");
 const { getSubmissionScorePercent } = require("../../utils/score");
+const { getScopedDepartmentId } = require("../../utils/admin-scope");
+const { buildTestScope } = require("../../services/admin-department-report.service");
 const { REPORTABLE_SUBMISSION_STATUSES } = require("../../services/report-scope.service");
 
 const getAdminDashboard = asyncHandler(async (req, res) => {
@@ -8,6 +10,12 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
   const db = m.dbClient;
   const collegeId = req.collegeId;
   const now = new Date();
+
+  const scopedDepartmentId = getScopedDepartmentId(req, { requiredForDepartmentAdmin: false });
+  const departmentWhere = scopedDepartmentId ? { departmentId: scopedDepartmentId } : {};
+  const testWhere = scopedDepartmentId
+    ? { collegeId, id: { in: (await buildTestScope({ db, collegeId, departmentId: scopedDepartmentId, batchIds: [], testId: null })).map((test) => test.id) } }
+    : { collegeId };
 
   const [
     totalStudents,
@@ -18,11 +26,11 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
     recentActivity,
     tests,
   ] = await Promise.all([
-    db.student.count({ where: { collegeId, isActive: true } }),
-    db.test.count({ where: { collegeId } }),
+    db.student.count({ where: { collegeId, isActive: true, ...departmentWhere } }),
+    db.test.count({ where: testWhere }),
     db.test.count({
       where: {
-        collegeId,
+        ...testWhere,
         startsAt: { lte: now },
         endsAt: { gte: now },
         isPublished: true,
@@ -30,7 +38,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
     }),
     db.test.count({
       where: {
-        collegeId,
+        ...testWhere,
         startsAt: { gt: now },
       },
     }),
@@ -38,6 +46,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
       where: {
         collegeId,
         status: { in: REPORTABLE_SUBMISSION_STATUSES },
+        ...(scopedDepartmentId ? { user: { departmentId: scopedDepartmentId } } : {}),
       },
       include: {
         user: {
@@ -71,7 +80,7 @@ const getAdminDashboard = asyncHandler(async (req, res) => {
       take: 10,
     }),
     db.test.findMany({
-      where: { collegeId },
+      where: testWhere,
       include: {
         submissions: {
           where: { status: { in: REPORTABLE_SUBMISSION_STATUSES } },

@@ -292,6 +292,8 @@ describe("high-risk route rate limit wiring", () => {
         downloadSuperReport: mockMiddleware,
         regenerateSuperReportLink: mockMiddleware,
         getEscalatedAnomalies: mockMiddleware,
+        getSuperReportJobStatus: mockMiddleware,
+        reviewSuperAnomaly: mockMiddleware,
       },
       "../../schemas/SuperAdmin/super-admin-core.schema": {},
     });

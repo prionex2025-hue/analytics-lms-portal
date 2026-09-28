@@ -39,7 +39,7 @@
     "backup:restore-drill": "sh scripts/backup/restore-drill.sh",
     "restore:mongodb": "sh scripts/backup/mongodb-restore.sh",
     "restore:uploads": "sh scripts/backup/uploads-restore.sh",
-    "test": "jest --runInBand"
+    "test": "NODE_ENV=test REDIS_ENABLED= REDIS_QUEUE_ENABLED= jest --runInBand"
   },
   "keywords": [],
   "author": "",

@@ -7,6 +7,8 @@ const { describeDistribution } = require("../../utils/stats");
 const { generateSuperAdminReportHTML } = require("../../services/report-formatter.service");
 const { renderHtmlToPdfBuffer } = require("../../services/report-pdf.service");
 const { readReportPayload } = require("../../services/report-payload-store.service");
+const { createAuditLog } = require("../../services/audit.service");
+const { emitToRole } = require("../../realtime/socket");
 const { ApiError, asyncHandler } = require("../../utils/http");
 const { clampPercent, getSubmissionScorePercent, getTestTotalMarks } = require("../../utils/score");
 const { collectSubmissions } = require("../../services/submission-batch.service");
@@ -148,8 +150,15 @@ const generateSuperReport = asyncHandler(async (req, res) => {
   const filters = req.body.filters || {};
   const collegeId = normalizeId(filters.collegeId);
   const departmentId = normalizeId(filters.departmentId);
+  const batchId = normalizeId(filters.batchId);
   const studentId = normalizeId(filters.studentId);
-  const testId = normalizeId(filters.testId);
+  // One selected test stays a single-test report (testId); several become a
+  // multi-test report (testIds), matching the admin generateReport.
+  const selectedTestIds = [
+    ...new Set([...(Array.isArray(filters.testIds) ? filters.testIds : []), filters.testId].map(normalizeId).filter(Boolean)),
+  ];
+  const testId = selectedTestIds.length === 1 ? selectedTestIds[0] : "";
+  const testIds = selectedTestIds.length > 1 ? selectedTestIds : [];
   const year = normalizeStudentYear(filters.year);
   const studentScope = normalizeStudentScope(filters.studentScope);
   const passoutYear = normalizePassoutYear(filters.passoutYear);
@@ -159,9 +168,21 @@ const generateSuperReport = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Select a college before generating a super admin report");
   }
 
-  await validateReportScope({ db, collegeId, departmentId, studentId, testId, studentScope, passoutYear, passoutCohortId });
+  if (testIds.length > 0) {
+    const found = await db.test.findMany({ where: { id: { in: testIds }, collegeId }, select: { id: true } });
+    if (found.length !== testIds.length) {
+      throw new ApiError(404, "One or more selected tests were not found for the selected college");
+    }
+  }
+
+  await validateReportScope({ db, collegeId, departmentId, batchId, studentId, testId, studentScope, passoutYear, passoutCohortId });
   const reportFilters = { ...filters, collegeId };
+  delete reportFilters.testId;
+  delete reportFilters.testIds;
+  if (testIds.length > 0) reportFilters.testIds = testIds;
   if (departmentId) reportFilters.departmentId = departmentId;
+  if (batchId) reportFilters.batchId = batchId;
+  else delete reportFilters.batchId;
   if (studentId) reportFilters.studentId = studentId;
   if (testId) reportFilters.testId = testId;
   if (year) reportFilters.year = year;
@@ -587,6 +608,8 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
       const violationEvents = (submission.violations || []).map((violation) => ({
         id: violation.id,
         type: violation.type,
+        anomalyId: violation.id,
+        anomalyType: violation.type,
         createdAt: violation.createdAt,
         metadata: violation.metadata || null,
         testId: submission.testId,
@@ -660,8 +683,9 @@ const deriveSuperTestListStatus = (test = {}) => {
 };
 
 // College-scoped, paginated per-test aggregate list for the super-admin
-// Reports "Tests" tab. Mirrors the admin getReportTestsDashboard.
-const getSuperReportTestsDashboard = asyncHandler(async (req, res) => {
+// Reports "Tests" tab. Mirrors the admin buildReportTestsPayload; the tests CSV/XLSX
+// export reuses it so an export can never diverge from the tab.
+const buildSuperReportTestsPayload = async (req) => {
   const m = await models.init();
   const db = m.dbClient;
   const collegeId = normalizeId(req.query.collegeId);
@@ -714,7 +738,7 @@ const getSuperReportTestsDashboard = asyncHandler(async (req, res) => {
   });
 
   if (tests.length === 0) {
-    return res.status(200).json({ data: [], pagination: { page: 1, limit, total: 0, totalPages: 1 } });
+    return { data: [], pagination: { page: 1, limit, total: 0, totalPages: 1 } };
   }
   const testIds = tests.map((test) => String(test.id));
 
@@ -816,11 +840,15 @@ const getSuperReportTestsDashboard = asyncHandler(async (req, res) => {
   const safePage = Math.min(page, totalPages);
   const start = (safePage - 1) * limit;
 
-  res.status(200).json({
+  return {
     data: rows.slice(start, start + limit),
     pagination: { page: safePage, limit, total, totalPages },
     truncated,
-  });
+  };
+};
+
+const getSuperReportTestsDashboard = asyncHandler(async (req, res) => {
+  res.status(200).json(await buildSuperReportTestsPayload(req));
 });
 
 // Per-submission student results for a scoped test, mirroring the College Admin
@@ -1024,55 +1052,143 @@ const getPassoutCohorts = asyncHandler(async (req, res) => {
   res.status(200).json({ data: cohorts });
 });
 
+// Most recent escalations considered by the escalations inbox. Status is derived
+// per escalation, so filtering and pagination happen over this window in memory.
+const ESCALATION_WINDOW = 500;
+const ESCALATION_STATUSES = new Set(["pending", "resolved", "withdrawn", "all"]);
+
+// The test's anomalyReviews entry holds the latest decision on an anomaly
+// (admin and super reviews replace each other). Relative to an escalation:
+// - a super admin decision            -> resolved
+// - an admin DISMISS after escalating -> withdrawn (the admin retracted it)
+// - otherwise (still the escalation)  -> pending
+// An admin re-escalating after a super decision replaces the entry again, so
+// the anomaly correctly returns to pending.
+const deriveEscalationStatus = (review) => {
+  if (review?.reviewedBySuperAdminId) {
+    return {
+      status: "resolved",
+      resolution: { action: review.action, reason: review.reason || null, reviewedAt: review.reviewedAt || null },
+    };
+  }
+  if (review && review.action && review.action !== "ESCALATE") {
+    return { status: "withdrawn", resolution: { action: review.action, reason: review.reason || null, reviewedAt: review.reviewedAt || null } };
+  }
+  return { status: "pending", resolution: null };
+};
+
 const getEscalatedAnomalies = asyncHandler(async (req, res) => {
   const m = await models.init();
   const db = m.dbClient;
-  const limit = Math.min(Number(req.query.limit || 50), 200);
+  const rawStatus = String(req.query.status || "pending").toLowerCase();
+  const statusFilter = ESCALATION_STATUSES.has(rawStatus) ? rawStatus : "pending";
+  const collegeId = normalizeId(req.query.collegeId);
+  const search = String(req.query.search || "").trim().toLowerCase();
+  const page = Math.max(Number(req.query.page || 1), 1);
+  const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 100);
 
   const rows = await db.auditLog.findMany({
     where: {
       action: "REPORT_ANOMALY_ESCALATED",
+      ...(collegeId ? { collegeId } : {}),
     },
     include: {
-      college: {
-        select: {
-          id: true,
-          name: true,
-          code: true,
-        },
-      },
-      admin: {
-        select: {
-          id: true,
-          fullName: true,
-          email: true,
-        },
-      },
-      test: {
-        select: {
-          id: true,
-          title: true,
-          subject: true,
-        },
-      },
+      college: { select: { id: true, name: true, code: true } },
+      admin: { select: { id: true, fullName: true, email: true } },
+      test: { select: { id: true, title: true, subject: true } },
     },
     orderBy: { createdAt: "desc" },
-    take: limit,
+    take: ESCALATION_WINDOW,
   });
 
-  const data = rows.map((row) => ({
-    id: row.id,
-    escalatedAt: row.createdAt,
-    college: row.college,
-    admin: row.admin,
-    test: row.test,
-    anomalyId: row.afterState?.anomalyId || null,
-    anomalyType: row.afterState?.anomalyType || null,
-    reason: row.afterState?.reason || null,
-    action: row.afterState?.action || "ESCALATE",
-  }));
+  // Keep only the latest escalation per anomaly (rows are newest first).
+  const seen = new Set();
+  const escalations = [];
+  for (const row of rows) {
+    const testId = row.testId || row.test?.id || null;
+    const anomalyId = row.afterState?.anomalyId || null;
+    if (!testId || !anomalyId) continue;
+    const key = `${testId}:${anomalyId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    escalations.push({ row, testId: String(testId), anomalyId: String(anomalyId) });
+  }
 
-  res.status(200).json({ data });
+  const testIds = [...new Set(escalations.map((item) => item.testId))];
+  const tests = testIds.length
+    ? await db.test.findMany({ where: { id: { in: testIds } }, select: { id: true, anomalyReviews: true } })
+    : [];
+  const reviewsByTest = new Map(
+    tests.map((test) => [String(test.id), Array.isArray(test.anomalyReviews) ? test.anomalyReviews : []])
+  );
+
+  // Violation-backed anomalies carry the violation id; resolve the student it belongs to.
+  const anomalyIds = escalations.map((item) => item.anomalyId);
+  const violations = anomalyIds.length
+    ? await db.violation.findMany({
+        where: { id: { in: anomalyIds } },
+        select: { id: true, type: true, userId: true, submissionId: true, timestamp: true, createdAt: true },
+      })
+    : [];
+  const violationById = new Map(violations.map((violation) => [String(violation.id), violation]));
+  const studentIds = [...new Set(violations.map((violation) => violation.userId).filter(Boolean).map(String))];
+  const students = studentIds.length
+    ? await db.student.findMany({
+        where: { id: { in: studentIds } },
+        select: { id: true, fullName: true, studentId: true, enrollNumber: true, enrollmentNumber: true },
+      })
+    : [];
+  const studentById = new Map(students.map((student) => [String(student.id), student]));
+
+  const items = escalations.map(({ row, testId, anomalyId }) => {
+    const review = (reviewsByTest.get(testId) || []).find((item) => String(item?.anomalyId) === anomalyId) || null;
+    const violation = violationById.get(anomalyId) || null;
+    const student = violation?.userId ? studentById.get(String(violation.userId)) : null;
+    return {
+      id: row.id,
+      testId,
+      anomalyId,
+      anomalyType: row.afterState?.anomalyType || violation?.type || null,
+      reason: row.afterState?.reason || null,
+      escalatedAt: row.createdAt,
+      college: row.college || null,
+      admin: row.admin || null,
+      test: row.test || { id: testId, title: null },
+      student: student ? { id: student.id, name: student.fullName || "Student", rollNo: getStudentNumber(student) } : null,
+      violation: violation
+        ? { type: violation.type, occurredAt: violation.timestamp || violation.createdAt || null, submissionId: violation.submissionId || null }
+        : null,
+      ...deriveEscalationStatus(review),
+    };
+  });
+
+  const summary = items.reduce(
+    (acc, item) => ({ ...acc, [item.status]: acc[item.status] + 1 }),
+    { pending: 0, resolved: 0, withdrawn: 0 }
+  );
+
+  let filtered = statusFilter === "all" ? items : items.filter((item) => item.status === statusFilter);
+  if (search) {
+    filtered = filtered.filter((item) =>
+      [item.test?.title, item.college?.name, item.college?.code, item.admin?.fullName, item.student?.name, item.student?.rollNo, item.reason, item.anomalyType]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(search)
+    );
+  }
+
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * limit;
+
+  res.status(200).json({
+    data: filtered.slice(start, start + limit),
+    summary: { ...summary, total: items.length },
+    pagination: { page: safePage, limit, total, totalPages },
+    truncated: rows.length >= ESCALATION_WINDOW,
+  });
 });
 
 const getSuperReportJobs = asyncHandler(async (req, res) => {
@@ -1101,6 +1217,86 @@ const getSuperReportJobs = asyncHandler(async (req, res) => {
     }));
 
   res.status(200).json(data);
+});
+
+// The super queue records status transitions but not fine-grained progress, so
+// progress is derived from the status. Same response shape as the admin
+// getReportJobStatus so both portals poll a job the same way.
+const SUPER_JOB_PROGRESS = { QUEUED: 15, PROCESSING: 60, COMPLETED: 100, FAILED: 0 };
+
+const getSuperReportJobStatus = asyncHandler(async (req, res) => {
+  const m = await models.init();
+  const db = m.dbClient;
+  const { reportJobId } = req.params;
+
+  const job = await db.superReportJob.findUnique({ where: { id: reportJobId } });
+  if (!job) {
+    return res.status(404).json({ message: "Report job not found" });
+  }
+
+  const status = String(job.status || "QUEUED").toUpperCase();
+  res.status(200).json({
+    jobId: job.id,
+    status: status.toLowerCase(),
+    progress: SUPER_JOB_PROGRESS[status] ?? 0,
+    download_url: job.resultUrl || null,
+    expires_at: job?.filters?.resultUrlExpiresAt || null,
+    error_message: job.errorMessage || null,
+  });
+});
+
+// Super admin review of a report anomaly (typically one a college admin
+// escalated). The super admin is the final reviewer, so the outcome is DISMISS or
+// CONFIRM rather than another escalation.
+const reviewSuperAnomaly = asyncHandler(async (req, res) => {
+  const m = await models.init();
+  const db = m.dbClient;
+  const { testId, anomalyId, anomalyType, action, reason } = req.body;
+
+  const test = await db.test.findUnique({ where: { id: testId } });
+  if (!test) {
+    return res.status(404).json({ message: "Test not found" });
+  }
+
+  const existingReviews = Array.isArray(test.anomalyReviews) ? test.anomalyReviews : [];
+  const beforeReview = existingReviews.find((item) => item?.anomalyId === anomalyId) || null;
+
+  const nextReview = {
+    anomalyId,
+    anomalyType,
+    action,
+    reason,
+    reviewedAt: new Date().toISOString(),
+    reviewedBySuperAdminId: req.superAdmin.id,
+  };
+
+  await db.test.update({
+    where: { id: test.id },
+    data: {
+      anomalyReviews: [...existingReviews.filter((item) => item?.anomalyId !== anomalyId), nextReview],
+    },
+  });
+
+  await createAuditLog({
+    action: action === "CONFIRM" ? "SUPER_REPORT_ANOMALY_CONFIRMED" : "SUPER_REPORT_ANOMALY_DISMISSED",
+    targetType: "TEST_ANOMALY",
+    targetId: `${test.id}:${anomalyId}`,
+    collegeId: test.collegeId || null,
+    superAdminId: req.superAdmin.id,
+    testId: test.id,
+    beforeState: beforeReview,
+    afterState: nextReview,
+  });
+
+  // Keep every open super-admin escalations inbox in sync.
+  emitToRole("SUPER_ADMIN", "report:anomaly_resolved", {
+    testId: test.id,
+    anomalyId,
+    action,
+    reviewedAt: nextReview.reviewedAt,
+  });
+
+  res.status(200).json({ message: "Anomaly review saved", review: nextReview });
 });
 
 const downloadSuperReport = asyncHandler(async (req, res) => {
@@ -1202,6 +1398,7 @@ const regenerateSuperReportLink = asyncHandler(async (req, res) => {
 module.exports = {
   generateSuperReport,
   getSuperReportAnalytics,
+  buildSuperReportTestsPayload,
   getSuperReportTestsDashboard,
   getSuperReportTableDashboard,
   getPassoutCohorts,
@@ -1209,4 +1406,6 @@ module.exports = {
   downloadSuperReport,
   regenerateSuperReportLink,
   getEscalatedAnomalies,
+  getSuperReportJobStatus,
+  reviewSuperAnomaly,
 };

@@ -1,4 +1,6 @@
 const { z } = require("zod");
+const { REVIEWABLE_ANOMALY_TYPES } = require("../../constants/report-anomaly-types");
+const { MAX_REPORT_TESTS } = require("../../constants/report-limits");
 const { validatePasswordPolicy } = require("../../services/super-admin.service");
 const {
   TEST_TYPES,
@@ -337,6 +339,9 @@ const superAdminModulesSchema = z
 const applyModuleSuperRefine = (input, ctx) => {
   const assessmentFormat = normalizeAssessmentFormat(input.body.assessmentFormat);
   if (assessmentFormat === ASSESSMENT_FORMATS.MODULE_TEST) {
+    if (input.body.subject) {
+      ctx.addIssue({ code: "custom", message: "subject is not applicable to MODULE_TEST", path: ["body", "subject"] });
+    }
     const { errors } = validateModuleAssessment({ modules: input.body.modules, questions: input.body.questions });
     for (const err of errors) {
       ctx.addIssue({
@@ -345,8 +350,13 @@ const applyModuleSuperRefine = (input, ctx) => {
         path: err.index != null ? ["body", "questions", err.index, err.field] : ["body", ...String(err.field || "modules").split(".")],
       });
     }
-  } else if (input.body.durationMins == null) {
-    ctx.addIssue({ code: "custom", message: "durationMins is required", path: ["body", "durationMins"] });
+  } else {
+    if (!input.body.subject || String(input.body.subject).trim().length < 2) {
+      ctx.addIssue({ code: "custom", message: "subject is required for OPEN_TEST", path: ["body", "subject"] });
+    }
+    if (input.body.durationMins == null) {
+      ctx.addIssue({ code: "custom", message: "durationMins is required", path: ["body", "durationMins"] });
+    }
   }
 };
 
@@ -369,7 +379,9 @@ const superAdminRestrictionsSchema = z.object({
 const createGlobalTestSchema = z.object({
   body: z.object({
     title: z.string().trim().min(3),
-    subject: z.string().trim().min(2),
+    // Test-level subject category. Only applicable to OPEN_TEST — MODULE_TEST
+    // derives its categories from the per-question module `category` field.
+    subject: z.string().trim().min(2).optional().nullable(),
     description: z.string().trim().optional(),
     instructions: z.string().trim().max(5000).optional().default(""),
     durationMins: z.number().int().min(5).max(480).optional(),
@@ -463,7 +475,9 @@ const testIdParamSchema = z.object({
 const updateGlobalTestSchema = z.object({
   body: z.object({
     title: z.string().trim().min(3),
-    subject: z.string().trim().min(2),
+    // Test-level subject category. Only applicable to OPEN_TEST — MODULE_TEST
+    // derives its categories from the per-question module `category` field.
+    subject: z.string().trim().min(2).optional().nullable(),
     description: z.string().trim().optional(),
     durationMins: z.number().int().min(5).max(480).optional(),
     assessmentFormat: z
@@ -659,10 +673,51 @@ const globalEventIdParamSchema = z.object({
   query: z.object({}).optional().default({}),
 });
 
+// Same report types as the admin generateReportSchema. The known filter fields
+// are validated (dates, remarks length); passthrough keeps the remaining scope
+// ids (department/batch/student/test/cohort) that generateSuperReport normalizes.
 const createSuperReportSchema = z.object({
   body: z.object({
-    type: z.enum(["STUDENT_WISE", "TEST_WISE", "DEPARTMENT_WISE", "BATCH_WISE"]),
-    filters: z.record(z.any()).optional().default({}),
+    type: z.enum(["STUDENT_WISE", "TEST_WISE", "DEPARTMENT_WISE", "BATCH_WISE", "COMPREHENSIVE"]),
+    filters: z
+      .object({
+        dateFrom: z.string().datetime().optional(),
+        dateTo: z.string().datetime().optional(),
+        remarks: z.string().trim().max(2000).optional(),
+        testIds: z.array(z.string().trim().min(1)).max(MAX_REPORT_TESTS, `Select at most ${MAX_REPORT_TESTS} tests`).optional(),
+      })
+      .passthrough()
+      .refine((filters) => !filters.dateFrom || !filters.dateTo || new Date(filters.dateFrom) <= new Date(filters.dateTo), {
+        message: "dateFrom must be on or before dateTo",
+        path: ["dateFrom"],
+      })
+      .optional()
+      .default({}),
+  }),
+  params: z.object({}).optional().default({}),
+  query: z.object({}).optional().default({}),
+});
+
+const escalatedAnomaliesQuerySchema = z.object({
+  body: z.object({}).optional().default({}),
+  params: z.object({}).optional().default({}),
+  query: z.object({
+    status: z.enum(["pending", "resolved", "withdrawn", "all"]).optional().default("pending"),
+    collegeId: z.preprocess((value) => (value === "" ? undefined : value), idSchema.optional()),
+    search: z.string().trim().max(200).optional(),
+    page: z.coerce.number().int().min(1).optional().default(1),
+    limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+  }).optional().default({}),
+});
+
+const reviewSuperAnomalySchema = z.object({
+  body: z.object({
+    testId: idSchema,
+    anomalyId: z.string().trim().min(1),
+    anomalyType: z.enum(REVIEWABLE_ANOMALY_TYPES),
+    // Super admin is the final reviewer: it dismisses or confirms, never escalates.
+    action: z.enum(["DISMISS", "CONFIRM"]),
+    reason: z.string().trim().min(5).max(500),
   }),
   params: z.object({}).optional().default({}),
   query: z.object({}).optional().default({}),
@@ -774,6 +829,8 @@ module.exports = {
   updateGlobalEventSchema,
   globalEventIdParamSchema,
   createSuperReportSchema,
+  escalatedAnomaliesQuerySchema,
+  reviewSuperAnomalySchema,
   reportJobParamSchema,
   updatePlatformSettingsSchema,
   changeSuperAdminPasswordSchema,

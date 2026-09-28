@@ -83,7 +83,9 @@ const createAdminTestPayloadSchema = z.object({
     name: z.string().trim().min(3),
     description: z.string().trim().max(3000).optional().default(""),
     instructions: z.string().trim().max(5000).optional().default(""),
-    subject: z.string().trim().min(2),
+    // Test-level subject category. Only applicable to OPEN_TEST — MODULE_TEST
+    // derives its categories from the per-question module `category` field.
+    subject: z.string().trim().min(2).optional().nullable(),
     // Required for OPEN_TEST (enforced in superRefine). Omitted for MODULE_TEST,
     // where the total duration is the server-computed sum of module durations.
     durationMins: z.number().int().min(5).max(480).optional(),
@@ -179,6 +181,9 @@ const createAdminTestSchema = createAdminTestPayloadSchema
 
     const assessmentFormat = normalizeAssessmentFormat(input.body.assessmentFormat);
     if (assessmentFormat === ASSESSMENT_FORMATS.MODULE_TEST) {
+      if (input.body.subject) {
+        ctx.addIssue({ code: "custom", message: "subject is not applicable to MODULE_TEST", path: ["body", "subject"] });
+      }
       const { errors } = validateModuleAssessment({
         modules: input.body.modules,
         questions: input.body.questions,
@@ -193,8 +198,13 @@ const createAdminTestSchema = createAdminTestPayloadSchema
               : ["body", ...String(err.field || "modules").split(".")],
         });
       }
-    } else if (input.body.durationMins == null) {
-      ctx.addIssue({ code: "custom", message: "durationMins is required", path: ["body", "durationMins"] });
+    } else {
+      if (!input.body.subject || String(input.body.subject).trim().length < 2) {
+        ctx.addIssue({ code: "custom", message: "subject is required for OPEN_TEST", path: ["body", "subject"] });
+      }
+      if (input.body.durationMins == null) {
+        ctx.addIssue({ code: "custom", message: "durationMins is required", path: ["body", "durationMins"] });
+      }
     }
 
     if (input.body.negativeMarkingEnabled && Number(input.body.negativeMarks || 0) <= 0) {

@@ -15,6 +15,12 @@ const { computeCohortTrends } = require("../../services/cohort-trends.service");
 const { computeAtRisk } = require("../../services/at-risk.service");
 const { toCsv, buildFileName } = require("../../services/csv-export.service");
 const { buildXlsxBuffer, buildXlsxFileName } = require("../../services/xlsx-export.service");
+const {
+  resolveExportDatasetConfig,
+  buildAtRiskStudentInput,
+  buildTestResultRows,
+  parseExportTestIds,
+} = require("../../services/report-export-datasets.service");
 const { collectSubmissions } = require("../../services/submission-batch.service");
 const { getScopedDepartmentId } = require("../../utils/admin-scope");
 const {
@@ -1263,7 +1269,8 @@ const getReportIntegrity = asyncHandler(async (req, res) => {
 
 // Loads scoped submissions joined to their student, shared by the trends and
 // at-risk endpoints.
-const loadScopedAttempts = async ({ db, req, filters }) => {
+// onlyTestIds narrows the scope to a selection (the multi-test "results" export).
+const loadScopedAttempts = async ({ db, req, filters, onlyTestIds = null }) => {
   const scope = await buildAdminReportScope({
     db,
     req,
@@ -1272,6 +1279,12 @@ const loadScopedAttempts = async ({ db, req, filters }) => {
   });
 
   if (!scope.ok || scope.testIds.length === 0) return { ok: false };
+  if (Array.isArray(onlyTestIds) && onlyTestIds.length > 0) {
+    const wanted = new Set(onlyTestIds.map(String));
+    scope.tests = scope.tests.filter((test) => wanted.has(String(test.id)));
+    scope.testIds = scope.testIds.filter((id) => wanted.has(String(id)));
+    if (scope.testIds.length === 0) return { ok: false };
+  }
 
   const studentWhere = {
     collegeId: req.collegeId,
@@ -1334,6 +1347,7 @@ const loadScopedAttempts = async ({ db, req, filters }) => {
       accuracy: submission.accuracy,
       test: { totalMarks: testTotals.get(String(submission.testId)) },
     }),
+    totalMarks: testTotals.get(String(submission.testId)) || 0,
     date: submission.submittedAt || submission.createdAt,
     violations: Number(submission._count?.violations || 0),
   }));
@@ -1409,58 +1423,6 @@ const getReportAtRisk = asyncHandler(async (req, res) => {
   res.status(200).json({ ...computeAtRisk({ students: payload }), truncated: Boolean(data.truncated) });
 });
 
-const CSV_DATASETS = {
-  "at-risk": {
-    prefix: "at-risk-students",
-    columns: [
-      { key: "name", label: "Student" },
-      { key: "rollNo", label: "Roll No" },
-      { key: "department", label: "Department" },
-      { key: "batch", label: "Batch" },
-      { key: "riskLevel", label: "Risk level" },
-      { key: "riskScore", label: "Risk score" },
-      { key: "averageScore", label: "Average %" },
-      { key: "attempts", label: "Attempts" },
-      { key: "assignedTests", label: "Assigned tests" },
-      { key: "participation", label: "Participation %" },
-      { key: "violations", label: "Violations" },
-      { key: "reasons", label: "Reasons", format: (_value, row) => (row.reasons || []).map((reason) => reason.label).join("; ") },
-    ],
-  },
-  tests: {
-    prefix: "test-performance",
-    columns: [
-      { key: "title", label: "Test" },
-      { key: "status", label: "Status" },
-      { key: "department", label: "Department" },
-      { key: "batch", label: "Batch" },
-      { key: "submissionCount", label: "Submissions" },
-      { key: "attemptedStudents", label: "Students attempted" },
-      { key: "avgScore", label: "Avg %" },
-      { key: "passRate", label: "Pass rate %" },
-      { key: "participation", label: "Participation %" },
-      { key: "violations", label: "Violations" },
-    ],
-  },
-  "item-analysis": {
-    prefix: "item-analysis",
-    columns: [
-      { key: "order", label: "Q" },
-      { key: "prompt", label: "Prompt" },
-      { key: "attempts", label: "Attempts" },
-      { key: "correct", label: "Correct" },
-      { key: "difficulty", label: "Difficulty", format: (value) => Number(value || 0).toFixed(4) },
-      { key: "difficultyLabel", label: "Difficulty band" },
-      { key: "discrimination", label: "Discrimination", format: (value) => Number(value || 0).toFixed(4) },
-      { key: "discriminationLabel", label: "Discrimination band" },
-      { key: "medianTimeSeconds", label: "Median time (s)" },
-      { key: "markedForReviewRate", label: "Marked for review %" },
-      { key: "topDistractor", label: "Top distractor" },
-      { key: "flagReasons", label: "Flags", format: (value) => (value || []).join("; ") },
-    ],
-  },
-};
-
 /**
  * Assembles the export rows for a dataset. Reuses the same scoping and
  * computation as the JSON endpoints so an export can never show data the
@@ -1470,12 +1432,7 @@ const CSV_DATASETS = {
 const buildExportDataset = async (req) => {
   const m = await models.init();
   const db = m.dbClient;
-  const dataset = String(req.query.dataset || "").trim();
-  const config = CSV_DATASETS[dataset];
-
-  if (!config) {
-    throw new ApiError(422, `Unsupported export dataset: ${dataset || "(none)"}`, { supported: Object.keys(CSV_DATASETS) }, "UNSUPPORTED_DATASET");
-  }
+  const { dataset, config } = resolveExportDatasetConfig(req.query.dataset);
 
   const filters = resolveDateFilters(req.query || {});
   let rows = [];
@@ -1483,27 +1440,7 @@ const buildExportDataset = async (req) => {
   if (dataset === "at-risk") {
     const data = await loadScopedAttempts({ db, req, filters });
     if (data.ok) {
-      const { scope, students, attempts } = data;
-      const attemptsByStudent = new Map();
-      for (const attempt of attempts) {
-        const key = String(attempt.userId);
-        if (!attemptsByStudent.has(key)) attemptsByStudent.set(key, []);
-        attemptsByStudent.get(key).push(attempt);
-      }
-      const payload = students.map((student) => {
-        const studentAttempts = attemptsByStudent.get(String(student.id)) || [];
-        return {
-          id: student.id,
-          name: student.fullName || "Student",
-          rollNo: getStudentNumber(student),
-          department: student.department?.name || "-",
-          batch: student.batch?.name || "-",
-          assignedTests: scope.testIds.length,
-          violations: studentAttempts.reduce((sum, attempt) => sum + attempt.violations, 0),
-          attempts: studentAttempts.map((attempt) => ({ scorePercent: attempt.scorePercent, date: attempt.date })),
-        };
-      });
-      rows = computeAtRisk({ students: payload }).students;
+      rows = computeAtRisk({ students: buildAtRiskStudentInput(data) }).students;
     }
   } else if (dataset === "item-analysis") {
     const testId = String(req.query.testId || "").trim();
@@ -1533,6 +1470,10 @@ const buildExportDataset = async (req) => {
       });
       rows = computeItemAnalysis({ questions, submissions: data.attempts, answers }).items;
     }
+  } else if (dataset === "results") {
+    const testIds = parseExportTestIds(req.query.testIds);
+    const data = await loadScopedAttempts({ db, req, filters, onlyTestIds: testIds });
+    rows = data.ok ? buildTestResultRows(data) : [];
   } else if (dataset === "tests") {
     // Same builder the Tests tab uses, so the export can never diverge from it.
     const payload = await buildReportTestsPayload({ ...req, query: { ...req.query, page: 1, limit: 100 } });
@@ -1779,10 +1720,23 @@ const ENTITY_SCOPED_CHECKS = {
   BATCH_WISE: { key: "batchId", model: "batch", message: "Batch not found for this college" },
 };
 
+// Every test a report was asked to cover (testIds and/or the legacy testId).
+const collectSelectedTestIds = (filters = {}) => [
+  ...new Set(
+    [...(Array.isArray(filters.testIds) ? filters.testIds : []), filters.testId]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  ),
+];
+
 const normalizeFilters = (filters = {}) => {
+  // One selected test stays a plain single-test report (testId); several become
+  // a multi-test report (testIds).
+  const selectedTestIds = collectSelectedTestIds(filters);
   const normalized = {
     studentId: filters.studentId || undefined,
-    testId: filters.testId || undefined,
+    testId: selectedTestIds.length === 1 ? selectedTestIds[0] : undefined,
+    testIds: selectedTestIds.length > 1 ? selectedTestIds : undefined,
     departmentId: filters.departmentId || undefined,
     batchId: filters.batchId || undefined,
     year: normalizeStudentYear(filters.year) || undefined,
@@ -1826,6 +1780,16 @@ const validateScopedFilters = async ({ db, type, filters, collegeId }) => {
 
     if (!exists) {
       return { ok: false, status: 404, message: rule.message };
+    }
+  }
+
+  if (Array.isArray(filters?.testIds) && filters.testIds.length > 0) {
+    const found = await db.test.findMany({
+      where: { id: { in: filters.testIds }, collegeId },
+      select: { id: true },
+    });
+    if (found.length !== filters.testIds.length) {
+      return { ok: false, status: 404, message: "One or more selected tests were not found for this college" };
     }
   }
 
@@ -1886,6 +1850,19 @@ const generateReport = asyncHandler(async (req, res) => {
 
       if (!scope.ok || scope.testIds.length === 0) {
         return res.status(403).json({ message: "Test is not accessible for this department" });
+      }
+    }
+
+    if (Array.isArray(filters.testIds) && filters.testIds.length > 0) {
+      const scope = await buildAdminReportScope({
+        db,
+        req,
+        filters: { departmentId: adminDepartmentId, batchId: filters.batchId },
+        testSelect: { id: true },
+      });
+      const visible = new Set(scope.ok ? scope.testIds.map(String) : []);
+      if (!filters.testIds.every((id) => visible.has(String(id)))) {
+        return res.status(403).json({ message: "One or more selected tests are not accessible for this department" });
       }
     }
   }

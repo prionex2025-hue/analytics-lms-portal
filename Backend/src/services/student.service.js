@@ -4,6 +4,7 @@ const { validateDocument, validateDocuments } = require("./model-validation.serv
 const { validateUniqueEmail } = require("./cross-field-validators.service");
 const { UserValidation } = require("../models/validation");
 const { ApiError } = require("../utils/http");
+const { createStudentPassword } = require("../utils/student-password");
 const { bumpPrincipalTokenVersion, invalidatePrincipalAuthCache } = require("./auth-revocation.service");
 const { isAlumniStatus, STUDENT_LIFECYCLE_STATUS } = require("./student-lifecycle.service");
 
@@ -73,8 +74,11 @@ async function createStudent(payload, collegeId, adminId) {
     }
   }
 
-  // Hash password if provided
-  const passwordHash = payload.password ? await bcrypt.hash(payload.password, 10) : null;
+  // Auto-generate the password when the caller does not supply one.
+  const plainPassword = payload.password
+    ? String(payload.password)
+    : createStudentPassword(validated.fullName, studentId);
+  const passwordHash = await bcrypt.hash(plainPassword, 10);
 
   // Persist using modelClient
   const student = await db.student.create({
@@ -110,7 +114,10 @@ async function createStudent(payload, collegeId, adminId) {
     },
   });
 
-  return student;
+  return {
+    ...student,
+    credentials: { identifier: student.email, studentId, password: plainPassword },
+  };
 }
 
 /**
