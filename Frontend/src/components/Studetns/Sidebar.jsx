@@ -35,7 +35,7 @@ function Sidebar({ collapsed, mobile = false, onNavigate, upcomingCount = 0 }) {
             width="1976"
             height="630"
             decoding="async"
-            className={cn("h-7 object-contain object-left dark:brightness-0 dark:invert", collapsed ? "w-9 object-center" : "w-auto max-w-36")}
+            className={cn("h-7 object-contain object-left", collapsed ? "w-9 object-center" : "w-auto max-w-36")}
           />
         </Link>
       </div>

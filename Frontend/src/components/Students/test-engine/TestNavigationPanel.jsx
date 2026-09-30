@@ -1,14 +1,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { hasAnswer, summarizeAttemptAnswers } from "@/lib/testAnswers";
 import { cn } from "@/lib/utils";
-
-const hasAnswer = (answer) => {
-  if (!answer) return false;
-  if (answer.selected_option != null && String(answer.selected_option).trim()) return true;
-  if (Array.isArray(answer.selected_options) && answer.selected_options.length > 0) return true;
-  if (typeof answer.answer_boolean === "boolean") return true;
-  return Boolean(String(answer.answer_text || "").trim());
-};
 
 export function TestNavigationPanel({
   questionOrder,
@@ -22,13 +15,16 @@ export function TestNavigationPanel({
 }) {
   const markedSet = new Set(markedForReview || []);
 
-  const answeredCount = questionOrder.filter((questionId) => hasAnswer(answers[questionId])).length;
+  const { answered: answeredCount, unanswered: unansweredCount, marked } = summarizeAttemptAnswers(
+    questionOrder,
+    answers,
+    markedForReview
+  );
 
-  const unansweredCount = questionOrder.length - answeredCount;
   const legend = [
     { label: "Answered", value: answeredCount, swatch: "bg-success" },
     { label: "Unanswered", value: unansweredCount, swatch: "bg-muted ring-1 ring-inset ring-border" },
-    { label: "Marked", value: markedSet.size, swatch: "bg-warning" },
+    { label: "Marked", value: marked, swatch: "bg-warning" },
   ];
 
   return (
@@ -72,7 +68,7 @@ export function TestNavigationPanel({
               className={cn(
                 "relative grid h-10 place-items-center rounded-lg text-sm font-medium tabular-nums outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
                 marked
-                  ? "bg-warning/15 text-amber-800 ring-1 ring-inset ring-warning/50 dark:text-warning"
+                  ? "bg-warning/15 text-amber-800 ring-1 ring-inset ring-warning/50"
                   : answered
                     ? "bg-success/12 text-success ring-1 ring-inset ring-success/35"
                     : "bg-card text-text-secondary ring-1 ring-inset ring-border hover:bg-muted",

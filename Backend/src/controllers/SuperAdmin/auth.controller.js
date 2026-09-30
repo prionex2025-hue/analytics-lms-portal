@@ -20,6 +20,7 @@ const {
   recordLoginFailure,
 } = require("../../services/login-attempt.service");
 const { getClientIp } = require("../../utils/client-ip");
+const { compareAgainstDummyHash } = require("../../utils/password-timing");
 const { recordSecurityEvent } = require("../../services/security-audit.service");
 const { buildRefreshCookieOptions } = require("../../utils/refresh-cookie");
 
@@ -56,6 +57,7 @@ const performSuperAdminLogin = async (req, res) => {
   });
 
   if (!superAdmin || !superAdmin.isActive || normalizeRole(superAdmin.role) !== ROLES.SUPER_ADMIN) {
+    await compareAgainstDummyHash(password);
     await recordLoginFailure({ scope: "super-admin", identifier: loginIdentifier, ip: getClientIp(req) });
     await recordSecurityEvent({
       action: "SUPER_ADMIN_LOGIN_FAILED",

@@ -398,7 +398,7 @@ export default function ReportsPage() {
               </div>
               <div className="mt-auto pt-5">
                 <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
-                  <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-warning/15 text-amber-600 dark:text-warning">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-warning/15 text-amber-600">
                     <Trophy className="size-4" aria-hidden="true" />
                   </span>
                   <div className="min-w-0 flex-1">

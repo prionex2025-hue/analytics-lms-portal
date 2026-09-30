@@ -5,7 +5,7 @@
 export default function AuthSplitLayout({ headline, subline, highlights = [], footnote, badgeIcon: BadgeIcon, badgeLabel, title, description, children, footer }) {
   return (
     <section className="grid min-h-screen bg-background lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
-      <div className="relative hidden overflow-hidden bg-primary-dark p-12 text-white lg:flex lg:flex-col lg:justify-between xl:p-16 dark:bg-sidebar">
+      <div className="relative hidden overflow-hidden bg-primary-dark p-12 text-white lg:flex lg:flex-col lg:justify-between xl:p-16">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_10%,rgba(59,130,246,0.45),transparent_45%)]" aria-hidden="true" />
         <img
           src="/analytics-logo-final.webp"
@@ -47,7 +47,7 @@ export default function AuthSplitLayout({ headline, subline, highlights = [], fo
             width="1976"
             height="630"
             decoding="async"
-            className="mb-10 h-8 w-auto max-w-44 object-contain object-left lg:hidden dark:brightness-0 dark:invert"
+            className="mb-10 h-8 w-auto max-w-44 object-contain object-left lg:hidden"
           />
 
           {badgeLabel ? (

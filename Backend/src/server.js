@@ -4,73 +4,117 @@ const mongoose = require("mongoose");
 const app = require("./app");
 const env = require("./config/env");
 const { shutdownRedis } = require("./config/redis");
-const { initSocket, shutdownSocket } = require("./realtime/socket");
+const { initSocket, shutdownSocket, disconnectAllSockets } = require("./realtime/socket");
 const { startHeartbeatFlush, stopHeartbeatFlush } = require("./services/heartbeat-buffer.service");
 const { startTestLifecycleSweep, stopTestLifecycleSweep } = require("./services/test-lifecycle.service");
-const { recoverPendingReportJobs } = require("./services/admin-report-queue.service");
-const { recoverPendingSuperReportJobs } = require("./services/super-admin-report-queue.service");
+const { closeReportQueue, recoverPendingReportJobs } = require("./services/admin-report-queue.service");
+const { closeSuperReportQueue, recoverPendingSuperReportJobs } = require("./services/super-admin-report-queue.service");
+const { logger } = require("./utils/logger");
+const { markShuttingDown } = require("./utils/lifecycle");
 
 const server = http.createServer(app);
+// Behind NGINX with upstream keepalive: Node must keep idle sockets open longer
+// than NGINX does, or NGINX reuses a socket Node just closed -> sporadic 502s.
+server.keepAliveTimeout = env.httpServer.keepAliveTimeoutMs;
+server.headersTimeout = Math.max(env.httpServer.headersTimeoutMs, env.httpServer.keepAliveTimeoutMs + 1000);
+server.requestTimeout = env.httpServer.requestTimeoutMs;
 initSocket(server, env.frontendOrigins || [env.frontendOrigin]);
 
-const SHUTDOWN_TIMEOUT_MS = 15_000;
+let shutdownPromise = null;
 
-const shutdown = async (signal) => {
-  console.log(`Received ${signal}. Starting graceful shutdown...`);
-
-  // Stop accepting new connections
-  server.close(() => {
-    console.log("HTTP server closed - no more incoming connections.");
+const closeHttpServer = () =>
+  new Promise((resolve) => {
+    // Keep-alive sockets that become idle AFTER close() (i.e. once their
+    // in-flight response is sent) would otherwise hold close() open for the
+    // full keepAliveTimeout. Sweep them until the server has fully closed.
+    const sweep = setInterval(() => server.closeIdleConnections?.(), 250);
+    sweep.unref();
+    server.close(() => {
+      clearInterval(sweep);
+      resolve();
+    });
+    server.closeIdleConnections?.();
   });
 
-  // Give active requests time to finish, then force exit
+const runShutdown = async (signal) => {
+  logger.info("server.shutdown_started", { signal });
+
+  // 1. Report not-ready so the load balancer stops sending new requests.
+  markShuttingDown();
+
   const forceTimer = setTimeout(() => {
-    console.error("Graceful shutdown timed out. Forcing exit.");
+    logger.error("server.shutdown_timeout", { timeoutMs: env.httpServer.shutdownTimeoutMs });
     process.exit(1);
-  }, SHUTDOWN_TIMEOUT_MS);
+  }, env.httpServer.shutdownTimeoutMs);
   forceTimer.unref();
 
-  // Stop heartbeat buffer flush
+  // 2. Stop background loops and move websocket clients to other replicas.
   stopHeartbeatFlush();
   stopTestLifecycleSweep();
+  disconnectAllSockets();
 
-  try {
-    await mongoose.disconnect();
-    console.log("MongoDB disconnected.");
-  } catch (error) {
-    console.error("Error disconnecting MongoDB:", error.message);
-  }
+  // 3. Stop accepting connections and let in-flight HTTP requests finish
+  //    (they still need MongoDB/Redis, so those close afterwards).
+  await closeHttpServer();
+  logger.info("server.http_closed");
 
-  // Gracefully close Redis connection
+  // 4. Let active report jobs finish, then release dependencies.
+  await Promise.allSettled([closeReportQueue(), closeSuperReportQueue()]);
+
   try {
     await shutdownSocket();
   } catch (error) {
-    console.error("Error disconnecting Socket.IO Redis clients:", error.message);
+    logger.error("server.socket_shutdown_failed", { reason: error?.message });
+  }
+
+  try {
+    await mongoose.disconnect();
+    logger.info("mongodb.disconnected_cleanly");
+  } catch (error) {
+    logger.error("mongodb.disconnect_failed", { reason: error?.message });
   }
 
   try {
     await shutdownRedis();
-    console.log("Redis disconnected.");
+    logger.info("redis.disconnected_cleanly");
   } catch (error) {
-    console.error("Error disconnecting Redis:", error.message);
+    logger.error("redis.disconnect_failed", { reason: error?.message });
   }
 
   clearTimeout(forceTimer);
-  console.log("Shutdown complete.");
-  process.exit(0);
+  logger.info("server.shutdown_complete", { signal });
+};
+
+// Idempotent: SIGTERM followed by SIGINT (or an uncaught exception during
+// shutdown) must not run the sequence twice.
+const shutdown = (signal, exitCode = 0) => {
+  if (!shutdownPromise) {
+    shutdownPromise = runShutdown(signal)
+      .catch((error) => logger.error("server.shutdown_failed", { reason: error?.message }))
+      .finally(() => process.exit(exitCode));
+  }
+  return shutdownPromise;
 };
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-// Catch unhandled errors so a single failed promise doesn't crash the process
+// A rejected promise nobody awaited is a bug, but not a reason to drop every
+// in-flight exam request on this instance: log it and keep serving.
 process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled promise rejection:", reason);
+  const message = reason instanceof Error ? reason.message : String(reason);
+  // Throttled per message: a dependency outage can reject on every request.
+  logger.throttled("error", `unhandled:${message.slice(0, 120)}`, 10_000, "process.unhandled_rejection", {
+    reason: reason instanceof Error ? reason : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
 });
 
+// After an uncaught exception process state is undefined: drain and exit
+// non-zero so the orchestrator restarts a clean process.
 process.on("uncaughtException", (error) => {
-  console.error("Uncaught exception:", error);
-  shutdown("uncaughtException");
+  logger.error("process.uncaught_exception", { reason: error, stack: error?.stack });
+  shutdown("uncaughtException", 1);
 });
 
 const parsePort = (value) => {
@@ -170,7 +214,7 @@ const startServer = async () => {
     if (selectedPort !== basePort) {
       console.warn(`Port ${basePort} is busy. Using fallback port ${selectedPort}.`);
     }
-    console.log(`LMS API running at http://localhost:${selectedPort}`);
+    logger.info("server.listening", { port: selectedPort, nodeEnv: env.nodeEnv, worker: env.worker.enabled });
     // Queue recovery is a consumer-side task: only the worker replica requeues
     // stale jobs, so multiple web replicas don't race on startup.
     if (env.worker.enabled) {
@@ -182,6 +226,6 @@ const startServer = async () => {
 };
 
 startServer().catch((error) => {
-  console.error("Failed to start server:", error);
+  logger.error("server.start_failed", { reason: error, stack: error?.stack });
   process.exit(1);
 });

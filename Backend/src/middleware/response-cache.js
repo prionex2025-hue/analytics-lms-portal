@@ -168,13 +168,21 @@ const getMemoryCache = (key) => {
   return entry.value;
 };
 
+// One round trip for the entry and all of its tag-index updates.
 const setRedisCache = async (key, payload, ttlSeconds, tags) => {
-  await redisClient.set(key, JSON.stringify(payload), "EX", ttlSeconds);
+  const pipeline = redisClient.pipeline();
+  pipeline.set(key, JSON.stringify(payload), "EX", ttlSeconds);
 
   for (const tag of tags) {
     const tagKey = `resp_cache_tag:${tag}`;
-    await redisClient.sadd(tagKey, key);
-    await redisClient.expire(tagKey, Math.max(ttlSeconds * 4, ttlSeconds));
+    pipeline.sadd(tagKey, key);
+    pipeline.expire(tagKey, Math.max(ttlSeconds * 4, ttlSeconds));
+  }
+
+  const results = await pipeline.exec();
+  const failed = (results || []).find(([error]) => error);
+  if (failed) {
+    throw failed[0];
   }
 };
 

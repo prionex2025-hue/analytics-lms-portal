@@ -39,7 +39,7 @@ export default function SuperAdminHeader({ onOpenMobileSidebar }) {
   const environmentTone = environment === "PROD"
     ? "bg-danger/10 text-danger ring-danger/25"
     : environment === "STAGING"
-      ? "bg-warning/15 text-amber-700 ring-warning/35 dark:text-warning"
+      ? "bg-warning/15 text-amber-700 ring-warning/35"
       : "bg-primary/10 text-primary ring-primary/20";
 
   return (

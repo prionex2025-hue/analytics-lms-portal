@@ -73,16 +73,33 @@ const legacyExamWriteWindowMs = toPositiveInt(process.env.RATE_LIMIT_EXAM_WRITE_
 const legacyExamWriteMax = toPositiveInt(process.env.RATE_LIMIT_EXAM_WRITE_MAX, 100);
 
 const rateLimit = {
+  // Login (student/admin portals), per client IP per window. Campus labs put
+  // hundreds of students behind one NAT IP, so ALL attempts get a generous
+  // flood ceiling while FAILED attempts (password spraying) get a low one.
   authLoginWindowMs: toPositiveInt(process.env.RATE_LIMIT_AUTH_LOGIN_WINDOW_MS, 15 * 60 * 1000),
-  authLoginMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_LOGIN_MAX, 15),
+  authLoginMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_LOGIN_MAX, 600),
+  authLoginFailedMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_LOGIN_FAILED_MAX, 60),
+  // Refresh: per refresh token (session), plus a per-IP flood ceiling.
   authRefreshWindowMs: toPositiveInt(process.env.RATE_LIMIT_AUTH_REFRESH_WINDOW_MS, 5 * 60 * 1000),
-  authRefreshMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_REFRESH_MAX, 50),
+  authRefreshMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_REFRESH_MAX, 20),
+  authRefreshIpMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_REFRESH_IP_MAX, 1500),
   authForgotPasswordWindowMs: toPositiveInt(process.env.RATE_LIMIT_AUTH_FORGOT_PASSWORD_WINDOW_MS, 15 * 60 * 1000),
-  authForgotPasswordMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_FORGOT_PASSWORD_MAX, 5),
+  authForgotPasswordMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_FORGOT_PASSWORD_MAX, 20),
+  // Reset emails per target account (all IPs). Excess requests still get the
+  // generic response but send nothing, so this cannot reveal account existence.
+  authForgotPasswordAccountWindowMs: toPositiveInt(process.env.RATE_LIMIT_AUTH_FORGOT_PASSWORD_ACCOUNT_WINDOW_MS, 60 * 60 * 1000),
+  authForgotPasswordAccountMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_FORGOT_PASSWORD_ACCOUNT_MAX, 3),
   authResetPasswordWindowMs: toPositiveInt(process.env.RATE_LIMIT_AUTH_RESET_PASSWORD_WINDOW_MS, 15 * 60 * 1000),
   authResetPasswordMax: toPositiveInt(process.env.RATE_LIMIT_AUTH_RESET_PASSWORD_MAX, 10),
   superAdminAuthLoginWindowMs: toPositiveInt(process.env.RATE_LIMIT_SUPER_ADMIN_AUTH_LOGIN_WINDOW_MS, 15 * 60 * 1000),
+  // Super admin: failed attempts per IP, and all attempts per IP.
   superAdminAuthLoginMax: toPositiveInt(process.env.RATE_LIMIT_SUPER_ADMIN_AUTH_LOGIN_MAX, 5),
+  superAdminAuthLoginAttemptMax: toPositiveInt(process.env.RATE_LIMIT_SUPER_ADMIN_AUTH_LOGIN_ATTEMPT_MAX, 20),
+  // Known campus/lab egress IPs or CIDRs (comma separated). Exempt ONLY from the
+  // per-IP student/admin login and refresh ceilings, so one bad actor behind a
+  // shared NAT cannot lock a whole exam hall out. Per-account lockout still
+  // applies. Never applied to super admin login.
+  authTrustedNetworks: parseOrigins(process.env.RATE_LIMIT_AUTH_TRUSTED_NETWORKS),
   superAdminPasswordResetWindowMs: toPositiveInt(process.env.RATE_LIMIT_SUPER_ADMIN_PASSWORD_RESET_WINDOW_MS, 60 * 60 * 1000),
   superAdminPasswordResetMax: toPositiveInt(process.env.RATE_LIMIT_SUPER_ADMIN_PASSWORD_RESET_MAX, 3),
   examWriteWindowMs: legacyExamWriteWindowMs,
@@ -113,6 +130,12 @@ const rateLimit = {
   reportGenerationMax: toPositiveInt(process.env.RATE_LIMIT_REPORT_GENERATION_MAX, 10),
   adminReportReadWindowMs: toPositiveInt(process.env.RATE_LIMIT_ADMIN_REPORT_READ_WINDOW_MS, 30 * 1000),
   adminReportReadMax: toPositiveInt(process.env.RATE_LIMIT_ADMIN_REPORT_READ_MAX, 20),
+  // Anomaly review mutates integrity state and is audit-logged, so it gets its
+  // own ceiling rather than riding the (much looser) read limiter.
+  adminAnomalyReviewWindowMs: toPositiveInt(process.env.RATE_LIMIT_ADMIN_ANOMALY_REVIEW_WINDOW_MS, 60 * 1000),
+  adminAnomalyReviewMax: toPositiveInt(process.env.RATE_LIMIT_ADMIN_ANOMALY_REVIEW_MAX, 20),
+  superAdminMonitoringWindowMs: toPositiveInt(process.env.RATE_LIMIT_SUPER_ADMIN_MONITORING_WINDOW_MS, 60 * 1000),
+  superAdminMonitoringMax: toPositiveInt(process.env.RATE_LIMIT_SUPER_ADMIN_MONITORING_MAX, 60),
   adminTestListWindowMs: toPositiveInt(process.env.RATE_LIMIT_ADMIN_TEST_LIST_WINDOW_MS, 30 * 1000),
   adminTestListMax: toPositiveInt(process.env.RATE_LIMIT_ADMIN_TEST_LIST_MAX, 30),
   adminTestCreateWindowMs: toPositiveInt(process.env.RATE_LIMIT_ADMIN_TEST_CREATE_WINDOW_MS, 60 * 1000),
@@ -153,6 +176,12 @@ const rateLimit = {
   resourceSearchMax: toPositiveInt(process.env.RATE_LIMIT_RESOURCE_SEARCH_MAX, 60),
   resourceUploadWindowMs: toPositiveInt(process.env.RATE_LIMIT_RESOURCE_UPLOAD_WINDOW_MS, 60 * 1000),
   resourceUploadMax: toPositiveInt(process.env.RATE_LIMIT_RESOURCE_UPLOAD_MAX, 10),
+  // Socket.IO handshakes: failed (unauthenticated) handshakes per client IP,
+  // and successful connections per user (reconnect-loop / token-replay guard).
+  socketAuthFailureWindowMs: toPositiveInt(process.env.RATE_LIMIT_SOCKET_AUTH_FAILURE_WINDOW_MS, 5 * 60 * 1000),
+  socketAuthFailureMax: toPositiveInt(process.env.RATE_LIMIT_SOCKET_AUTH_FAILURE_MAX, 60),
+  socketConnectWindowMs: toPositiveInt(process.env.RATE_LIMIT_SOCKET_CONNECT_WINDOW_MS, 60 * 1000),
+  socketConnectMax: toPositiveInt(process.env.RATE_LIMIT_SOCKET_CONNECT_MAX, 30),
   metricsTopNDefault: toPositiveInt(process.env.RATE_LIMIT_METRICS_TOP_N_DEFAULT, 10),
 };
 
@@ -170,6 +199,12 @@ const responseCache = {
 };
 
 const database = {
+  maxPoolSize: toPositiveInt(process.env.MONGODB_MAX_POOL_SIZE, 20),
+  minPoolSize: toPositiveInt(process.env.MONGODB_MIN_POOL_SIZE, 2),
+  // Fail fast (503) instead of hanging requests for the driver default of 30s
+  // when MongoDB is unreachable.
+  serverSelectionTimeoutMs: toPositiveInt(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS, 5_000),
+  readinessTimeoutMs: toPositiveInt(process.env.READINESS_CHECK_TIMEOUT_MS, 2_000),
   relationFilterMaxCandidates: toPositiveInt(
     process.env.DB_RELATION_FILTER_MAX_CANDIDATES,
     nodeEnv === "production" ? 5000 : 50000
@@ -179,12 +214,31 @@ const database = {
 
 const redis = {
   enabled: toBoolean(process.env.REDIS_ENABLED, nodeEnv !== "development" && nodeEnv !== "test"),
+  // REDIS_ENABLED=false turns Redis off even when REDIS_URL is set.
+  explicitlyDisabled: toBoolean(process.env.REDIS_ENABLED, true) === false,
   connectTimeoutMs: toPositiveInt(process.env.REDIS_CONNECT_TIMEOUT_MS, 10_000),
+  // Upper bound for a single command on the shared client (rate limits, cache,
+  // locks). A stalled Redis must not stall API requests.
+  commandTimeoutMs: toPositiveInt(process.env.REDIS_COMMAND_TIMEOUT_MS, 1_000),
+  // Readiness normally tolerates a Redis outage (features degrade, see
+  // docs/REDIS_AND_RATE_LIMITING.md). Set true to pull instances out of the load
+  // balancer while Redis is down instead.
+  requiredForReadiness: toBoolean(process.env.REDIS_REQUIRED_FOR_READINESS, false),
   keepAliveMs: toPositiveInt(process.env.REDIS_KEEP_ALIVE_MS, 30_000),
   maxRetryDelayMs: toPositiveInt(process.env.REDIS_MAX_RETRY_DELAY_MS, 2_000),
   maxMemory: process.env.REDIS_MAXMEMORY || "",
   maxMemoryPolicy: process.env.REDIS_MAXMEMORY_POLICY || "",
   queueEnabled: toBoolean(process.env.REDIS_QUEUE_ENABLED, nodeEnv !== "development" && nodeEnv !== "test"),
+};
+
+// HTTP server timeouts. keepAliveTimeout must exceed the upstream keepalive
+// timeout of the NGINX in front (60s default) or NGINX reuses sockets Node has
+// already closed and returns sporadic 502s under load.
+const httpServer = {
+  keepAliveTimeoutMs: toPositiveInt(process.env.HTTP_KEEP_ALIVE_TIMEOUT_MS, 65_000),
+  headersTimeoutMs: toPositiveInt(process.env.HTTP_HEADERS_TIMEOUT_MS, 66_000),
+  requestTimeoutMs: toPositiveInt(process.env.HTTP_REQUEST_TIMEOUT_MS, 120_000),
+  shutdownTimeoutMs: toPositiveInt(process.env.SHUTDOWN_TIMEOUT_MS, 15_000),
 };
 
 const metrics = {
@@ -307,5 +361,6 @@ module.exports = {
   rateLimit,
   responseCache,
   database,
+  httpServer,
   worker,
 };

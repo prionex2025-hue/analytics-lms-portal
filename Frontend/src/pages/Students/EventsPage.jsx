@@ -245,7 +245,7 @@ export default function EventsPage() {
                   </div>
 
                   <div className="mt-auto flex items-center justify-between gap-3 pt-4">
-                    <MetaItem icon={Users} className={spots <= 5 && spots > 0 ? "text-amber-700 dark:text-warning" : ""}>
+                    <MetaItem icon={Users} className={spots <= 5 && spots > 0 ? "text-amber-700" : ""}>
                       {spots} {spots === 1 ? "spot" : "spots"} left
                     </MetaItem>
                     <Button

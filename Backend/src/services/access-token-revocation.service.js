@@ -1,18 +1,34 @@
 const { redisClient, isRedisAvailable } = require("../config/redis");
 const { verifyAccessToken } = require("../utils/token");
 
+const { logger } = require("../utils/logger");
+
+// Per-token (jti) blocklist used on logout, so a logged-out access token stops
+// working before its natural expiry (JWT_ACCESS_EXPIRES_IN, 15m by default).
+//
+// Redis failure policy: fall back to this process's memory and log loudly,
+// instead of failing every authenticated request with 503. Rationale:
+//  - Account-level revocation (password reset/change, deactivation, admin
+//    force-logout) is enforced by the tokenVersion check against MongoDB in
+//    middleware/auth.js and does NOT depend on Redis.
+//  - Logout also revokes the refresh token in MongoDB, so the session cannot
+//    be extended; the only exposure during a Redis outage is that a token
+//    logged out on another replica stays usable until it expires (<= 15m).
+//  - Failing closed would turn any Redis blip into a full LMS outage, mid-exam.
+// Revocations are always mirrored to memory so this replica honours them even
+// if Redis drops between the write and a later read.
 const memoryBlocklist = new Map();
 const MEMORY_MAX_ENTRIES = 10000;
 
-const isProduction = () => process.env.NODE_ENV === "production";
-
 const buildKey = (jti) => `auth:access:revoked:${jti}`;
 
-const createRedisRequiredError = () => {
-  const error = new Error("Redis is required for access-token revocation in production");
-  error.statusCode = 503;
-  error.code = "ACCESS_TOKEN_REVOCATION_REDIS_REQUIRED";
-  return error;
+const warnDegraded = (operation, error) => {
+  logger.throttled("warn", `token-revocation-degraded:${operation}`, 60_000, "auth.token_revocation_redis_unavailable", {
+    operation,
+    fallback: "per-instance-memory",
+    exposure: "tokens logged out on other replicas remain valid until expiry",
+    reason: error?.message || "redis not ready",
+  });
 };
 
 const getPayloadTtlSeconds = (payload = {}) => {
@@ -47,22 +63,19 @@ const revokeAccessTokenPayload = async (payload = {}) => {
     return false;
   }
 
-  if (isRedisAvailable()) {
-    try {
-      await redisClient.set(buildKey(jti), "1", "EX", ttlSeconds);
-      return true;
-    } catch {
-      if (isProduction()) throw createRedisRequiredError();
-    }
-  }
-
-  if (isProduction()) {
-    throw createRedisRequiredError();
-  }
-
   memoryBlocklist.set(jti, Date.now() + ttlSeconds * 1000);
   if (memoryBlocklist.size > MEMORY_MAX_ENTRIES) {
     pruneMemoryBlocklist();
+  }
+
+  if (redisClient && isRedisAvailable()) {
+    try {
+      await redisClient.set(buildKey(jti), "1", "EX", ttlSeconds);
+    } catch (error) {
+      warnDegraded("revoke", error);
+    }
+  } else if (redisClient) {
+    warnDegraded("revoke");
   }
   return true;
 };
@@ -104,16 +117,16 @@ const isAccessTokenRevoked = async (payload = {}) => {
     return false;
   }
 
-  if (isRedisAvailable()) {
+  if (redisClient && isRedisAvailable()) {
     try {
-      return Boolean(await redisClient.exists(buildKey(jti)));
-    } catch {
-      if (isProduction()) throw createRedisRequiredError();
+      if (await redisClient.exists(buildKey(jti))) {
+        return true;
+      }
+    } catch (error) {
+      warnDegraded("check", error);
     }
-  }
-
-  if (isProduction()) {
-    throw createRedisRequiredError();
+  } else if (redisClient) {
+    warnDegraded("check");
   }
 
   const expiresAt = memoryBlocklist.get(jti);

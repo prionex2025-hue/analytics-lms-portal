@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ChevronDown, LogOut, Menu, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Settings, Sun, User } from "lucide-react";
+import { ChevronDown, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, User } from "lucide-react";
 import { useDispatch, useSelector } from "react-redux";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -14,16 +14,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { logoutStudent } from "@/features/Students/authSlice";
-import { setTheme } from "@/features/Students/uiSlice";
 import { optimizeCloudinaryImage } from "@/lib/cloudinary";
 import { resolvePageTitle } from "@/components/Studetns/navigation";
-
-const THEME_CYCLE = { light: "dark", dark: "system", system: "light" };
-const THEME_META = {
-  light: { icon: Sun, label: "Light theme" },
-  dark: { icon: Moon, label: "Dark theme" },
-  system: { icon: Monitor, label: "System theme" },
-};
 
 const getInitials = (name) =>
   (name || "Student")
@@ -38,10 +30,7 @@ function Header({ collapsed, onToggleSidebar, onOpenMobileSidebar }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const user = useSelector((state) => state.auth.user);
-  const theme = useSelector((state) => state.ui.theme || "system");
   const { title, section } = resolvePageTitle(pathname);
-  const ThemeIcon = (THEME_META[theme] || THEME_META.system).icon;
-  const nextTheme = THEME_CYCLE[theme] || "light";
 
   return (
     <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-card/90 px-4 backdrop-blur supports-[backdrop-filter]:bg-card/75 sm:px-6">
@@ -65,17 +54,6 @@ function Header({ collapsed, onToggleSidebar, onOpenMobileSidebar }) {
         {section ? <p className="hidden text-xs text-text-secondary sm:block">{section}</p> : null}
         <p className="truncate text-base font-semibold leading-tight text-text-primary">{title}</p>
       </div>
-
-      <Button
-        variant="ghost"
-        size="icon-lg"
-        className="size-10 text-text-secondary"
-        onClick={() => dispatch(setTheme(nextTheme))}
-        title={`${(THEME_META[theme] || THEME_META.system).label} — switch to ${nextTheme}`}
-      >
-        <ThemeIcon className="size-5" />
-        <span className="sr-only">Switch to {nextTheme} theme</span>
-      </Button>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

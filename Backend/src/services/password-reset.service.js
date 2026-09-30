@@ -8,6 +8,8 @@ const { ApiError } = require("../utils/http");
 const { revokeAllRefreshTokensForOwner } = require("./refresh-token-session.service");
 const { getClientIp } = require("../utils/client-ip");
 const { bumpPrincipalTokenVersion } = require("./auth-revocation.service");
+const { consumeRateLimit } = require("../middleware/rate-limit");
+const { logger } = require("../utils/logger");
 
 const GENERIC_RESET_MESSAGE = "If an account matches, password reset instructions will be sent.";
 const RESET_SUCCESS_MESSAGE = "Password reset successful. This reset link is now expired. Please sign in again.";
@@ -454,6 +456,21 @@ const requestPasswordReset = async ({ scope, identifier, portal = null, req, db:
   const db = providedDb || (await models.init()).dbClient;
   const principalContext = await findPrincipal(db, scope, identifier);
   if (!principalContext?.principal?.id || principalContext.principal.isActive === false) {
+    await padResponseTime(startedAt);
+    return { message: GENERIC_RESET_MESSAGE };
+  }
+
+  // Per-account quota across all IPs: stops mail-bombing one inbox from many
+  // addresses. Over quota we answer exactly as for a sent email, so the limit
+  // itself cannot be used to learn whether the account exists.
+  const accountQuota = await consumeRateLimit({
+    scope: `forgot-password-account:${scope}`,
+    identity: principalContext.principal.id,
+    max: env.rateLimit?.authForgotPasswordAccountMax ?? 3,
+    windowMs: env.rateLimit?.authForgotPasswordAccountWindowMs ?? 60 * 60 * 1000,
+  });
+  if (!accountQuota.allowed) {
+    logger.warn("auth.password_reset_quota_exceeded", { scope, ip: getClientIp(req) });
     await padResponseTime(startedAt);
     return { message: GENERIC_RESET_MESSAGE };
   }

@@ -1,4 +1,5 @@
 const models = require("../models");
+const { logger } = require("../utils/logger");
 const env = require("../config/env");
 const { redisClient, getRedisQueueConnection } = require("../config/redis");
 const { emitToRole } = require("../realtime/socket");
@@ -234,10 +235,12 @@ if (Queue && redisClient && queueConnection) {
     );
 
     superReportWorker.on("failed", (job, error) => {
+      // Internal error text (driver/Puppeteer messages, paths) stays in the logs.
+      logger.error("report.super_report_failed", { reportJobId: job?.data?.reportJobId, reason: error?.message });
       emitToRole("SUPER_ADMIN", "super-report:status", {
         reportJobId: job?.data?.reportJobId,
         status: "FAILED",
-        errorMessage: error?.message || "Super report processing failed",
+        errorMessage: "Report generation failed. Please retry.",
       });
     });
   }
@@ -490,18 +493,19 @@ const processSuperReportSynchronously = async (reportJobId) => {
       status: "COMPLETED",
     });
   } catch (error) {
+    logger.error("report.super_report_failed", { reportJobId, reason: error?.message });
     await db.superReportJob.update({
       where: { id: reportJobId },
       data: {
         status: "FAILED",
-        errorMessage: error.message,
+        errorMessage: "Report generation failed. Please retry.",
       },
     });
 
     emitToRole("SUPER_ADMIN", "super-report:status", {
       reportJobId,
       status: "FAILED",
-      errorMessage: error.message,
+      errorMessage: "Report generation failed. Please retry.",
     });
   }
 };
@@ -549,8 +553,13 @@ const recoverPendingSuperReportJobs = async ({ limit = DEFAULT_RECOVERY_LIMIT, s
   };
 };
 
+const closeSuperReportQueue = async () => {
+  await Promise.allSettled([superReportWorker?.close(), superReportQueue?.close()]);
+};
+
 module.exports = {
   buildGlobalReportPayload,
+  closeSuperReportQueue,
   enqueueSuperReportJob,
   processSuperReportSynchronously,
   recoverPendingSuperReportJobs,

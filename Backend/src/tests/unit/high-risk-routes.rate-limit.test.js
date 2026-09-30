@@ -4,6 +4,8 @@ const mockEnv = {
   rateLimit: {
     adminReportReadWindowMs: 30_000,
     adminReportReadMax: 20,
+    adminAnomalyReviewWindowMs: 60_000,
+    adminAnomalyReviewMax: 20,
     reportGenerationWindowMs: 60_000,
     reportGenerationMax: 10,
     adminTestListWindowMs: 30_000,
@@ -43,6 +45,7 @@ const loadRouteWithLimiterSpy = (routeModulePath, extraMocks = {}) => {
   jest.doMock("../../config/env", () => mockEnv);
   jest.doMock("../../middleware/rate-limit", () => ({
     authKeyByIp: jest.fn(() => "ip:test"),
+    refreshKeyBySession: jest.fn(() => "refresh:test"),
     createRateLimiter,
   }));
   jest.doMock("../../middleware/validate", () => () => mockMiddleware);
@@ -109,10 +112,11 @@ describe("high-risk route rate limit wiring", () => {
     expect(limiterConfigs.map((config) => config.scope)).toEqual([
       "report-generation",
       "admin-report-read",
+      "admin-anomaly-review",
     ]);
   });
 
-  it("limits auth login, refresh, forgot and reset password routes by IP", () => {
+  it("limits auth login (all + failed), refresh (IP + session), forgot and reset password routes", () => {
     const studentAuthLimiters = loadRouteWithLimiterSpy("../../routes/Students/auth.routes", {
       "../../controllers/Students/auth.controller": {
         forgotPassword: mockMiddleware,
@@ -128,8 +132,22 @@ describe("high-risk route rate limit wiring", () => {
       "student-forgot-password",
       "student-reset-password",
       "student-login",
+      "student-login-failed",
+      // Unified /api/auth/login with role SUPER_ADMIN uses the super-admin policy.
+      "super-admin-login",
+      "super-admin-login-failed",
+      "student-refresh-ip",
       "student-refresh",
     ]);
+    const failedLoginLimiter = studentAuthLimiters.find((config) => config.scope === "student-login-failed");
+    expect(failedLoginLimiter.countIf(null, { statusCode: 401 })).toBe(true);
+    expect(failedLoginLimiter.countIf(null, { statusCode: 200 })).toBe(false);
+    expect(failedLoginLimiter.countIf(null, { statusCode: 429 })).toBe(false);
+    const studentSkip = studentAuthLimiters.find((config) => config.scope === "student-login").skip;
+    const superSkip = studentAuthLimiters.find((config) => config.scope === "super-admin-login").skip;
+    expect(studentSkip({ body: { role: "super-admin" } })).toBe(true);
+    expect(superSkip({ body: { role: "super-admin" } })).toBe(false);
+    expect(superSkip({ body: {} })).toBe(true);
 
     const adminAuthLimiters = loadRouteWithLimiterSpy("../../routes/Admin/auth.routes", {
       "../../controllers/Admin/auth.controller": {
@@ -146,6 +164,8 @@ describe("high-risk route rate limit wiring", () => {
       "admin-forgot-password",
       "admin-reset-password",
       "admin-login",
+      "admin-login-failed",
+      "admin-refresh-ip",
       "admin-refresh",
     ]);
 
@@ -164,6 +184,8 @@ describe("high-risk route rate limit wiring", () => {
       "super-admin-forgot-password",
       "super-admin-reset-password",
       "super-admin-login",
+      "super-admin-login-failed",
+      "super-admin-refresh-ip",
       "super-admin-refresh",
     ]);
   });

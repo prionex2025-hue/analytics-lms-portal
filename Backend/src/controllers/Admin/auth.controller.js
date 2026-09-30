@@ -21,6 +21,7 @@ const {
   recordLoginFailure,
 } = require("../../services/login-attempt.service");
 const { getClientIp } = require("../../utils/client-ip");
+const { compareAgainstDummyHash } = require("../../utils/password-timing");
 const { recordSecurityEvent } = require("../../services/security-audit.service");
 const { buildRefreshCookieOptions } = require("../../utils/refresh-cookie");
 
@@ -49,6 +50,7 @@ const adminLogin = asyncHandler(async (req, res) => {
   });
 
   if (!admin) {
+    await compareAgainstDummyHash(password);
     await recordLoginFailure({ scope: loginScope, identifier: loginIdentifier, ip: getClientIp(req) });
     await recordSecurityEvent({
       action: "ADMIN_LOGIN_FAILED",

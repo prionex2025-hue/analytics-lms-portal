@@ -83,7 +83,7 @@ const BADGE_TONE = {
   neutral: "bg-muted text-text-secondary ring-border",
   info: "bg-primary/10 text-primary ring-primary/20",
   success: "bg-success/10 text-success ring-success/25",
-  warning: "bg-warning/12 text-amber-700 ring-warning/30 dark:text-warning",
+  warning: "bg-warning/12 text-amber-700 ring-warning/30",
   danger: "bg-danger/10 text-danger ring-danger/25",
 };
 
@@ -180,7 +180,7 @@ export function Callout({ tone = "info", icon: Icon, title, children, className 
   }[tone];
   const iconClass = {
     info: "text-primary",
-    warning: "text-amber-600 dark:text-warning",
+    warning: "text-amber-600",
     danger: "text-danger",
     success: "text-success",
   }[tone];

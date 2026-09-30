@@ -399,7 +399,7 @@ export default function LiveMonitoringPage() {
                   <div key={item.label} className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-mono text-xs text-text-primary">{item.label}</p>
-                      <p className="text-sm font-semibold tabular-nums text-amber-700 dark:text-warning">{item.blocked}</p>
+                      <p className="text-sm font-semibold tabular-nums text-amber-700">{item.blocked}</p>
                     </div>
                   </div>
                 ))}

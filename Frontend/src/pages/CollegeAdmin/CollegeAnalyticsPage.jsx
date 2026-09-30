@@ -172,7 +172,7 @@ export default function CollegeAnalyticsPage() {
                   <span
                     className={cn(
                       "grid size-7 shrink-0 place-items-center rounded-full text-xs font-semibold tabular-nums",
-                      index === 0 ? "bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300" : "bg-muted text-text-secondary"
+                      index === 0 ? "bg-amber-100 text-amber-700" : "bg-muted text-text-secondary"
                     )}
                   >
                     {index + 1}

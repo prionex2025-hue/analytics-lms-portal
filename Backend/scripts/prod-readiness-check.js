@@ -449,6 +449,17 @@ const run = async () => {
     if (typeof env.trustProxy !== "number" || env.trustProxy < 1) {
       findings.push("TRUST_PROXY must be the number of reverse proxies in front of the API (2 for the docker-compose + host nginx setup).");
     }
+    // Old default (15 per IP / 15 min) locks whole campus labs behind one NAT IP
+    // out of login at exam start. Failed attempts have their own low limit.
+    if (env.rateLimit.authLoginMax < 100) {
+      findings.push(
+        `RATE_LIMIT_AUTH_LOGIN_MAX=${env.rateLimit.authLoginMax} is a legacy per-IP value that blocks shared campus networks; ` +
+        "use >= 300 (default 600). Brute force is limited by RATE_LIMIT_AUTH_LOGIN_FAILED_MAX and account lockout."
+      );
+    }
+    if (env.rateLimit.authRefreshIpMax < 300) {
+      findings.push(`RATE_LIMIT_AUTH_REFRESH_IP_MAX=${env.rateLimit.authRefreshIpMax} is too low for a shared campus IP; use >= 300 (default 1500).`);
+    }
     const rateLimitDisabled = String(process.env.RATE_LIMIT_DISABLED || "").trim().toLowerCase();
     if (["1", "true", "yes", "on"].includes(rateLimitDisabled)) {
       findings.push("RATE_LIMIT_DISABLED must not be enabled in production (it removes login brute-force protection).");

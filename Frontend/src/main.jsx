@@ -6,7 +6,6 @@ import { Provider } from 'react-redux'
 import { store } from '@/app/store'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from '@/app/queryClient'
-import ThemeSync from '@/components/common/ThemeSync'
 import DeferredToaster from '@/components/common/DeferredToaster'
 import { registerChunkReloadHandler } from '@/lib/chunkReload'
 import { registerRumMetrics } from '@/services/rum'
@@ -18,7 +17,6 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <Provider store={store}>
       <QueryClientProvider client={queryClient}>
-        <ThemeSync />
         <App />
         <DeferredToaster />
       </QueryClientProvider>

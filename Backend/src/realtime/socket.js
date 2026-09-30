@@ -1,5 +1,6 @@
 const { Server } = require("socket.io");
 const { createAdapter } = require("@socket.io/redis-adapter");
+const { logger } = require("../utils/logger");
 const Redis = require("ioredis");
 const db = require("../config/db");
 const { ROLES, isAdminLikeRole, isCollegeAdminRole, isDepartmentAdminRole, normalizeRole } = require("../constants/roles");
@@ -7,6 +8,8 @@ const { verifyAccessToken } = require("../utils/token");
 const env = require("../config/env");
 const { isAccessTokenRevoked } = require("../services/access-token-revocation.service");
 const { canStudentAuthenticate } = require("../services/student-lifecycle.service");
+const { consumeRateLimit, releaseRateLimit } = require("../middleware/rate-limit");
+const { getSocketClientIp } = require("../utils/socket-client-ip");
 
 let io = null;
 
@@ -182,14 +185,21 @@ const attachRedisAdapterIfAvailable = async () => {
   });
 
   pubClient.on("error", (err) => {
-    console.error("Socket.IO Redis pub client error:", err.message);
+    logger.throttled("error", "socket-redis-pub", 60_000, "socket.redis_adapter_error", { client: "pub", reason: err.message });
   });
   subClient.on("error", (err) => {
-    console.error("Socket.IO Redis sub client error:", err.message);
+    logger.throttled("error", "socket-redis-sub", 60_000, "socket.redis_adapter_error", { client: "sub", reason: err.message });
   });
 
   try {
     await Promise.all([pubClient.connect(), subClient.connect()]);
+    // Bootstrap is one-shot (no retry storm if Redis is down at boot), but once
+    // the adapter is attached it must survive Redis restarts: without
+    // reconnection, cross-replica broadcasts (live monitoring, report status)
+    // would silently stop until the API is restarted.
+    const reconnectWithBackoff = (attempt) => Math.min(attempt * 200, env.redis.maxRetryDelayMs || 2000);
+    pubClient.options.retryStrategy = reconnectWithBackoff;
+    subClient.options.retryStrategy = reconnectWithBackoff;
     io.adapter(createAdapter(pubClient, subClient));
     socketRedisPubClient = pubClient;
     socketRedisSubClient = subClient;
@@ -221,23 +231,58 @@ const initSocket = (httpServer, frontendOrigins) => {
     console.warn("Socket.IO Redis adapter bootstrap error, using in-memory adapter:", error?.message || "unknown error");
   });
 
+  // Handshake limits (each handshake costs a JWT verify + DB principal load):
+  //  - failed handshakes per client IP: a unit is reserved up front and given
+  //    back on success, so bursts of bad tokens cannot exceed the limit while a
+  //    whole lab (one NAT IP) connecting legitimately is never throttled;
+  //  - successful connections per user: stops reconnect loops and one stolen
+  //    token opening sockets in bulk.
+  const rl = env.rateLimit;
+  const rejectHandshake = (next, message) => next(new Error(message));
+
   io.use(async (socket, next) => {
+    const clientIp = getSocketClientIp(socket.request);
+    const failureQuota = { scope: "socket-auth-failure", identity: `ip:${clientIp}` };
+
     try {
+      // Every early return below keeps this unit (a failed handshake); only a
+      // successful authentication gives it back.
+      const quota = await consumeRateLimit({ ...failureQuota, max: rl.socketAuthFailureMax, windowMs: rl.socketAuthFailureWindowMs });
+      if (!quota.allowed) {
+        await releaseRateLimit(failureQuota);
+        logger.throttled("warn", `socket-auth-limited:${clientIp}`, 60_000, "rate_limit.exceeded", { scope: "socket-auth-failure", ip: clientIp });
+        return rejectHandshake(next, "Too many failed connection attempts");
+      }
+
       const authHeader = socket.handshake.auth?.token || socket.handshake.headers?.authorization || "";
       const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
 
       if (!token) {
-        return next(new Error("Unauthorized"));
+        return rejectHandshake(next, "Unauthorized");
       }
 
       const principal = verifyAccessToken(token);
       if (await isAccessTokenRevoked(principal)) {
-        return next(new Error("Unauthorized"));
+        return rejectHandshake(next, "Unauthorized");
       }
       socket.data.user = await loadSocketPrincipal(principal);
+
+      // Authenticated: this handshake is not a failure.
+      await releaseRateLimit(failureQuota);
+
+      const perUser = await consumeRateLimit({
+        scope: "socket-connect",
+        identity: `user:${principal.sub}`,
+        max: rl.socketConnectMax,
+        windowMs: rl.socketConnectWindowMs,
+      });
+      if (!perUser.allowed) {
+        logger.throttled("warn", `socket-connect-limited:${principal.sub}`, 60_000, "rate_limit.exceeded", { scope: "socket-connect", actor: `user:${principal.sub}` });
+        return rejectHandshake(next, "Too many connections");
+      }
       return next();
     } catch (_error) {
-      return next(new Error("Unauthorized"));
+      return rejectHandshake(next, "Unauthorized");
     }
   });
 
@@ -326,7 +371,21 @@ const emitToTestRoom = (testId, event, payload) => {
   io.to(`test_${testId}`).emit(event, payload);
 };
 
+// Disconnect clients first: open websockets would otherwise keep
+// server.close() from ever completing. Clients reconnect to another replica.
+const disconnectAllSockets = () => {
+  if (!io) return;
+  try {
+    // io.local: only this replica's clients. Through the Redis adapter a plain
+    // io.disconnectSockets() would disconnect every client on every replica.
+    io.local.disconnectSockets(true);
+  } catch {
+    // Best effort during shutdown.
+  }
+};
+
 const shutdownSocket = async () => {
+  disconnectAllSockets();
   const closeClient = async (client) => {
     if (!client) return;
     try {
@@ -349,6 +408,7 @@ module.exports = {
   emitToRole,
   emitToTestRoom,
   disconnectUserSockets,
+  disconnectAllSockets,
   shutdownSocket,
 };
 

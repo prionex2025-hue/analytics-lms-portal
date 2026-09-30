@@ -259,12 +259,45 @@ docker compose --env-file Backend/.env.production -f docker-compose.monitoring.y
 
 Prometheus scrapes `api1/api2/api3`. Keep Grafana behind localhost/VPN only.
 
-## Step 16 — One-click deploys & rollbacks via GitHub Actions (optional)
+## Step 16 — CI/CD with GitHub Actions
 
-`.github/workflows/deploy-vps.yml` and `.github/workflows/rollback-vps.yml` are ready. Add these repo **Secrets**:
+- `ci.yml` runs lint + tests on every push / PR.
+- `deploy-vps.yml` **auto-deploys every push to `main` once CI passes** (the exact
+  tested commit), and can also be run manually (Actions → Deploy VPS → Run
+  workflow, optional `ref`).
+- `rollback-vps.yml` is manual only.
 
-| Secret | Value |
-|---|---|
+Repo **Settings → Secrets and variables → Actions**:
+
+| Kind | Name | Value |
+|---|---|---|
+| Secret | `VPS_HOST` | your VPS IP / hostname |
+| Secret | `VPS_USER` | `deploy` |
+| Secret | `VPS_PATH` | `/var/www/lms-portal` |
+| Secret | `VPS_SSH_KEY` | a private key whose public half is in `~deploy/.ssh/authorized_keys` |
+| Variable | `APP_URL` | `https://lms.yourdomain.com` (health check URL; defaults to `https://lms.analyticsedify.com`) |
+
+The VPS only needs **read** access to the repo (a read-only deploy key); release
+tags are pushed from the GitHub runner. Both workflows use the `production`
+environment — add required reviewers there if you want a manual approval gate.
+
+Each successful deploy is recorded under an immutable `release/<timestamp>` tag
+plus a moving `release/latest` tag.
+
+**Never edit tracked files on the VPS** (e.g. `sed` in Step 5): the deploy does
+`git checkout --detach <sha>` and a dirty tree breaks it. Make changes on your
+workstation, commit, push.
+
+**Rollback** (previous release): GitHub → **Actions → Rollback VPS → Run
+workflow** with `ref` = the `release/<timestamp>` tag (or SHA) you want back.
+It rebuilds that exact commit and re-runs the readiness gate. Re-running DB
+migrations is opt-in via `run_migrations` — migrations are **forward-only**, so
+a rollback to an older build must be verified compatible with the already-migrated
+schema (see §10 of `PRODUCTION_GO_LIVE_CHECKLIST.md`).
+
+Deploys and rollbacks share one `concurrency` group, so two runs can never race.
+
+---|---|
 | `VPS_HOST` | your VPS IP / hostname |
 | `VPS_USER` | `deploy` |
 | `VPS_PATH` | `/var/www/lms-portal` |
@@ -286,6 +319,22 @@ schema (see §10 of `PRODUCTION_GO_LIVE_CHECKLIST.md`).
 Deploys and rollbacks share one `concurrency` group, so two runs can never race.
 
 ---
+
+## Applying the Sep 2026 hardening to an existing server
+
+Run once on the VPS from the repo root (after pulling this release). Dry run first, then `--apply`.
+It backs up `Backend/.env.production` and the nginx site file, and only reloads nginx if `nginx -t` passes.
+Design and limits: `Backend/docs/REDIS_AND_RATE_LIMITING.md`.
+
+```bash
+deploy/scripts/apply-production-hardening.sh \
+  --trusted-networks "<college public IPs/CIDRs, comma separated>" \
+  --alert-webhook "<Slack/Discord/Teams webhook URL>" \
+  --nginx-conf /etc/nginx/sites-available/lms-portal \
+  [--rotate-jwt]            # new JWT secrets: every user signs in once more
+deploy/scripts/apply-production-hardening.sh ...same flags... --apply
+docker compose $CF up -d && docker compose $CF exec api1 npm run prod:check
+```
 
 ## Pre-launch gate (before opening to 1500 students)
 

@@ -37,6 +37,27 @@ groups:
           summary: LMS API 5xx error rate is high
           description: API 5xx error rate has exceeded 5 percent for five minutes.
 
+      - alert: LmsRateLimitSpike
+        expr: sum(increase(lms_rate_limit_blocked_total[10m])) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Unusual number of rate-limited requests
+          description: >-
+            More than 300 requests were rate limited in 10 minutes. Check Loki for
+            event="rate_limit.exceeded" / "auth.login_locked" (brute force or password
+            spraying), or a campus NAT hitting login limits (RATE_LIMIT_AUTH_TRUSTED_NETWORKS).
+
+      - alert: LmsApiMemoryHigh
+        expr: lms_process_resident_memory_bytes > 1.6e9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: API replica memory is close to its 2g container limit
+          description: Resident memory above 1.6 GB for 10 minutes; investigate before the container is OOM-killed.
+
       - alert: LmsUploadDiskWarning
         expr: lms_upload_disk_used_percent >= 80
         for: 5m

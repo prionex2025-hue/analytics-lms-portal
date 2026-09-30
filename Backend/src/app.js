@@ -8,13 +8,11 @@ const compression = require("compression");
 const env = require("./config/env");
 const { CORS_ALLOWED_HEADERS, CORS_EXPOSED_HEADERS } = require("./config/cors");
 
-// Allow k6/test runs to disable rate limiting without altering route wiring.
-// Set RATE_LIMIT_DISABLED=true (or 1) in environment.
-const isRateLimitDisabled =
-  String(process.env.RATE_LIMIT_DISABLED || "").toLowerCase() === "true" ||
-  String(process.env.RATE_LIMIT_DISABLED || "") === "1";
-
+// RATE_LIMIT_DISABLED=true (k6/load tests only) is honoured inside
+// createRateLimiter itself; it is ignored under NODE_ENV=test.
+const mongoose = require("mongoose");
 const { getRedisHealthSnapshot } = require("./config/redis");
+const { isShuttingDown } = require("./utils/lifecycle");
 const studentAuthRoutes = require("./routes/Students/auth.routes");
 const studentDashboardRoutes = require("./routes/Students/dashboard.routes");
 const studentTestsRoutes = require("./routes/Students/tests.routes");
@@ -85,137 +83,66 @@ const collegeAdminResourcesRoutes = createResourcesRouter({ managementEnabled: t
 const superAdminResourcesRoutes = createResourcesRouter({ managementEnabled: true, analyticsEnabled: true });
 const superAdminResourcesAliasRoutes = createResourcesRouter({ managementEnabled: true, analyticsEnabled: true });
 
-const isUnifiedSuperAdminLoginRequest = (req) => {
-  const role = String(req.body?.role || "").trim().replace(/[\s-]+/g, "_").toUpperCase();
-  return role === "SUPER_ADMIN";
-};
-
-const createAuthLoginLimiter = (scopeSuffix, routeLabel, overrides = {}) =>
-  isRateLimitDisabled
-    ? createRateLimiter({ scope: "noop", windowMs: 1, max: 999999999, skip: () => true })
-    : createRateLimiter({
-        scope: `auth-login:${scopeSuffix}`,
-        routeLabel,
-        windowMs: overrides.windowMs || env.rateLimit.authLoginWindowMs,
-        max: overrides.max || env.rateLimit.authLoginMax,
-        skip: overrides.skip,
-        keySelector: authKeyByIp,
-        failOpen: false,
-        message: "Too many login attempts. Try again in a few minutes.",
-      });
-
-const authLoginLimiter = createAuthLoginLimiter("student", "/api/auth/login", {
-  skip: isUnifiedSuperAdminLoginRequest,
-});
-const adminAuthLoginLimiter = createAuthLoginLimiter("admin", "/api/admin/auth/login");
-const collegeAdminAuthLoginLimiter = createAuthLoginLimiter("college-admin", "/api/college-admin/auth/login");
-const superAdminAuthLoginLimiter = createAuthLoginLimiter("super-admin", "/api/super-admin/auth/login", {
-  windowMs: env.rateLimit.superAdminAuthLoginWindowMs,
-  max: env.rateLimit.superAdminAuthLoginMax,
-});
-const unifiedSuperAdminAuthLoginLimiter = createAuthLoginLimiter("super-admin", "/api/auth/login", {
-  windowMs: env.rateLimit.superAdminAuthLoginWindowMs,
-  max: env.rateLimit.superAdminAuthLoginMax,
-  skip: (req) => !isUnifiedSuperAdminLoginRequest(req),
-});
-
-
-const authRefreshLimiter = isRateLimitDisabled
-  ? createRateLimiter({
-      scope: "noop",
-      windowMs: 1,
-      max: 999999999,
-      skip: () => true,
-    })
-  : createRateLimiter({
-      scope: "auth-refresh",
-      routeLabel: "/api/*/auth/refresh",
-      windowMs: env.rateLimit.authRefreshWindowMs,
-      max: env.rateLimit.authRefreshMax,
-      keySelector: authKeyByIp,
-      failOpen: false,
-      message: "Too many token refresh attempts. Please retry shortly.",
-    });
-
-
 const getApiRelativePath = (req) =>
   String(req.originalUrl || req.path || "")
     .split("?")[0]
     .replace(/^\/api(?=\/|$)/, "") || "/";
 
+// Auth endpoints with their own dedicated limiters (middleware/auth-rate-limits.js).
+// Everything else under /auth (logout, /me) stays under the general limit.
+const DEDICATED_AUTH_LIMIT_PATTERN =
+  /^\/(?:admin\/|college-admin\/|super-admin\/|superadmin\/)?auth\/(?:login|refresh|forgot-password|reset-password)\/?$/;
+const SUPER_ADMIN_PATH_PATTERN = /^\/(?:super-admin|superadmin)(?:\/|$)/;
+
 const shouldSkipGeneralApiLimit = (req) => {
   const path = getApiRelativePath(req);
   return (
-    path === "/health" ||
-    /^\/(?:admin\/|college-admin\/|super-admin\/|superadmin\/)?auth\//.test(path) ||
-    path.startsWith("/super-admin/") ||
-    path.startsWith("/superadmin/")
+    DEDICATED_AUTH_LIMIT_PATTERN.test(path) ||
+    // Super admin traffic has its own (higher) per-user budget below.
+    SUPER_ADMIN_PATH_PATTERN.test(path)
   );
 };
 
-const generalApiLimiter = isRateLimitDisabled
-  ? createRateLimiter({
-      scope: "noop",
-      windowMs: 1,
-      max: 999999999,
-      skip: () => true,
-    })
-  : createRateLimiter({
-      scope: "api-general",
-      routeLabel: "/api/*",
-      windowMs: env.rateLimit.generalApiWindowMs,
-      max: env.rateLimit.generalApiMax,
-      skip: shouldSkipGeneralApiLimit,
-      message: "Too many requests. Please slow down and try again.",
-    });
+// Baseline per-principal budget for every /api request (per user when the
+// access token is valid, otherwise per IP). Route files add tighter limits
+// for expensive or sensitive operations.
+const generalApiLimiter = createRateLimiter({
+  scope: "api-general",
+  routeLabel: "/api/*",
+  windowMs: env.rateLimit.generalApiWindowMs,
+  max: env.rateLimit.generalApiMax,
+  skip: shouldSkipGeneralApiLimit,
+  message: "Too many requests. Please slow down and try again.",
+});
 
-const rumLimiter = isRateLimitDisabled
-  ? createRateLimiter({ scope: "noop", windowMs: 1, max: 999999999, skip: () => true })
-  : createRateLimiter({
-      scope: "rum",
-      routeLabel: "/api/rum",
-      windowMs: 60 * 1000,
-      max: 120,
-      keySelector: authKeyByIp,
-      message: "Too many metrics requests.",
-    });
+const rumLimiter = createRateLimiter({
+  scope: "rum",
+  routeLabel: "/api/rum",
+  windowMs: 60 * 1000,
+  max: 120,
+  keySelector: authKeyByIp,
+  message: "Too many metrics requests.",
+});
 
-const collegeAdminApiLimiter = isRateLimitDisabled
-  ? createRateLimiter({
-      scope: "noop",
-      windowMs: 1,
-      max: 999999999,
-      skip: () => true,
-    })
-  : createRateLimiter({
-      scope: "college-admin-api",
-      routeLabel: "/api/college-admin/*",
-      windowMs: env.rateLimit.collegeAdminApiWindowMs,
-      max: env.rateLimit.collegeAdminApiMax,
-      skip: (req) =>
-        req.path.startsWith("/api/college-admin/auth/login") ||
-        req.path.startsWith("/api/college-admin/auth/refresh"),
-      message: "College admin API is rate limited. Please retry shortly.",
-    });
+const collegeAdminApiLimiter = createRateLimiter({
+  scope: "college-admin-api",
+  routeLabel: "/api/college-admin/*",
+  windowMs: env.rateLimit.collegeAdminApiWindowMs,
+  max: env.rateLimit.collegeAdminApiMax,
+  // Mounted with app.use("/api/college-admin"), so req.path is relative;
+  // match on the full URL instead.
+  skip: (req) => DEDICATED_AUTH_LIMIT_PATTERN.test(getApiRelativePath(req)),
+  message: "College admin API is rate limited. Please retry shortly.",
+});
 
-const superAdminApiLimiter = isRateLimitDisabled
-  ? createRateLimiter({
-      scope: "noop",
-      windowMs: 1,
-      max: 999999999,
-      skip: () => true,
-    })
-  : createRateLimiter({
-      scope: "super-admin-api",
-      routeLabel: "/api/super-admin/*",
-      windowMs: env.rateLimit.superAdminApiWindowMs,
-      max: env.rateLimit.superAdminApiMax,
-      skip: (req) => {
-        const path = getApiRelativePath(req);
-        return /^\/(?:super-admin|superadmin)\/auth\/(?:login|refresh)$/.test(path);
-      },
-      message: "Super admin API is rate limited. Please retry shortly.",
-    });
+const superAdminApiLimiter = createRateLimiter({
+  scope: "super-admin-api",
+  routeLabel: "/api/super-admin/*",
+  windowMs: env.rateLimit.superAdminApiWindowMs,
+  max: env.rateLimit.superAdminApiMax,
+  skip: (req) => DEDICATED_AUTH_LIMIT_PATTERN.test(getApiRelativePath(req)),
+  message: "Super admin API is rate limited. Please retry shortly.",
+});
 
 const normalizeQueryParams = (query = {}) =>
   Object.keys(query)
@@ -340,31 +267,64 @@ const systemHealthCache = createResponseCache({
   tagsBuilder: () => ["system-health:all"],
 });
 
-const buildCoreHealthSnapshot = async () => {
-  const checks = {};
+const withTimeout = (promise, ms, label) =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} check timed out`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+
+const checkMongo = async () => {
   try {
-    const database = await getDb();
-    await database.college.count();
-    checks.mongodb = "ok";
+    await withTimeout(
+      (async () => {
+        await getDb();
+        await mongoose.connection.db.admin().command({ ping: 1 });
+      })(),
+      env.database.readinessTimeoutMs,
+      "mongodb"
+    );
+    return "ok";
   } catch {
-    checks.mongodb = "down";
+    return "down";
+  }
+};
+
+// Readiness: can this instance serve traffic right now?
+//  - MongoDB is required (nothing works without it).
+//  - Redis is optional by default: rate limits/lockouts fall back to
+//    per-instance memory, caches fall back to MongoDB, exam locks fall back
+//    to atomic DB guards. Failing readiness on a Redis blip would pull EVERY
+//    replica out of the load balancer at once. REDIS_REQUIRED_FOR_READINESS
+//    opts into strict behaviour.
+//  - During graceful shutdown the instance reports not-ready so it drains.
+const buildCoreHealthSnapshot = async () => {
+  if (isShuttingDown()) {
+    return { ready: false, body: { status: "shutting_down" } };
   }
 
-  const redisHealth = await getRedisHealthSnapshot();
-  checks.redis = redisHealth.status;
+  const [mongodb, redisHealth] = await Promise.all([checkMongo(), getRedisHealthSnapshot()]);
+  const redis = redisHealth.configured ? (redisHealth.available ? "ok" : "down") : "disabled";
+  const redisBlocksReadiness = env.redis.requiredForReadiness && redisHealth.configured && redis !== "ok";
+  const ready = mongodb === "ok" && !redisBlocksReadiness;
+  const degraded = ready && redis === "down";
 
-  const ready = checks.mongodb === "ok" && checks.redis !== "down";
   return {
     ready,
+    // Public, unauthenticated endpoint: dependency status only. No hosts,
+    // latencies, versions or error text (super admins get detail via
+    // /api/super-admin/system/health).
     body: {
-      status: ready ? "ok" : "degraded",
-      checks,
-      // Public, unauthenticated endpoint: report status only. Detailed errors
-      // stay in the server logs; super admins get latency via /api/super-admin/system/health.
-      redis: {
-        configured: redisHealth.configured,
-        available: redisHealth.available,
-      },
+      status: !ready ? "unavailable" : degraded ? "degraded" : "ok",
+      checks: { mongodb, redis },
       uptime: Math.floor(process.uptime()),
     },
   };
@@ -400,6 +360,13 @@ const enforceTrustedOriginForUnsafeMethods = (req, res, next) => {
 };
 
 app.use(requestIdMiddleware);
+// While draining, tell NGINX/clients not to reuse this connection.
+app.use((_req, res, next) => {
+  if (isShuttingDown()) {
+    res.setHeader("Connection", "close");
+  }
+  next();
+});
 app.use(
   cors({
     origin(origin, callback) {
@@ -451,15 +418,28 @@ app.use(
   })
 );
 app.use(compression());
+// Production access log: one JSON object per line, same shape as utils/logger
+// events so Loki/ELK can parse everything uniformly. Path only (query strings
+// can carry tokens); no cookies, auth headers or bodies.
+const jsonAccessLogFormat = (tokens, req, res) =>
+  JSON.stringify({
+    time: new Date().toISOString(),
+    level: res.statusCode >= 500 ? "error" : "info",
+    event: "http.request",
+    method: req.method,
+    path: String(req.originalUrl || req.url || "").split("?")[0],
+    status: res.statusCode,
+    durationMs: Number(tokens["response-time"](req, res)) || null,
+    bytes: Number(tokens.res(req, res, "content-length")) || 0,
+    ip: req.ip,
+    requestId: req.id || null,
+    userAgent: String(req.get("user-agent") || "").slice(0, 200),
+  });
+
 app.use(
-  morgan(
-    env.nodeEnv === "production"
-      ? ':remote-addr - :method :url :status :res[content-length] ":referrer" ":user-agent" :response-time ms request_id=:request-id'
-      : "dev",
-    {
-      skip: (req) => ["/api/live", "/api/ready", "/api/health"].includes(req.path),
-    }
-  )
+  morgan(env.nodeEnv === "production" ? jsonAccessLogFormat : "dev", {
+    skip: (req) => ["/api/live", "/api/ready", "/api/health"].includes(req.path),
+  })
 );
 app.use(express.json({ limit: env.requestBodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: env.requestBodyLimit }));
@@ -486,15 +466,18 @@ app.get("/api/live", (_req, res) => {
   });
 });
 
-app.get("/api/ready", asyncHandler(async (_req, res) => {
+const sendReadiness = asyncHandler(async (_req, res) => {
   const snapshot = await buildCoreHealthSnapshot();
+  res.setHeader("Cache-Control", "no-store");
   res.status(snapshot.ready ? 200 : 503).json(snapshot.body);
-}));
+});
 
-app.get("/api/health", asyncHandler(async (_req, res) => {
-  const snapshot = await buildCoreHealthSnapshot();
-  res.status(snapshot.ready ? 200 : 503).json(snapshot.body);
-}));
+// Liveness (/api/live): process is up and the event loop responds - no
+// dependency checks, so a DB outage never gets containers killed in a loop.
+// Readiness (/api/ready): see buildCoreHealthSnapshot. /api/health is kept as
+// an alias of readiness for existing monitors and the Dockerfile HEALTHCHECK.
+app.get("/api/ready", sendReadiness);
+app.get("/api/health", sendReadiness);
 
 app.get("/api/metrics", metricsAuth, asyncHandler(async (_req, res) => {
   const metrics = await getPrometheusMetrics();
@@ -509,18 +492,8 @@ app.post("/api/rum", rumLimiter, (req, res) => {
 
 app.use("/api", generalApiLimiter);
 
-app.use("/api/auth/login", unifiedSuperAdminAuthLoginLimiter);
-app.use("/api/auth/login", authLoginLimiter);
-app.use("/api/admin/auth/login", adminAuthLoginLimiter);
-app.use("/api/college-admin/auth/login", collegeAdminAuthLoginLimiter);
-app.use("/api/super-admin/auth/login", superAdminAuthLoginLimiter);
-app.use("/api/superadmin/auth/login", superAdminAuthLoginLimiter);
-
-app.use("/api/auth/refresh", authRefreshLimiter);
-app.use("/api/admin/auth/refresh", authRefreshLimiter);
-app.use("/api/college-admin/auth/refresh", authRefreshLimiter);
-app.use("/api/super-admin/auth/refresh", authRefreshLimiter);
-app.use("/api/superadmin/auth/refresh", authRefreshLimiter);
+// Login/refresh/password-reset limits live on the auth routers themselves
+// (middleware/auth-rate-limits.js), so each request is counted exactly once.
 app.use("/api/college-admin", collegeAdminApiLimiter);
 app.use("/api/super-admin", superAdminApiLimiter);
 app.use("/api/superadmin", superAdminApiLimiter);

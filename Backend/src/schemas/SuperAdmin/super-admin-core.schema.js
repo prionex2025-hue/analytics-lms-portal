@@ -302,6 +302,45 @@ const resetStudentPasswordSchema = z.object({
   query: z.object({}).optional().default({}),
 });
 
+// Mirrors the fields updateStudentGlobal actually consumes, so unknown keys
+// cannot be smuggled into the student document.
+const updateStudentGlobalSchema = z.object({
+  body: z.object({
+    fullName: z.string().trim().min(2).max(120).optional(),
+    email: z.string().trim().email().max(160).optional(),
+    enrollNumber: z.union([z.string(), z.number()]).transform((value) => String(value).trim()).optional(),
+    year: z.coerce.number().int().min(1).max(6).optional(),
+    collegeId: optionalNullableIdSchema,
+    departmentId: optionalNullableIdSchema,
+    batchId: optionalNullableIdSchema,
+    batchIds: z.array(idSchema).optional(),
+  }),
+  params: z.object({ studentId: idSchema }),
+  query: z.object({}).optional().default({}),
+});
+
+const collegeIdParamSchema = z.object({
+  body: z.object({}).optional().default({}),
+  params: z.object({ collegeId: idSchema }),
+  query: z.object({}).optional().default({}),
+});
+
+// deleteStudentGlobal enforces a typed "DELETE <number>" acknowledgement, so
+// confirmationText has to survive validation.
+const deleteStudentGlobalSchema = z.object({
+  body: z.object({
+    confirmationText: z.string().trim().min(1).max(120),
+  }),
+  params: z.object({ studentId: idSchema }),
+  query: z.object({}).optional().default({}),
+});
+
+const deactivateCollegeSchema = z.object({
+  body: z.object({}).optional().default({}),
+  params: z.object({ collegeId: idSchema }),
+  query: z.object({}).optional().default({}),
+});
+
 const optionalExplanationVideoUrlSchema = z.preprocess(
   (value) => {
     if (value == null) return null;
@@ -820,6 +859,10 @@ module.exports = {
   assignStudentsToGlobalBatchSchema,
   toggleStudentStatusSchema,
   resetStudentPasswordSchema,
+  updateStudentGlobalSchema,
+  deleteStudentGlobalSchema,
+  collegeIdParamSchema,
+  deactivateCollegeSchema,
   createGlobalTestSchema,
   updateGlobalTestSchema,
   cloneTestSchema,

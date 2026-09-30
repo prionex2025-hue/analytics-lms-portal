@@ -31,7 +31,7 @@ router.patch("/:batchId/students", authenticatePlatformAdmin, requirePermission(
 router.post("/:batchId/students/bulk", authenticatePlatformAdmin, requirePermission("manage_batches", "manage_students", "bulk_import"), validate(bulkBatchStudentsSchema), batchesController.bulkAddStudentsToBatch);
 router.delete("/:batchId/students/:studentId", authenticatePlatformAdmin, adminBatchGuardLimiter, requirePermission("manage_batches", "manage_students"), validate(removeStudentFromBatchSchema), batchesController.removeStudentFromBatch);
 router.patch("/:batchId/archive", authenticatePlatformAdmin, adminBatchGuardLimiter, requirePermission("manage_batches"), validate(batchIdParamSchema), batchesController.archiveBatch);
-router.delete("/:batchId", authenticatePlatformAdmin, requirePermission("manage_batches"), batchesController.deleteBatch);
+router.delete("/:batchId", authenticatePlatformAdmin, adminBatchGuardLimiter, requirePermission("manage_batches"), validate(batchIdParamSchema), batchesController.deleteBatch);
 
 module.exports = router;
 

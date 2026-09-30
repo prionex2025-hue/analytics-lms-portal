@@ -1,6 +1,12 @@
 name: Deploy VPS
 
 on:
+  # Continuous deployment: every push to main that passes CI is deployed.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  # Manual deploy of any branch / tag / SHA from the Actions tab.
   workflow_dispatch:
     inputs:
       ref:
@@ -19,9 +25,38 @@ permissions:
 jobs:
   deploy:
     name: Deploy to Production VPS
+    # Auto-deploy only when CI succeeded for a push (not for a PR build).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    # Add required reviewers to this environment in repo Settings to gate deploys.
+    environment: production
+    env:
+      APP_URL: ${{ vars.APP_URL || 'https://lms.analyticsedify.com' }}
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve deploy commit
+        id: ref
+        env:
+          # Passed via env (not ${{ }} in the script) so the input can't inject shell.
+          REF_INPUT: ${{ inputs.ref }}
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          REF="${CI_SHA:-${REF_INPUT:-origin/main}}"
+          if ! printf '%s' "$REF" | grep -qE '^[A-Za-z0-9._/-]+$'; then
+            echo "::error::Invalid ref (only alphanumeric, . _ / - allowed): $REF"
+            exit 1
+          fi
+          SHA="$(git rev-parse --verify "${REF}^{commit}")"
+          echo "Deploying ${REF} -> ${SHA}"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Configure SSH
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -32,59 +67,44 @@ jobs:
           chmod 600 ~/.ssh/lms_key
           ssh-keyscan -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Validate deploy ref
-        id: ref
-        env:
-          # Passed via env (not ${{ }} in the script) so the input can't inject shell.
-          REF_INPUT: ${{ inputs.ref }}
-        run: |
-          if ! printf '%s' "$REF_INPUT" | grep -qE '^[A-Za-z0-9._/-]*$'; then
-            echo "::error::Invalid ref (only alphanumeric, . _ / - allowed): $REF_INPUT"
-            exit 1
-          fi
-          echo "ref=${REF_INPUT:-origin/main}" >> "$GITHUB_OUTPUT"
-
       - name: Deploy to VPS
         env:
-          DEPLOY_REF: ${{ steps.ref.outputs.ref }}
+          DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
         run: |
           ssh -i ~/.ssh/lms_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
-            "DEPLOY_REF='$DEPLOY_REF' bash -s" << 'EOF'
+            "DEPLOY_SHA='$DEPLOY_SHA' APP_URL='$APP_URL' bash -s" << 'EOF'
           set -euo pipefail
 
           cd "${{ secrets.VPS_PATH }}"
+          CF="--env-file Backend/.env.production -f docker-compose.production.yml"
 
-          echo "Fetching repo (branches + tags)..."
-          git fetch origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' --prune
-
-          # Support bare SHAs that aren't on any branch/tag yet.
-          if ! git rev-parse --verify --quiet "${DEPLOY_REF}^{commit}" > /dev/null; then
-            git fetch origin "$DEPLOY_REF"
+          echo "Fetching repo..."
+          git fetch origin --prune
+          if ! git cat-file -e "${DEPLOY_SHA}^{commit}" 2>/dev/null; then
+            git fetch origin "$DEPLOY_SHA"
           fi
 
-          echo "Pinning build to ${DEPLOY_REF}"
-          git checkout --detach "$DEPLOY_REF"
-          GIT_DEPLOYED_SHA="$(git rev-parse HEAD)"
-          echo "Deploying commit ${GIT_DEPLOYED_SHA}"
+          echo "Pinning build to ${DEPLOY_SHA}"
+          git checkout --detach "$DEPLOY_SHA"
 
           echo "Rebuilding Docker stack..."
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml build
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml up -d
+          docker compose $CF build
+          docker compose $CF up -d
 
           echo "Running database migrations..."
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:objectid-ids
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:admin-access-profiles
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:refresh-token-hashes
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:violations
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:create-indexes
+          docker compose $CF exec -T api1 npm run db:migrate:objectid-ids
+          docker compose $CF exec -T api1 npm run db:migrate:admin-access-profiles
+          docker compose $CF exec -T api1 npm run db:migrate:refresh-token-hashes
+          docker compose $CF exec -T api1 npm run db:migrate:violations
+          docker compose $CF exec -T api1 npm run db:create-indexes
 
           echo "Running production readiness check..."
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run prod:check
+          docker compose $CF exec -T api1 npm run prod:check
 
-          echo "Waiting for /api/ready to come up healthy..."
+          echo "Waiting for ${APP_URL}/api/ready to come up healthy..."
           READY=0
           for i in $(seq 1 30); do
-            if curl -fsS https://lms.analyticsedify.com/api/ready > /dev/null 2>&1; then
+            if curl -fsS "${APP_URL}/api/ready" > /dev/null 2>&1; then
               READY=1
               break
             fi
@@ -96,12 +116,20 @@ jobs:
           fi
           echo "API is ready."
 
-          # Record an immutable release tag for one-click rollbacks.
-          RELEASE_TAG="release/$(date -u +%Y%m%dT%H%M%SZ)"
-          git tag -f "$RELEASE_TAG" "$GIT_DEPLOYED_SHA"
-          git tag -f release/latest "$GIT_DEPLOYED_SHA"
-          git push origin "$RELEASE_TAG" release/latest --force
-          echo "Tagged ${GIT_DEPLOYED_SHA} as ${RELEASE_TAG}"
+          # Keep the disk from filling up with old image layers.
+          docker image prune -f > /dev/null
 
           echo "Deployment completed successfully."
           EOF
+
+      # Tags are pushed from the runner (GITHUB_TOKEN), so the VPS only needs
+      # a read-only deploy key.
+      - name: Tag release
+        env:
+          DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          RELEASE_TAG="release/$(date -u +%Y%m%dT%H%M%SZ)"
+          git tag -f "$RELEASE_TAG" "$DEPLOY_SHA"
+          git tag -f release/latest "$DEPLOY_SHA"
+          git push origin "refs/tags/$RELEASE_TAG" "refs/tags/release/latest" --force
+          echo "Tagged ${DEPLOY_SHA} as ${RELEASE_TAG}"

@@ -7,7 +7,9 @@
 
 const express = require("express");
 const router = express.Router();
+const env = require("../../config/env");
 const { authenticateSuperAdmin } = require("../../middleware/auth");
+const { createRateLimiter } = require("../../middleware/rate-limit");
 const { asyncHandler, ApiError } = require("../../utils/http");
 const {
   getMetricsSnapshot,
@@ -17,6 +19,19 @@ const {
 } = require("../../services/validation-monitoring.service");
 
 router.use(authenticateSuperAdmin);
+
+// These endpoints aggregate over every submission/violation record and
+// /metrics/export streams the whole set, so they get their own ceiling
+// instead of the 600/min super-admin API budget.
+const superAdminMonitoringLimiter = createRateLimiter({
+  scope: "super-admin-monitoring",
+  routeLabel: "/api/super-admin/monitoring/*",
+  windowMs: env.rateLimit.superAdminMonitoringWindowMs,
+  max: env.rateLimit.superAdminMonitoringMax,
+  message: "Monitoring endpoints are rate limited. Please wait a moment and retry.",
+});
+
+router.use(superAdminMonitoringLimiter);
 
 /**
  * GET /api/super-admin/metrics

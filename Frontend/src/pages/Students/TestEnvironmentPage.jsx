@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bookmark, BookmarkCheck, Check, ChevronLeft, ChevronRight, Clock3, CloudOff, Eraser, Loader2, RefreshCw, Send, ShieldCheck } from "lucide-react";
 import { LoadingState } from "@/components/Students/ui/StudentUI";
+import { formatQuestionCount, summarizeAttemptAnswers } from "@/lib/testAnswers";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -46,6 +47,51 @@ const formatDuration = (remainingSeconds) => {
 };
 
 const shouldAutoNextSingle = (proctoringConfig) => Boolean(proctoringConfig?.auto_next_single);
+
+// Shown inside the submit-confirmation dialogs so a student confirms with the
+// real numbers in front of them instead of a blind "are you sure?".
+const SubmitProgressSummary = ({ summary, scope }) => {
+  const { total, answered, unanswered, marked } = summary;
+
+  if (!total) {
+    return null;
+  }
+
+  const stats = [
+    { label: "Answered", value: `${answered} of ${total}`, tone: "text-text-primary" },
+    {
+      label: "Unanswered",
+      value: unanswered,
+      tone: unanswered > 0 ? "text-danger" : "text-text-primary",
+    },
+    { label: "Marked for review", value: marked, tone: "text-text-primary" },
+  ];
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/40 p-3 text-left">
+      <dl className="grid grid-cols-3 gap-2 text-center">
+        {stats.map((stat) => (
+          <div key={stat.label} className="rounded-md bg-card px-2 py-2 ring-1 ring-inset ring-border">
+            <dd className={cn("text-base font-semibold tabular-nums", stat.tone)}>{stat.value}</dd>
+            <dt className="mt-0.5 text-[11px] text-text-secondary">{stat.label}</dt>
+          </div>
+        ))}
+      </dl>
+
+      {unanswered > 0 ? (
+        <p role="status" className="mt-2.5 text-xs font-medium text-danger">
+          {unanswered === total
+            ? `You have not answered any of the ${formatQuestionCount(total)} in ${scope}.`
+            : `${formatQuestionCount(unanswered)} left unanswered in ${scope} will be submitted blank and marked incorrect.`}
+        </p>
+      ) : (
+        <p role="status" className="mt-2.5 text-xs font-medium text-success">
+          All {formatQuestionCount(total)} answered.
+        </p>
+      )}
+    </div>
+  );
+};
 
 const exitFullscreenIfActive = async () => {
   if (typeof document === "undefined") {
@@ -394,7 +440,7 @@ export default function TestEnvironmentPage() {
     remainingSeconds <= 60
       ? "text-danger bg-danger/10 ring-danger/30"
       : remainingSeconds <= 300
-        ? "text-amber-700 bg-warning/15 ring-warning/40 dark:text-warning"
+        ? "text-amber-700 bg-warning/15 ring-warning/40"
         : "text-text-primary bg-muted ring-border";
 
   const title = useMemo(() => {
@@ -404,6 +450,11 @@ export default function TestEnvironmentPage() {
 
     return `Question ${current_question_index + 1} of ${question_order.length}`;
   }, [current_question_index, load_status, question_order.length, start_status]);
+
+  const answerSummary = useMemo(
+    () => summarizeAttemptAnswers(question_order, answers, marked_for_review),
+    [answers, marked_for_review, question_order]
+  );
 
   if (awaitingInitialPayload) {
     return <LoadingState fullScreen label="Loading secure test environment..." />;
@@ -474,7 +525,7 @@ export default function TestEnvironmentPage() {
             {save_status === "saving" ? (
               <><Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Saving…</>
             ) : save_status === "error" ? (
-              <><CloudOff className="size-3.5 text-amber-600 dark:text-warning" aria-hidden="true" /> Saved locally</>
+              <><CloudOff className="size-3.5 text-amber-600" aria-hidden="true" /> Saved locally</>
             ) : save_status === "saved" ? (
               <><Check className="size-3.5 text-success" aria-hidden="true" /> All changes saved</>
             ) : null}
@@ -545,7 +596,7 @@ export default function TestEnvironmentPage() {
 
           {save_status === "error" ? (
             <div role="status" className="flex items-start gap-2.5 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-text-primary">
-              <CloudOff className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-warning" aria-hidden="true" />
+              <CloudOff className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden="true" />
               Saving locally. Changes will sync automatically when connection recovers.
             </div>
           ) : null}
@@ -558,7 +609,7 @@ export default function TestEnvironmentPage() {
               <Button
                 type="button"
                 variant={isMarked ? "secondary" : "ghost"}
-                className={cn("h-9 rounded-lg px-3", isMarked ? "border-warning/40 bg-warning/10 text-amber-700 hover:bg-warning/15 dark:text-warning" : "text-text-secondary")}
+                className={cn("h-9 rounded-lg px-3", isMarked ? "border-warning/40 bg-warning/10 text-amber-700 hover:bg-warning/15" : "text-text-secondary")}
                 disabled={inputDisabled}
                 aria-pressed={isMarked}
                 onClick={() => dispatch(toggleMarkedForReview(questionId))}
@@ -675,6 +726,7 @@ export default function TestEnvironmentPage() {
               Are you sure you want to submit this test? Once submitted, you cannot cancel or edit your answers.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <SubmitProgressSummary summary={answerSummary} scope="this test" />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={submit_status === "submitting"}>
               Cancel
@@ -713,6 +765,10 @@ export default function TestEnvironmentPage() {
                 : "You are about to submit this section and move to the next one. You cannot return to this section, and its unused time will not carry over."}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <SubmitProgressSummary
+            summary={answerSummary}
+            scope={isLastModule ? "this test" : `the ${current_module?.name || "current"} section`}
+          />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={advance_status === "advancing"}>Cancel</AlertDialogCancel>
             <AlertDialogAction

@@ -119,8 +119,10 @@ const createIndexes = async () => {
     ["resource", { collegeId: 1, visibilityScope: 1, isActive: 1, createdAt: -1 }],
     ["resourceView", { resourceId: 1, userId: 1 }],
     ["resourceView", { collegeId: 1, viewedAt: -1 }],
+    ["resourceView", { departmentId: 1, viewedAt: -1 }],
     ["resourceDownload", { resourceId: 1, userId: 1 }],
     ["resourceDownload", { collegeId: 1, downloadedAt: -1 }],
+    ["resourceDownload", { departmentId: 1, downloadedAt: -1 }],
   ];
 
   for (const [collectionName, spec, options = {}] of indexes) {

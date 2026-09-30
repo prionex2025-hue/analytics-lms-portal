@@ -448,7 +448,7 @@ export default function ResultsPage() {
     return `${mins}m ${String(secs).padStart(2, "0")}s`;
   };
 
-  const scoreTone = metrics.scorePercent >= 60 ? "text-success" : metrics.scorePercent >= 40 ? "text-amber-600 dark:text-warning" : "text-danger";
+  const scoreTone = metrics.scorePercent >= 60 ? "text-success" : metrics.scorePercent >= 40 ? "text-amber-600" : "text-danger";
 
   return (
     <div className={ui.pageSection}>

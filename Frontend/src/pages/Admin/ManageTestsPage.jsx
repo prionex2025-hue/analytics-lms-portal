@@ -419,7 +419,7 @@ export default function ManageTestsPage() {
                 </StatusBadge>
               ) : null}
             </p>
-            {isAdminReadOnlyTest(test) ? <p className="text-xs text-amber-700 dark:text-warning">{managedByLabel(test)}</p> : null}
+            {isAdminReadOnlyTest(test) ? <p className="text-xs text-amber-700">{managedByLabel(test)}</p> : null}
           </div>
         );
       },

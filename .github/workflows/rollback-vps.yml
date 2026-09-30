@@ -24,8 +24,29 @@ jobs:
   rollback:
     name: Roll back Production VPS
     runs-on: ubuntu-latest
+    environment: production
+    env:
+      APP_URL: ${{ vars.APP_URL || 'https://lms.analyticsedify.com' }}
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve rollback commit
+        id: ref
+        env:
+          # Passed via env (not ${{ }} in the script) so the input can't inject shell.
+          REF_INPUT: ${{ inputs.ref }}
+        run: |
+          if ! printf '%s' "$REF_INPUT" | grep -qE '^[A-Za-z0-9._/-]+$'; then
+            echo "::error::Invalid ref (only alphanumeric, . _ / - allowed): $REF_INPUT"
+            exit 1
+          fi
+          SHA="$(git rev-parse --verify "${REF_INPUT}^{commit}")"
+          echo "Rolling back to ${REF_INPUT} -> ${SHA}"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Configure SSH
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -36,59 +57,47 @@ jobs:
           chmod 600 ~/.ssh/lms_key
           ssh-keyscan -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Validate rollback ref
-        id: ref
-        run: |
-          REF_INPUT="${{ inputs.ref }}"
-          if ! printf '%s' "$REF_INPUT" | grep -qE '^[A-Za-z0-9._/-]*$'; then
-            echo "::error::Invalid ref (only alphanumeric, . _ / - allowed): $REF_INPUT"
-            exit 1
-          fi
-          echo "ref=${REF_INPUT}" >> "$GITHUB_OUTPUT"
-
       - name: Roll back to previous release
         env:
-          ROLLBACK_REF: ${{ steps.ref.outputs.ref }}
+          ROLLBACK_SHA: ${{ steps.ref.outputs.sha }}
           RUN_MIGRATIONS: ${{ inputs.run_migrations }}
         run: |
           ssh -i ~/.ssh/lms_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
-            "ROLLBACK_REF='$ROLLBACK_REF' RUN_MIGRATIONS='$RUN_MIGRATIONS' bash -s" << 'EOF'
+            "ROLLBACK_SHA='$ROLLBACK_SHA' RUN_MIGRATIONS='$RUN_MIGRATIONS' APP_URL='$APP_URL' bash -s" << 'EOF'
           set -euo pipefail
 
           cd "${{ secrets.VPS_PATH }}"
+          CF="--env-file Backend/.env.production -f docker-compose.production.yml"
 
-          echo "Fetching repo (branches + tags)..."
-          git fetch origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' --prune
-
-          if ! git rev-parse --verify --quiet "${ROLLBACK_REF}^{commit}" > /dev/null; then
-            git fetch origin "$ROLLBACK_REF"
+          echo "Fetching repo..."
+          git fetch origin --prune
+          if ! git cat-file -e "${ROLLBACK_SHA}^{commit}" 2>/dev/null; then
+            git fetch origin "$ROLLBACK_SHA"
           fi
 
-          echo "Pinning build to ${ROLLBACK_REF}"
-          git checkout --detach "$ROLLBACK_REF"
-          GIT_ROLLBACK_SHA="$(git rev-parse HEAD)"
-          echo "Rolling back to commit ${GIT_ROLLBACK_SHA}"
+          echo "Pinning build to ${ROLLBACK_SHA}"
+          git checkout --detach "$ROLLBACK_SHA"
 
           echo "Rebuilding Docker stack..."
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml build
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml up -d
+          docker compose $CF build
+          docker compose $CF up -d
 
           if [ "$RUN_MIGRATIONS" = "true" ]; then
             echo "Re-running database migrations..."
-            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:objectid-ids
-            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:admin-access-profiles
-            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:refresh-token-hashes
-            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:migrate:violations
-            docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run db:create-indexes
+            docker compose $CF exec -T api1 npm run db:migrate:objectid-ids
+            docker compose $CF exec -T api1 npm run db:migrate:admin-access-profiles
+            docker compose $CF exec -T api1 npm run db:migrate:refresh-token-hashes
+            docker compose $CF exec -T api1 npm run db:migrate:violations
+            docker compose $CF exec -T api1 npm run db:create-indexes
           fi
 
           echo "Running production readiness check..."
-          docker compose --env-file Backend/.env.production -f docker-compose.production.yml exec -T api1 npm run prod:check
+          docker compose $CF exec -T api1 npm run prod:check
 
-          echo "Waiting for /api/ready to come up healthy..."
+          echo "Waiting for ${APP_URL}/api/ready to come up healthy..."
           READY=0
           for i in $(seq 1 30); do
-            if curl -fsS https://lms.analyticsedify.com/api/ready > /dev/null 2>&1; then
+            if curl -fsS "${APP_URL}/api/ready" > /dev/null 2>&1; then
               READY=1
               break
             fi
@@ -100,12 +109,16 @@ jobs:
           fi
           echo "API is ready."
 
-          # Re-tag so release/latest always points at what is actually running.
-          RELEASE_TAG="release/$(date -u +%Y%m%dT%H%M%SZ)"
-          git tag -f "$RELEASE_TAG" "$GIT_ROLLBACK_SHA"
-          git tag -f release/latest "$GIT_ROLLBACK_SHA"
-          git push origin "$RELEASE_TAG" release/latest --force
-          echo "Tagged ${GIT_ROLLBACK_SHA} as ${RELEASE_TAG}"
-
           echo "Rollback completed successfully."
           EOF
+
+      # Re-tag so release/latest always points at what is actually running.
+      - name: Tag release
+        env:
+          ROLLBACK_SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          RELEASE_TAG="release/$(date -u +%Y%m%dT%H%M%SZ)"
+          git tag -f "$RELEASE_TAG" "$ROLLBACK_SHA"
+          git tag -f release/latest "$ROLLBACK_SHA"
+          git push origin "refs/tags/$RELEASE_TAG" "refs/tags/release/latest" --force
+          echo "Tagged ${ROLLBACK_SHA} as ${RELEASE_TAG}"

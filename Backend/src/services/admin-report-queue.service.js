@@ -1,4 +1,5 @@
 const models = require("../models");
+const { logger } = require("../utils/logger");
 const env = require("../config/env");
 const { redisClient, getRedisQueueConnection } = require("../config/redis");
 
@@ -110,15 +111,17 @@ const processReportSynchronously = async (reportJobId) => {
       resultUrl,
     }, { departmentId: reportJob.filters?.departmentId || null });
   } catch (error) {
+    // The job record is returned to admins (GET /reports), so it gets the
+    // generic message too; the internal error text goes to the server log only.
+    logger.error("report.admin_report_failed", { reportJobId, reason: error?.message });
     const failed = await db.reportJob.update({
       where: { id: reportJobId },
       data: {
         status: "FAILED",
-        errorMessage: error.message,
+        errorMessage: REPORT_FAILED_MESSAGE,
       },
     });
 
-    // Internal error text stays in the job record/logs; the broadcast is generic.
     emitToCollege(failed.collegeId, "report:status", {
       reportJobId,
       status: "FAILED",
@@ -170,7 +173,14 @@ const recoverPendingReportJobs = async ({ limit = DEFAULT_RECOVERY_LIMIT, staleA
   };
 };
 
+// Graceful shutdown: let the in-flight job finish (BullMQ waits for active
+// jobs), then close the Redis connections held by the worker and queue.
+const closeReportQueue = async () => {
+  await Promise.allSettled([reportWorker?.close(), reportQueue?.close()]);
+};
+
 module.exports = {
+  closeReportQueue,
   enqueueReportJob,
   processReportSynchronously,
   recoverPendingReportJobs,

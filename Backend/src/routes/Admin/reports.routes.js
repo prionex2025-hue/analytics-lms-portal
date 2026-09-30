@@ -71,6 +71,14 @@ const adminReportReadLimiter = createRateLimiter({
   message: "Report analytics are rate limited. Please wait a moment and retry.",
 });
 
+const adminAnomalyReviewLimiter = createRateLimiter({
+  scope: "admin-anomaly-review",
+  routeLabel: "/api/admin/reports/anomalies/review",
+  windowMs: env.rateLimit.adminAnomalyReviewWindowMs,
+  max: env.rateLimit.adminAnomalyReviewMax,
+  message: "Anomaly review is rate limited. Please wait a moment and retry.",
+});
+
 router.get("/", authenticatePlatformAdmin, adminReportReadLimiter, requirePermission("view_reports"), getReportJobs);
 router.get("/passout-cohorts", authenticatePlatformAdmin, adminReportReadLimiter, requirePermission("view_reports"), getPassoutCohorts);
 router.get("/summary", authenticatePlatformAdmin, adminReportReadLimiter, requirePermission("view_reports"), requireSameDepartment(), validate(reportDashboardQuerySchema), adminReportCache, getReportSummaryDashboard);
@@ -88,7 +96,7 @@ router.get("/analytics", authenticatePlatformAdmin, adminReportReadLimiter, requ
 router.get("/jobs/:reportJobId/status", authenticatePlatformAdmin, adminReportReadLimiter, requirePermission("view_reports"), validate(reportJobStatusParamSchema), getReportJobStatus);
 router.get("/:reportJobId/download", authenticatePlatformAdmin, adminReportReadLimiter, requirePermission("export_reports"), validate(reportJobStatusParamSchema), downloadReport);
 router.post("/jobs/:reportJobId/regenerate-link", authenticatePlatformAdmin, reportGenerationLimiter, requirePermission("export_reports"), validate(reportJobStatusParamSchema), regenerateReportLink);
-router.post("/anomalies/review", authenticatePlatformAdmin, requirePermission("view_reports"), validate(reviewReportAnomalySchema), reviewAnomaly);
+router.post("/anomalies/review", authenticatePlatformAdmin, adminAnomalyReviewLimiter, requirePermission("view_reports"), validate(reviewReportAnomalySchema), reviewAnomaly);
 router.post(
 	"/generate",
 	authenticatePlatformAdmin,

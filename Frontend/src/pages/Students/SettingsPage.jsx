@@ -1,24 +1,16 @@
 import { useMemo, useState } from "react";
-import { Check, Circle, Eye, EyeOff, Loader2, LockKeyhole, Mail, MessageSquareText, Monitor, Moon, Palette, ShieldAlert, Sun } from "lucide-react";
-import { useDispatch, useSelector } from "react-redux";
+import { Check, Circle, Eye, EyeOff, Loader2, LockKeyhole, Mail, MessageSquareText, ShieldAlert } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { setTheme } from "@/features/Students/uiSlice";
 import { studentApi } from "@/services/studentApi";
 import { profileQueryOptions } from "@/services/studentQueries";
 import { openSupportMail } from "@/lib/supportMail";
 import { FieldLabel, PageHeader, SettingsSection } from "@/components/Students/ui/StudentUI";
 import { cn } from "@/lib/utils";
 import { ui } from "@/styles/ui-tokens";
-
-const THEME_OPTIONS = [
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "system", label: "System", icon: Monitor },
-];
 
 function PasswordField({ id, label, value, onChange, autoComplete, invalid }) {
   const [visible, setVisible] = useState(false);
@@ -59,8 +51,6 @@ function Requirement({ met, children }) {
 }
 
 export default function SettingsPage() {
-  const dispatch = useDispatch();
-  const selectedTheme = useSelector((state) => state.ui.theme || "system");
   const profileQuery = useQuery(profileQueryOptions());
   const user = profileQuery.data;
 
@@ -158,7 +148,7 @@ export default function SettingsPage() {
 
   return (
     <section className={ui.pageSection}>
-      <PageHeader title="Settings" description="Manage your password, appearance, and how you reach support." />
+      <PageHeader title="Settings" description="Manage your password and how you reach support." />
 
       <SettingsSection
         icon={LockKeyhole}
@@ -217,32 +207,6 @@ export default function SettingsPage() {
             </Button>
           </div>
         </form>
-      </SettingsSection>
-
-      <SettingsSection icon={Palette} title="Appearance" description="Choose how the portal looks on this device.">
-        <div role="radiogroup" aria-label="Theme" className="grid max-w-lg grid-cols-3 gap-3">
-          {THEME_OPTIONS.map((option) => {
-            const active = selectedTheme === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => dispatch(setTheme(option.value))}
-                className={cn(
-                  "flex flex-col items-center gap-2 rounded-lg border px-3 py-4 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-                  active
-                    ? "border-primary bg-primary/5 text-primary ring-1 ring-primary"
-                    : "border-border text-text-secondary hover:border-primary/40 hover:text-text-primary"
-                )}
-              >
-                <option.icon className="size-5" aria-hidden="true" />
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
       </SettingsSection>
 
       <SettingsSection

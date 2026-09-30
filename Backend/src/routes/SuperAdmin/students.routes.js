@@ -8,6 +8,8 @@ const {
 	createStudentGlobalSchema,
 	superStudentBulkImportSchema,
 	superStudentBulkImportJobParamSchema,
+	updateStudentGlobalSchema,
+	deleteStudentGlobalSchema,
   promoteStudentsYearGlobalSchema,
 } = require("../../schemas/SuperAdmin/super-admin-core.schema");
 const {
@@ -31,7 +33,7 @@ router.patch("/promote-year", authenticateSuperAdmin, validate(promoteStudentsYe
 router.get("/import-jobs/:jobId", authenticateSuperAdmin, validate(superStudentBulkImportJobParamSchema), getStudentImportJobGlobal);
 router.patch("/:studentId/status", authenticateSuperAdmin, validate(toggleStudentStatusSchema), toggleStudentStatus);
 router.patch("/:studentId/reset-password", authenticateSuperAdmin, validate(resetStudentPasswordSchema), resetStudentPassword);
-router.patch("/:studentId", authenticateSuperAdmin, updateStudentGlobal);
-router.delete("/:studentId", authenticateSuperAdmin, deleteStudentGlobal);
+router.patch("/:studentId", authenticateSuperAdmin, validate(updateStudentGlobalSchema), updateStudentGlobal);
+router.delete("/:studentId", authenticateSuperAdmin, validate(deleteStudentGlobalSchema), deleteStudentGlobal);
 
 module.exports = router;

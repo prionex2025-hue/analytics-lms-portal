@@ -48,7 +48,7 @@ export default function SuperAdminSidebar({ mobile = false, onNavigate }) {
             width="1976"
             height="630"
             decoding="async"
-            className={cn("h-7 object-contain dark:brightness-0 dark:invert", collapsed ? "w-9 object-center" : "w-auto max-w-32 object-left")}
+            className={cn("h-7 object-contain", collapsed ? "w-9 object-center" : "w-auto max-w-32 object-left")}
           />
         </Link>
         {!collapsed ? (

@@ -12,10 +12,9 @@ const getStoredUiState = () => {
     const parsed = JSON.parse(raw);
     return {
       sidebarCollapsed: Boolean(parsed?.sidebarCollapsed),
-      theme: parsed?.theme || "system",
     };
   } catch {
-    return { sidebarCollapsed: false, theme: "system" };
+    return { sidebarCollapsed: false };
   }
 };
 
@@ -25,7 +24,6 @@ const persistUiState = (state) => {
       UI_STORAGE_KEY,
       JSON.stringify({
         sidebarCollapsed: state.sidebarCollapsed,
-        theme: state.theme,
       })
     );
   } catch {
@@ -53,13 +51,9 @@ const uiSlice = createSlice({
     setMobileSidebarOpen: (state, action) => {
       state.mobileSidebarOpen = Boolean(action.payload);
     },
-    setTheme: (state, action) => {
-      state.theme = action.payload || "system";
-      persistUiState(state);
-    },
   },
 });
 
-export const { setSidebarCollapsed, toggleSidebar, setMobileSidebarOpen, setTheme } = uiSlice.actions;
+export const { setSidebarCollapsed, toggleSidebar, setMobileSidebarOpen } = uiSlice.actions;
 
 export default uiSlice.reducer;

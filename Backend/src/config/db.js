@@ -453,6 +453,25 @@ function materializeDefaults(modelName) {
   return out;
 }
 
+// Log driver connection transitions once per transition (the driver
+// reconnects automatically; requests made while it is down fail fast with a
+// 503 after serverSelectionTimeoutMS).
+let connectionLoggingAttached = false;
+let intentionalDisconnect = false;
+function attachConnectionLogging() {
+  if (connectionLoggingAttached) return;
+  connectionLoggingAttached = true;
+  const { logger } = require("../utils/logger");
+  const conn = mongoose.connection;
+  conn.on("disconnected", () => {
+    // Deliberate disconnects (graceful shutdown, scripts) are not incidents.
+    if (require("../utils/lifecycle").isShuttingDown() || intentionalDisconnect) return;
+    logger.error("mongodb.disconnected", { impact: "API requests return 503 until reconnected" });
+  });
+  conn.on("reconnected", () => logger.info("mongodb.reconnected"));
+  conn.on("error", (error) => logger.error("mongodb.connection_error", { reason: error?.message, code: error?.code }));
+}
+
 async function ensureConnected() {
   const activeDb = mongoose.connection?.db || null;
 
@@ -475,10 +494,12 @@ async function ensureConnected() {
           mongoose.connection.once("error", reject);
         });
       } else {
+        attachConnectionLogging();
         await mongoose.connect(uri, {
           dbName: env.mongoDbName || undefined,
-          maxPoolSize: 20,
-          minPoolSize: 2,
+          maxPoolSize: env.database.maxPoolSize,
+          minPoolSize: Math.min(env.database.minPoolSize, env.database.maxPoolSize),
+          serverSelectionTimeoutMS: env.database.serverSelectionTimeoutMs,
           retryWrites: true,
         });
       }
@@ -1604,6 +1625,7 @@ dbClient.$disconnect = async () => {
   if (!db) {
     return;
   }
+  intentionalDisconnect = true;
   await mongoose.disconnect();
   db = null;
 };

@@ -1,10 +1,25 @@
 const Redis = require("ioredis");
 const env = require("./env");
+const { logger } = require("../utils/logger");
 
 // Redis is disabled by default in the test environment so suites stay
 // deterministic, but an explicit REDIS_ENABLED=true opt-in (e.g. the Redis
 // integration job in CI) must still enable it under NODE_ENV=test.
-const redisEnabled = Boolean(env.redisUrl) && (env.nodeEnv !== "test" || Boolean(env.redis?.enabled));
+// REDIS_ENABLED=false disables it everywhere, even with REDIS_URL set.
+const redisEnabled =
+  Boolean(env.redisUrl) &&
+  !env.redis?.explicitlyDisabled &&
+  (env.nodeEnv !== "test" || Boolean(env.redis?.enabled));
+
+// host:port/db only - never log credentials embedded in REDIS_URL.
+const describeRedisTarget = (redisUrl = env.redisUrl) => {
+  try {
+    const parsed = new URL(redisUrl);
+    return `${parsed.protocol}//${parsed.hostname}:${parsed.port || 6379}${parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : ""}`;
+  } catch {
+    return "invalid-url";
+  }
+};
 
 const createRetryStrategy = (maxDelayMs = 2000) => (attempt) => {
   const nextDelay = Math.min(attempt * 100, maxDelayMs);
@@ -54,7 +69,7 @@ const buildRedisUrlOptions = (redisUrl = env.redisUrl) => {
 
     return options;
   } catch (error) {
-    console.error("Invalid REDIS_URL for Redis queue connection:", error?.message || "invalid url");
+    logger.error("redis.invalid_url", { reason: error?.message || "invalid url" });
     return null;
   }
 };
@@ -67,6 +82,9 @@ let hasLoggedRedisDown = false;
 if (redisEnabled) {
   redisClient = new Redis(env.redisUrl, {
     ...baseRedisOptions,
+    // Only on the shared request-path client; BullMQ connections use blocking
+    // commands and must not time out.
+    commandTimeout: env.redis.commandTimeoutMs,
     connectionName: `lms-api:${env.nodeEnv}`,
   });
 
@@ -74,7 +92,7 @@ if (redisEnabled) {
     redisReady = true;
     lastRedisError = null;
     if (hasLoggedRedisDown) {
-      console.log("Redis reconnected.");
+      logger.info("redis.reconnected", { target: describeRedisTarget() });
     }
     hasLoggedRedisDown = false;
   });
@@ -84,7 +102,11 @@ if (redisEnabled) {
     lastRedisError = error?.message || "unknown redis error";
     // Avoid flooding logs when Redis is down and reconnect retries are active.
     if (!hasLoggedRedisDown) {
-      console.error("Redis connection error:", lastRedisError);
+      logger.error("redis.connection_error", {
+        target: describeRedisTarget(),
+        reason: lastRedisError,
+        impact: "rate limits fall back to per-instance memory; response cache bypassed; exam locks rely on DB guards",
+      });
       hasLoggedRedisDown = true;
     }
   });
@@ -92,7 +114,28 @@ if (redisEnabled) {
   redisClient.on("end", () => {
     redisReady = false;
   });
+} else if (env.nodeEnv === "production") {
+  logger.warn("redis.not_configured", {
+    impact: "rate limits and lockouts are per-instance only; do not run more than one API replica without Redis",
+  });
 }
+
+const HEALTH_PING_TIMEOUT_MS = 1_500;
+
+const withTimeout = (promise, ms) =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("redis ping timed out")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 
 const isRedisAvailable = () => Boolean(redisClient) && redisReady;
 
@@ -109,7 +152,7 @@ const getRedisHealthSnapshot = async () => {
 
   const start = Date.now();
   try {
-    await redisClient.ping();
+    await withTimeout(redisClient.ping(), HEALTH_PING_TIMEOUT_MS);
     const latencyMs = Date.now() - start;
     return {
       configured: true,
@@ -167,4 +210,5 @@ module.exports = {
   shutdownRedis,
   getRedisQueueConnection,
   buildRedisUrlOptions,
+  describeRedisTarget,
 };

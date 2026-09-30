@@ -24,6 +24,7 @@ const {
   recordLoginFailure,
 } = require("../../services/login-attempt.service");
 const { getClientIp } = require("../../utils/client-ip");
+const { compareAgainstDummyHash } = require("../../utils/password-timing");
 const { recordSecurityEvent } = require("../../services/security-audit.service");
 const { buildRefreshCookieOptions } = require("../../utils/refresh-cookie");
 
@@ -92,6 +93,7 @@ const login = asyncHandler(async (req, res) => {
   }
 
   if (!user) {
+    await compareAgainstDummyHash(password);
     await recordLoginFailure({ scope: "student", identifier: loginIdentifier, ip: getClientIp(req) });
     await recordSecurityEvent({
       action: "STUDENT_LOGIN_FAILED",

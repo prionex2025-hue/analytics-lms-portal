@@ -27,7 +27,7 @@ export default function ImpersonationBanner() {
     <div role="status" className="border-b border-warning/35 bg-warning/12 px-4 py-2.5 text-sm text-text-primary sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-2">
-          <Eye className="size-4 shrink-0 text-amber-600 dark:text-warning" aria-hidden="true" />
+          <Eye className="size-4 shrink-0 text-amber-600" aria-hidden="true" />
           <span>
             <strong className="font-semibold">Impersonation mode</strong> · Viewing as {session.targetName || "Unknown"} ({session.targetRole || "user"}). All writes are disabled.
           </span>

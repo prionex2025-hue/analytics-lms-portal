@@ -18,9 +18,9 @@ import { cn } from "@/lib/utils";
 import { ui } from "@/styles/ui-tokens";
 
 const RANK_STYLE = {
-  1: "bg-amber-100 text-amber-700 ring-amber-300/60 dark:bg-amber-400/15 dark:text-amber-300",
-  2: "bg-slate-100 text-slate-600 ring-slate-300/70 dark:bg-slate-400/15 dark:text-slate-300",
-  3: "bg-orange-100 text-orange-700 ring-orange-300/60 dark:bg-orange-400/15 dark:text-orange-300",
+  1: "bg-amber-100 text-amber-700 ring-amber-300/60",
+  2: "bg-slate-100 text-slate-600 ring-slate-300/70",
+  3: "bg-orange-100 text-orange-700 ring-orange-300/60",
 };
 
 function RankMark({ rank }) {

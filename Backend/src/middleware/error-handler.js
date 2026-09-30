@@ -1,9 +1,22 @@
 const { ApiError } = require("../utils/http");
 const env = require("../config/env");
+const { logger } = require("../utils/logger");
 
 const notFound = (_req, _res, next) => {
   next(new ApiError(404, "Route not found", null, "ROUTE_NOT_FOUND"));
 };
+
+// Driver/ODM errors that mean "database unreachable right now" -> 503 + retry,
+// not a 500. Mongoose wraps the driver's selection error under its own name.
+const DB_UNAVAILABLE_ERROR_NAMES = new Set([
+  "MongoNetworkError",
+  "MongoNetworkTimeoutError",
+  "MongoServerSelectionError",
+  "MongooseServerSelectionError",
+  "MongoNotConnectedError",
+  "MongoTopologyClosedError",
+  "MongoPoolClearedError",
+]);
 
 const getRequestId = (req) => req.id || req.headers["x-request-id"] || null;
 
@@ -32,8 +45,7 @@ const errorHandler = (error, _req, res, _next) => {
   }
 
   const dbUnavailable =
-    error?.name === "MongoNetworkError" ||
-    error?.name === "MongoServerSelectionError" ||
+    DB_UNAVAILABLE_ERROR_NAMES.has(error?.name) ||
     ["P1001", "P1002", "P1008", "ECONNREFUSED", "ETIMEDOUT"].includes(String(error?.code || "").toUpperCase());
 
   const statusCode = dbUnavailable ? 503 : (error.statusCode || 500);
@@ -47,8 +59,22 @@ const errorHandler = (error, _req, res, _next) => {
     res.setHeader("Retry-After", String(Math.ceil(retryAfterSeconds)));
   }
 
-  if (statusCode >= 500) {
-    console.error(`[api-error] request_id=${requestId || "-"} ${_req.method} ${_req.originalUrl}`, error);
+  if (dbUnavailable) {
+    res.setHeader("Retry-After", "5");
+  }
+
+  // Path only: query strings can carry tokens (signed links, reset tokens).
+  const logPath = String(_req.originalUrl || "").split("?")[0];
+  if (dbUnavailable) {
+    // One line per 10s instead of a stack trace per request during an outage.
+    logger.throttled("error", "db-unavailable-request", 10_000, "mongodb.unavailable_request", {
+      requestId,
+      method: _req.method,
+      path: logPath,
+      reason: error?.message,
+    });
+  } else if (statusCode >= 500) {
+    console.error(`[api-error] request_id=${requestId || "-"} ${_req.method} ${logPath}`, error);
   }
 
   // Never leak raw internals (Mongoose CastError paths, stack-derived messages,
