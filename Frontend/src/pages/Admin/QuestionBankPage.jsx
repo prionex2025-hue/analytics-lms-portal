@@ -189,13 +189,23 @@ export default function QuestionBankPage() {
 
   const saveInlineEdit = async (item, patch) => {
     if (!canManageQuestions) return;
-    await dispatch(updateQuestionBankQuestion({ id: item.id, payload: patch })).unwrap();
+    try {
+      await dispatch(updateQuestionBankQuestion({ id: item.id, payload: patch })).unwrap();
+    } catch (error) {
+      toast.error(error?.message || "Unable to update question");
+      return;
+    }
     dispatch(fetchQuestionBankQuestions({ filters: { ...filters, subjectId: activeSubject.id }, page: pagination.page, limit: pagination.limit }));
   };
 
   const removeQuestion = async (id) => {
     if (!canManageQuestions) return;
-    await dispatch(deleteQuestionBankQuestion(id)).unwrap();
+    try {
+      await dispatch(deleteQuestionBankQuestion(id)).unwrap();
+    } catch (error) {
+      toast.error(error?.message || "Unable to delete question");
+      return;
+    }
     dispatch(fetchQuestionBankQuestions({ filters: { ...filters, subjectId: activeSubject.id }, page: pagination.page, limit: pagination.limit }));
   };
 

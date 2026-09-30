@@ -5,20 +5,31 @@ const db = require("../config/db");
 const { ROLES, isAdminLikeRole, isCollegeAdminRole, isDepartmentAdminRole, normalizeRole } = require("../constants/roles");
 const { verifyAccessToken } = require("../utils/token");
 const env = require("../config/env");
+const { isAccessTokenRevoked } = require("../services/access-token-revocation.service");
+const { canStudentAuthenticate } = require("../services/student-lifecycle.service");
 
 let io = null;
+
+const collegeRoom = (collegeId) => `college:${collegeId}`;
+const collegeGeneralRoom = (collegeId) => `college:${collegeId}:general`;
+const departmentRoom = (collegeId, departmentId) => `college:${collegeId}:dept:${departmentId}`;
 let socketRedisPubClient = null;
 let socketRedisSubClient = null;
 
 const normalizeIdList = (values = []) =>
   [...new Set(values.filter(Boolean).map((value) => String(value)))];
 
+// Mirrors validatePrincipalTokenClaims in middleware/auth.js so a token that
+// REST would reject (revoked via tokenVersion bump) cannot open a socket either.
 const assertTokenClaimScope = ({ payload, principal }) => {
   if (payload.collegeId && principal.collegeId && String(payload.collegeId) !== String(principal.collegeId)) {
     throw new Error("Invalid token scope");
   }
   if (payload.departmentId && principal.departmentId && String(payload.departmentId) !== String(principal.departmentId)) {
     throw new Error("Invalid token scope");
+  }
+  if (Number(payload.tokenVersion || 0) !== Number(principal.tokenVersion || 0)) {
+    throw new Error("Token revoked");
   }
 };
 
@@ -30,7 +41,7 @@ const loadSocketPrincipal = async (payload) => {
       where: { id: payload.sub },
       include: { batches: true },
     });
-    if (!student?.isActive) {
+    if (!student?.isActive || !canStudentAuthenticate(student)) {
       throw new Error("Inactive student");
     }
     assertTokenClaimScope({ payload, principal: student });
@@ -66,6 +77,7 @@ const loadSocketPrincipal = async (payload) => {
     if (!superAdmin?.isActive || normalizeRole(superAdmin.role) !== ROLES.SUPER_ADMIN) {
       throw new Error("Inactive super admin");
     }
+    assertTokenClaimScope({ payload, principal: superAdmin });
     return {
       sub: superAdmin.id,
       id: superAdmin.id,
@@ -219,6 +231,9 @@ const initSocket = (httpServer, frontendOrigins) => {
       }
 
       const principal = verifyAccessToken(token);
+      if (await isAccessTokenRevoked(principal)) {
+        return next(new Error("Unauthorized"));
+      }
       socket.data.user = await loadSocketPrincipal(principal);
       return next();
     } catch (_error) {
@@ -235,8 +250,17 @@ const initSocket = (httpServer, frontendOrigins) => {
     // Students must NOT join it: no student feature consumes those events, and
     // membership would leak peers' live progress, submission status, and
     // proctoring violations. Students receive their own events via `user:<id>`.
-    if (user.collegeId && isAdminLikeRole(user.role)) {
-      socket.join(`college:${user.collegeId}`);
+    //
+    // College admins see the whole college. Department admins only join their
+    // own department room plus the college-wide "general" room, so they do not
+    // receive other departments' live student/violation events.
+    if (user.collegeId && isCollegeAdminRole(user.role)) {
+      socket.join(collegeRoom(user.collegeId));
+    } else if (user.collegeId && isDepartmentAdminRole(user.role)) {
+      socket.join(collegeGeneralRoom(user.collegeId));
+      if (user.departmentId) {
+        socket.join(departmentRoom(user.collegeId, user.departmentId));
+      }
     }
 
     socket.on("join_test_room", async ({ testId } = {}) => {
@@ -269,9 +293,14 @@ const initSocket = (httpServer, frontendOrigins) => {
 
 const getIO = () => io;
 
-const emitToCollege = (collegeId, event, payload) => {
+// Emit to a college's admins. With `departmentId`, the event carries data about
+// one department (e.g. a student's live status) and reaches college admins plus
+// that department's admins only. Without it, it is a college-wide notice and
+// reaches every admin of the college.
+const emitToCollege = (collegeId, event, payload, { departmentId = null } = {}) => {
   if (!io || !collegeId) return;
-  io.to(`college:${collegeId}`).emit(event, payload);
+  const targetRoom = departmentId ? departmentRoom(collegeId, departmentId) : collegeGeneralRoom(collegeId);
+  io.to([collegeRoom(collegeId), targetRoom]).emit(event, payload);
 };
 
 const emitToUser = (userId, event, payload) => {

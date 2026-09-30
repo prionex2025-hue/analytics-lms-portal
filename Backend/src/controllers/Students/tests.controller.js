@@ -69,6 +69,8 @@ const SENSITIVE_QUESTION_FIELDS = new Set([
   "correctText",
   "explanation",
   "explanations",
+  "explanationVideoUrl",
+  "explanation_video_url",
   "is_correct",
   "isCorrect",
   "solution",
@@ -961,7 +963,7 @@ const startTest = asyncHandler(async (req, res) => {
     progress: 0,
     connectionStatus: "ONLINE",
     violations: 0,
-  });
+  }, { departmentId: req.user.departmentId || null });
   emitToTestRoom(testId, "student_status_update", {
     testId,
     submissionId: submission.id,
@@ -1452,7 +1454,7 @@ const saveAnswer = asyncHandler(async (req, res) => {
     progress,
     violations: violationCount,
     connectionStatus: "ONLINE",
-  });
+  }, { departmentId: req.user.departmentId || null });
   emitToTestRoom(submission.testId, "student_status_update", {
     testId: submission.testId,
     submissionId,
@@ -1598,7 +1600,7 @@ const reportViolation = asyncHandler(async (req, res) => {
     type,
     violationCount,
     duplicate,
-  });
+  }, { departmentId: req.user.departmentId || null });
   emitToCollege(req.user.collegeId, "violation_event", {
     submissionId,
     testId: submission.testId,
@@ -1607,7 +1609,7 @@ const reportViolation = asyncHandler(async (req, res) => {
     violationCount,
     duplicate,
     at: new Date().toISOString(),
-  });
+  }, { departmentId: req.user.departmentId || null });
   emitToTestRoom(submission.testId, "violation_event", {
     submissionId,
     testId: submission.testId,
@@ -1889,14 +1891,14 @@ const submitTest = asyncHandler(async (req, res) => {
     testId: completed.testId,
     userId: req.user.id,
     status: completed.status,
-  });
+  }, { departmentId: req.user.departmentId || null });
       emitToCollege(req.user.collegeId, "test_status_change", {
     testId: completed.testId,
     submissionId,
     studentId: req.user.id,
     status: completed.status,
     action: "ATTEMPT_SUBMITTED",
-  });
+  }, { departmentId: req.user.departmentId || null });
       emitToTestRoom(completed.testId, "test_status_change", {
     testId: completed.testId,
     submissionId,
@@ -2013,7 +2015,7 @@ const getAttemptResult = asyncHandler(async (req, res) => {
       total_marks: Number(question.marks || 0),
       is_correct: revealQuestionDetails ? Boolean(isCorrect) : null,
       topic: question.topic || submission.test?.subject || "General",
-      explanation_video_url: question.explanationVideoUrl || null,
+      explanation_video_url: revealQuestionDetails ? question.explanationVideoUrl || null : null,
     };
   });
 

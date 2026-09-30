@@ -43,6 +43,19 @@ const renderHtmlToPdfBuffer = async (html, options = {}) => {
 
   try {
     const page = await browser.newPage();
+    // Report HTML is self-contained and script-free. Disabling JavaScript and
+    // refusing every network request means that even if user-supplied text ever
+    // slipped past escaping, it could not run code or reach internal services.
+    await page.setJavaScriptEnabled(false);
+    await page.setRequestInterception(true);
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.startsWith("data:") || url === "about:blank") {
+        request.continue();
+        return;
+      }
+      request.abort();
+    });
     // The report HTML is fully self-contained (no external fonts, scripts, or
     // images), so we deliberately wait ONLY for the DOM to parse. Waiting for
     // "networkidle0" here used to hang the whole render whenever an outbound

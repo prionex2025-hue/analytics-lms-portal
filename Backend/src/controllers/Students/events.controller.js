@@ -82,6 +82,35 @@ const getEvents = asyncHandler(async (req, res) => {
   res.status(200).json(payload);
 });
 
+const MAX_PHONE_LENGTH = 20;
+const MAX_CUSTOM_FIELDS = 20;
+const MAX_CUSTOM_FIELD_KEY_LENGTH = 64;
+const MAX_CUSTOM_FIELD_VALUE_LENGTH = 1000;
+
+// Keep only the answers the event's registration form asks for (or, for events
+// without a defined form, a small bounded set), stored as trimmed strings.
+const sanitizeCustomFields = (submitted, registrationFields) => {
+  if (!submitted || typeof submitted !== "object" || Array.isArray(submitted)) {
+    return {};
+  }
+
+  const definedKeys = Array.isArray(registrationFields)
+    ? registrationFields.map((field) => String(field?.key || "").trim()).filter(Boolean)
+    : [];
+  const allowedKeys = definedKeys.length > 0
+    ? definedKeys
+    : Object.keys(submitted).slice(0, MAX_CUSTOM_FIELDS);
+
+  const result = {};
+  for (const key of allowedKeys) {
+    if (key.length > MAX_CUSTOM_FIELD_KEY_LENGTH || !Object.prototype.hasOwnProperty.call(submitted, key)) continue;
+    const value = submitted[key];
+    if (value == null || typeof value === "object") continue;
+    result[key] = String(value).trim().slice(0, MAX_CUSTOM_FIELD_VALUE_LENGTH);
+  }
+  return result;
+};
+
 const registerEvent = asyncHandler(async (req, res) => {
   const m = await models.init();
   const db = m.dbClient;
@@ -139,13 +168,15 @@ const registerEvent = asyncHandler(async (req, res) => {
         throw new ApiError(409, "Event full", { eventId }, "EVENT_FULL");
       }
 
+      // Identity fields always come from the authenticated student record so a
+      // student cannot register under someone else's name, email or ID.
       const nextRegistrant = {
         studentId: req.user.id,
-        fullName: normalize(submittedDetails.fullName) || req.user.fullName,
-        email: normalize(submittedDetails.email) || req.user.email,
-        studentCode: normalize(submittedDetails.studentId || submittedDetails.studentCode || req.user.studentId || req.user.rollNumber),
-        phone: normalize(submittedDetails.phone || req.user.phone || req.user.mobile),
-        customFields: submittedDetails.customFields && typeof submittedDetails.customFields === "object" ? submittedDetails.customFields : {},
+        fullName: normalize(req.user.fullName),
+        email: normalize(req.user.email),
+        studentCode: normalize(req.user.enrollNumber || req.user.enrollmentNumber || req.user.studentId || req.user.rollNumber),
+        phone: normalize(submittedDetails.phone || req.user.phone || req.user.mobile).slice(0, MAX_PHONE_LENGTH),
+        customFields: sanitizeCustomFields(submittedDetails.customFields, event.registrationFields),
         registeredAt: now.toISOString(),
         status: "REGISTERED",
       };

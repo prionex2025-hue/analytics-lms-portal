@@ -55,6 +55,20 @@ const toBoolean = (value, fallback) => {
   return fallback;
 };
 
+// Express `trust proxy` setting. Must equal the number of reverse proxies in
+// front of the API (or a trusted address list) so that `req.ip` is the real
+// client and not a spoofable X-Forwarded-For entry. Docker deployment runs
+// host nginx -> frontend nginx -> api, so it sets TRUST_PROXY=2.
+const parseTrustProxy = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 1;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  if (raw.toLowerCase() === "false") return false;
+  return raw;
+};
+
+const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
+
 const legacyExamWriteWindowMs = toPositiveInt(process.env.RATE_LIMIT_EXAM_WRITE_WINDOW_MS, 60 * 1000);
 const legacyExamWriteMax = toPositiveInt(process.env.RATE_LIMIT_EXAM_WRITE_MAX, 100);
 
@@ -180,6 +194,8 @@ const metrics = {
 
 const loginLockout = {
   maxAttempts: toPositiveInt(process.env.LOGIN_LOCKOUT_MAX_ATTEMPTS, 5),
+  // Per-account ceiling across all IPs (distributed guessing guard).
+  accountMaxAttempts: toPositiveInt(process.env.LOGIN_LOCKOUT_ACCOUNT_MAX_ATTEMPTS, 25),
   windowMs: toPositiveInt(process.env.LOGIN_LOCKOUT_WINDOW_MS, 15 * 60 * 1000),
   baseLockoutMs: toPositiveInt(process.env.LOGIN_LOCKOUT_BASE_LOCKOUT_MS, 5 * 60 * 1000),
   maxLockoutMs: toPositiveInt(process.env.LOGIN_LOCKOUT_MAX_LOCKOUT_MS, 30 * 60 * 1000),
@@ -231,6 +247,11 @@ const getUrlOrigin = (value) => {
   }
 };
 
+// Reset tokens may only be echoed in HTTP responses on a developer machine or
+// in tests - never on staging/production. NODE_ENV must be set explicitly for
+// this (an unset NODE_ENV counts as non-dev here).
+const isLocalDevEnv = ["development", "test"].includes(String(process.env.NODE_ENV || "").trim());
+
 const configuredPasswordResetMode = String(process.env.PASSWORD_RESET_DELIVERY_MODE || "").trim().toLowerCase();
 const normalizedPasswordResetMode =
   configuredPasswordResetMode === "webhook" && email.resendApiKey
@@ -246,7 +267,7 @@ const passwordResetBaseUrl = normalizeUrlBase(
 
 const passwordReset = {
   tokenTtlMinutes: toPositiveInt(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES, 30),
-  deliveryMode: normalizedPasswordResetMode || (email.resendApiKey ? "resend" : (nodeEnv === "production" ? "resend" : "response")),
+  deliveryMode: normalizedPasswordResetMode || (email.resendApiKey ? "resend" : (isLocalDevEnv ? "response" : "resend")),
   frontendUrl: legacyPasswordResetUrl || `${passwordResetBaseUrl}/reset-password`,
   resetUrls: {
     student: process.env.PASSWORD_RESET_STUDENT_FRONTEND_URL || legacyPasswordResetUrl || `${passwordResetBaseUrl}/reset-password`,
@@ -254,7 +275,7 @@ const passwordReset = {
     "college-admin": process.env.PASSWORD_RESET_COLLEGE_ADMIN_FRONTEND_URL || `${passwordResetBaseUrl}/college-admin/reset-password`,
     "super-admin": process.env.PASSWORD_RESET_SUPER_ADMIN_FRONTEND_URL || `${passwordResetBaseUrl}/super-admin/reset-password`,
   },
-  returnToken: toBoolean(process.env.PASSWORD_RESET_RETURN_TOKEN, nodeEnv !== "production"),
+  returnToken: toBoolean(process.env.PASSWORD_RESET_RETURN_TOKEN, isLocalDevEnv),
 };
 
 module.exports = {
@@ -263,6 +284,7 @@ module.exports = {
   mongoUri: process.env.MONGODB_URI,
   mongoDbName: process.env.MONGODB_DB_NAME || "lms_portal",
   requestBodyLimit: process.env.REQUEST_BODY_LIMIT || "5mb",
+  trustProxy,
   jwtAccessSecret,
   jwtRefreshSecret,
   jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m",

@@ -23,10 +23,12 @@ const {
   clearLoginFailures,
   recordLoginFailure,
 } = require("../../services/login-attempt.service");
+const { getClientIp } = require("../../utils/client-ip");
 const { recordSecurityEvent } = require("../../services/security-audit.service");
 const { buildRefreshCookieOptions } = require("../../utils/refresh-cookie");
 
 const STUDENT_REFRESH_COOKIE = "student_refresh_token";
+const INVALID_CREDENTIALS_MESSAGE = "Invalid student ID/email or password";
 const getEnrollmentDisplay = (user = {}) => user.enrollNumber || user.enrollmentNumber || user.studentId;
 
 const buildStudentProfilePayload = (user = {}) => ({
@@ -56,7 +58,7 @@ const login = asyncHandler(async (req, res) => {
 
   const { identifier, password, keepLoggedIn = false } = req.body;
   const loginIdentifier = identifier;
-  await assertLoginAllowed({ scope: "student", identifier: loginIdentifier });
+  await assertLoginAllowed({ scope: "student", identifier: loginIdentifier, ip: getClientIp(req) });
 
   const m = await models.init();
   const Student = m.Student;
@@ -75,8 +77,9 @@ const login = asyncHandler(async (req, res) => {
         user = await Student.findOne({ userId: foundUser.id }).lean();
         if (user) {
           user = { ...foundUser, ...user };
-        } else {
-          // no student record but user exists
+        } else if (normalizeRole(foundUser.role || ROLES.STUDENT) === ROLES.STUDENT) {
+          // Legacy student stored only in the user collection. Never let a
+          // non-student legacy record authenticate through the student portal.
           user = foundUser;
         }
       }
@@ -89,7 +92,7 @@ const login = asyncHandler(async (req, res) => {
   }
 
   if (!user) {
-    await recordLoginFailure({ scope: "student", identifier: loginIdentifier });
+    await recordLoginFailure({ scope: "student", identifier: loginIdentifier, ip: getClientIp(req) });
     await recordSecurityEvent({
       action: "STUDENT_LOGIN_FAILED",
       req,
@@ -98,13 +101,14 @@ const login = asyncHandler(async (req, res) => {
       outcome: "failed",
       metadata: { reason: "unknown_identifier" },
     });
-    const isEmailIdentifier = String(identifier || "").includes("@");
-    throw new ApiError(401, isEmailIdentifier ? "Email is wrong" : "Student ID is wrong", null, isEmailIdentifier ? "EMAIL_WRONG" : "IDENTIFIER_WRONG");
+    // One message for unknown account and bad password, so login cannot be
+    // used to discover which student IDs / emails exist.
+    throw new ApiError(401, INVALID_CREDENTIALS_MESSAGE, null, "INVALID_CREDENTIALS");
   }
 
   const passwordMatch = await bcrypt.compare(password, user.passwordHash);
   if (!passwordMatch) {
-    await recordLoginFailure({ scope: "student", identifier: loginIdentifier });
+    await recordLoginFailure({ scope: "student", identifier: loginIdentifier, ip: getClientIp(req) });
     await recordSecurityEvent({
       action: "STUDENT_LOGIN_FAILED",
       req,
@@ -114,14 +118,14 @@ const login = asyncHandler(async (req, res) => {
       outcome: "failed",
       metadata: { reason: "bad_password" },
     });
-    throw new ApiError(401, "Password is wrong", null, "PASSWORD_WRONG");
+    throw new ApiError(401, INVALID_CREDENTIALS_MESSAGE, null, "INVALID_CREDENTIALS");
   }
 
   if (!canStudentAuthenticate(user)) {
     throw new ApiError(403, "Account is inactive", null, "ACCOUNT_INACTIVE");
   }
 
-  await clearLoginFailures({ scope: "student", identifier: loginIdentifier });
+  await clearLoginFailures({ scope: "student", identifier: loginIdentifier, ip: getClientIp(req) });
   await recordSecurityEvent({
     action: "STUDENT_LOGIN_SUCCEEDED",
     req,
@@ -131,7 +135,9 @@ const login = asyncHandler(async (req, res) => {
     outcome: "succeeded",
   });
 
-  const accessToken = createAccessToken(user);
+  // The student portal only ever issues STUDENT tokens, whatever role a
+  // merged legacy user record carries.
+  const accessToken = createAccessToken({ ...user, role: ROLES.STUDENT });
   const { refreshToken, refreshRecord } = await createRefreshTokenRecord({
     db: m.dbClient,
     modelName: "studentRefreshToken",
@@ -180,6 +186,9 @@ const refresh = asyncHandler(async (req, res) => {
   if (!userRecord) {
     // maybe payload.sub refers to User id
     userRecord = await db.user.findOne({ id: payload.sub }).lean();
+    if (userRecord && normalizeRole(userRecord.role || ROLES.STUDENT) !== ROLES.STUDENT) {
+      userRecord = null;
+    }
   } else {
     const usr = await db.user.findOne({ id: userRecord.userId }).lean();
     userRecord = { ...usr, ...userRecord };
@@ -193,7 +202,7 @@ const refresh = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Account is inactive", null, "ACCOUNT_INACTIVE");
   }
 
-  const newAccessToken = createAccessToken(userRecord);
+  const newAccessToken = createAccessToken({ ...userRecord, role: ROLES.STUDENT });
   const keepLoggedIn = dbToken.keepLoggedIn !== false;
   const { refreshToken: newRefreshToken, refreshRecord } = await rotateRefreshTokenRecord({
     db,

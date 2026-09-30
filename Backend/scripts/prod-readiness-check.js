@@ -443,6 +443,18 @@ const run = async () => {
     }
   }
 
+  if (env.nodeEnv === "production") {
+    // req.ip (used for rate limits and login lockout) is only trustworthy when
+    // Express trusts exactly the proxies in front of it.
+    if (typeof env.trustProxy !== "number" || env.trustProxy < 1) {
+      findings.push("TRUST_PROXY must be the number of reverse proxies in front of the API (2 for the docker-compose + host nginx setup).");
+    }
+    const rateLimitDisabled = String(process.env.RATE_LIMIT_DISABLED || "").trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(rateLimitDisabled)) {
+      findings.push("RATE_LIMIT_DISABLED must not be enabled in production (it removes login brute-force protection).");
+    }
+  }
+
   if (env.nodeEnv === "production" && env.metrics?.enabled) {
     findings.push(...warnIfShortSecret("METRICS_TOKEN", env.metrics.token));
     findings.push(...warnIfPlaceholder("METRICS_TOKEN", env.metrics.token));

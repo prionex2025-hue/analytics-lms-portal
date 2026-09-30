@@ -47,7 +47,7 @@ if (Queue && redisClient && queueConnection) {
       }
     );
 
-    reportWorker.on("failed", async (job, error) => {
+    reportWorker.on("failed", async (job, _error) => {
       const reportJobId = job?.data?.reportJobId;
       if (!reportJobId) return;
 
@@ -58,11 +58,13 @@ if (Queue && redisClient && queueConnection) {
       emitToCollege(reportJob.collegeId, "report:status", {
         reportJobId,
         status: "FAILED",
-        errorMessage: error?.message || "Report processing failed",
-      });
+        errorMessage: REPORT_FAILED_MESSAGE,
+      }, { departmentId: reportJob.filters?.departmentId || null });
     });
   }
 }
+
+const REPORT_FAILED_MESSAGE = "Report generation failed. Please retry.";
 
 const buildReportPayload = async (db, job) => buildDepartmentReportPayload({ db, job });
 
@@ -76,7 +78,7 @@ const processReportSynchronously = async (reportJobId) => {
   emitToCollege(queued.collegeId, "report:status", {
     reportJobId,
     status: "PROCESSING",
-  });
+  }, { departmentId: queued.filters?.departmentId || null });
 
   try {
     const reportJob = await db.reportJob.findUnique({ where: { id: reportJobId } });
@@ -106,7 +108,7 @@ const processReportSynchronously = async (reportJobId) => {
       reportJobId,
       status: "COMPLETED",
       resultUrl,
-    });
+    }, { departmentId: reportJob.filters?.departmentId || null });
   } catch (error) {
     const failed = await db.reportJob.update({
       where: { id: reportJobId },
@@ -116,11 +118,12 @@ const processReportSynchronously = async (reportJobId) => {
       },
     });
 
+    // Internal error text stays in the job record/logs; the broadcast is generic.
     emitToCollege(failed.collegeId, "report:status", {
       reportJobId,
       status: "FAILED",
-      errorMessage: error.message,
-    });
+      errorMessage: REPORT_FAILED_MESSAGE,
+    }, { departmentId: failed.filters?.departmentId || null });
   }
 };
 

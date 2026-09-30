@@ -1,5 +1,9 @@
 const models = require("../../models");
 const { ApiError, asyncHandler } = require("../../utils/http");
+const {
+  assertCanModifySharedQuestionEntry,
+  getOwningDepartmentId,
+} = require("../../utils/question-bank-access");
 
 const getSubjects = asyncHandler(async (req, res) => {
   const m = await models.init();
@@ -64,6 +68,7 @@ const createSubject = asyncHandler(async (req, res) => {
       collegeId,
       name,
       createdByAdminId: req.admin.id,
+      departmentId: getOwningDepartmentId(req),
       questionSubjectScope: "COLLEGE",
     },
   });
@@ -88,6 +93,8 @@ const deleteSubject = asyncHandler(async (req, res) => {
   if (!subject) {
     throw new ApiError(404, "Subject not found");
   }
+
+  await assertCanModifySharedQuestionEntry(db, req, subject, "subject");
 
   const linkedQuestions = await db.questionBank.count({
     where: { collegeId, subjectId: id },

@@ -51,7 +51,7 @@ const safeWriteSessionStorage = (key, value) => {
 };
 
 const readPersistedUser = () => {
-  const raw = safeReadStorage(USER_KEY);
+  const raw = safeReadSessionStorage(USER_KEY);
   if (!raw) {
     return null;
   }
@@ -70,7 +70,10 @@ const persistStudentAuth = ({ accessToken = null, sessionId = null, user = null 
   safeWriteSessionStorage(REFRESH_TOKEN_KEY, null);
   safeWriteStorage(SESSION_KEY, sessionId || null);
   safeWriteStorage(LEGACY_SESSION_KEY, sessionId || null);
-  safeWriteStorage(USER_KEY, user ? JSON.stringify(user) : null);
+  // Profile (name, email, college...) lives only for this tab session so it does
+  // not linger on shared lab machines; the refresh cookie restores it on reopen.
+  safeWriteStorage(USER_KEY, null);
+  safeWriteSessionStorage(USER_KEY, user ? JSON.stringify(user) : null);
 };
 
 const clearPersistedStudentAuth = () => {
@@ -81,6 +84,7 @@ const clearPersistedStudentAuth = () => {
   safeWriteStorage(SESSION_KEY, null);
   safeWriteStorage(LEGACY_SESSION_KEY, null);
   safeWriteStorage(USER_KEY, null);
+  safeWriteSessionStorage(USER_KEY, null);
 };
 
 const isDefinitiveRefreshFailure = (error) => {
@@ -96,6 +100,7 @@ const persistedAccessToken = safeReadSessionStorage(ACCESS_TOKEN_KEY) || null;
 safeWriteStorage(ACCESS_TOKEN_KEY, null);
 safeWriteStorage(REFRESH_TOKEN_KEY, null);
 safeWriteSessionStorage(REFRESH_TOKEN_KEY, null);
+safeWriteStorage(USER_KEY, null); // drop profiles cached in localStorage by older builds
 setAccessToken(persistedAccessToken);
 
 const initialState = {
@@ -129,24 +134,10 @@ export const loginStudent = createAsyncThunk("auth/login", async (payload, { rej
       });
     }
 
-    if (code === "EMAIL_WRONG") {
+    if (code === "INVALID_CREDENTIALS") {
       return rejectWithValue({
         accountInactive: false,
-        message: "Email is wrong",
-      });
-    }
-
-    if (code === "IDENTIFIER_WRONG") {
-      return rejectWithValue({
-        accountInactive: false,
-        message: "Student ID is wrong",
-      });
-    }
-
-    if (code === "PASSWORD_WRONG") {
-      return rejectWithValue({
-        accountInactive: false,
-        message: "Password is wrong",
+        message: "Invalid student ID/email or password",
       });
     }
 

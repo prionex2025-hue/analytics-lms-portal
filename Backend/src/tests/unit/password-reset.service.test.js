@@ -56,7 +56,12 @@ describe("password reset service", () => {
         updateMany: jest.fn(async ({ where, data }) => {
           let count = 0;
           for (const token of resetTokens) {
-            if (token.scope === where.scope && token.principalId === where.principalId && token.usedAt === where.usedAt) {
+            // Atomic claim by id (resetPasswordWithToken) or supersession by principal.
+            const matchesClaim = where.id !== undefined
+              && token.id === where.id && !token.usedAt && !token.revokedAt;
+            const matchesSupersede = where.id === undefined
+              && token.scope === where.scope && token.principalId === where.principalId && token.usedAt === where.usedAt;
+            if (matchesClaim || matchesSupersede) {
               Object.assign(token, data);
               count += 1;
             }
@@ -141,6 +146,33 @@ describe("password reset service", () => {
       data: expect.objectContaining({ revokedReason: "password_reset" }),
     }));
     expect(db.resetTokens[0].usedAt).toBeInstanceOf(Date);
+    // Access tokens issued before the reset are invalidated.
+    expect(db.admin.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "admin-1" },
+      data: { tokenVersion: 1 },
+    }));
+  });
+
+  it("lets only one of two concurrent resets with the same token succeed", async () => {
+    const db = createFakeDb();
+    const { resetPasswordWithToken, requestPasswordReset } = loadService();
+
+    const requested = await requestPasswordReset({
+      scope: "admin",
+      identifier: "admin@example.edu",
+      db,
+      req: { headers: {}, ip: "127.0.0.1" },
+    });
+
+    const results = await Promise.allSettled([
+      resetPasswordWithToken({ scope: "admin", token: requested.resetToken, password: "first-password", db }),
+      resetPasswordWithToken({ scope: "admin", token: requested.resetToken, password: "second-password", db }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")[0].reason).toMatchObject({
+      code: "INVALID_PASSWORD_RESET_TOKEN",
+    });
   });
 
   it("sends password reset email with Resend without returning the token", async () => {

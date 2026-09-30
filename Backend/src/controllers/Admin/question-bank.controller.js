@@ -1,6 +1,10 @@
 const models = require("../../models");
 const { ApiError, asyncHandler } = require("../../utils/http");
 const { getPagination } = require("../../utils/pagination");
+const {
+  assertCanModifySharedQuestionEntry,
+  getOwningDepartmentId,
+} = require("../../utils/question-bank-access");
 
 const mapQuestionType = (type) => {
   const map = {
@@ -67,6 +71,7 @@ const addQuestionBankItem = asyncHandler(async (req, res) => {
           name: String(req.body.subject || "").trim(),
           collegeId,
           createdByAdminId: req.admin.id,
+          departmentId: getOwningDepartmentId(req),
           questionSubjectScope: "COLLEGE",
         },
       });
@@ -95,6 +100,7 @@ const addQuestionBankItem = asyncHandler(async (req, res) => {
       usageCount: 0,
       isActive: true,
       createdByAdminId: req.admin.id,
+      departmentId: getOwningDepartmentId(req),
     },
     include: {
       createdByAdmin: true,
@@ -243,6 +249,7 @@ const importQuestionBankJson = asyncHandler(async (req, res) => {
       usageCount: 0,
       isActive: item.isActive !== false,
       createdByAdminId: req.admin.id,
+      departmentId: getOwningDepartmentId(req),
     };
   });
 
@@ -268,6 +275,8 @@ const updateQuestionBankItem = asyncHandler(async (req, res) => {
   if (!existing) {
     throw new ApiError(404, "Question not found");
   }
+
+  await assertCanModifySharedQuestionEntry(db, req, existing);
 
   const type = req.body.type || String(existing.type || "").toLowerCase();
   const subjectId = req.body.subjectId || existing.subjectId || null;
@@ -327,6 +336,8 @@ const deleteQuestionBankItem = asyncHandler(async (req, res) => {
   if (!existing) {
     throw new ApiError(404, "Question not found");
   }
+
+  await assertCanModifySharedQuestionEntry(db, req, existing);
 
   if (Number(existing.usageCount || 0) > 0) {
     throw new ApiError(409, "Question already used in tests and cannot be deleted", null, "QUESTION_IN_USE");

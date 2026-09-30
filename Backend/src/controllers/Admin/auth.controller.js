@@ -20,6 +20,7 @@ const {
   clearLoginFailures,
   recordLoginFailure,
 } = require("../../services/login-attempt.service");
+const { getClientIp } = require("../../utils/client-ip");
 const { recordSecurityEvent } = require("../../services/security-audit.service");
 const { buildRefreshCookieOptions } = require("../../utils/refresh-cookie");
 
@@ -34,7 +35,7 @@ const adminLogin = asyncHandler(async (req, res) => {
   const { email, password, keepLoggedIn = false } = req.body;
   const loginIdentifier = email;
   const loginScope = req.baseUrl && req.baseUrl.startsWith("/api/college-admin/auth") ? "college-admin" : "admin";
-  await assertLoginAllowed({ scope: loginScope, identifier: loginIdentifier });
+  await assertLoginAllowed({ scope: loginScope, identifier: loginIdentifier, ip: getClientIp(req) });
 
   const admin = await db.admin.findFirst({
     where: {
@@ -48,7 +49,7 @@ const adminLogin = asyncHandler(async (req, res) => {
   });
 
   if (!admin) {
-    await recordLoginFailure({ scope: loginScope, identifier: loginIdentifier });
+    await recordLoginFailure({ scope: loginScope, identifier: loginIdentifier, ip: getClientIp(req) });
     await recordSecurityEvent({
       action: "ADMIN_LOGIN_FAILED",
       req,
@@ -62,7 +63,7 @@ const adminLogin = asyncHandler(async (req, res) => {
 
   const isMatch = await bcrypt.compare(password, admin.passwordHash);
   if (!isMatch) {
-    await recordLoginFailure({ scope: loginScope, identifier: loginIdentifier });
+    await recordLoginFailure({ scope: loginScope, identifier: loginIdentifier, ip: getClientIp(req) });
     await recordSecurityEvent({
       action: "ADMIN_LOGIN_FAILED",
       req,
@@ -76,7 +77,7 @@ const adminLogin = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Invalid credentials");
   }
 
-  await clearLoginFailures({ scope: loginScope, identifier: loginIdentifier });
+  await clearLoginFailures({ scope: loginScope, identifier: loginIdentifier, ip: getClientIp(req) });
   await recordSecurityEvent({
     action: "ADMIN_LOGIN_SUCCEEDED",
     req,

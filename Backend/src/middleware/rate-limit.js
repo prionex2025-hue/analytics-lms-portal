@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const { redisClient, isRedisAvailable } = require("../config/redis");
 const { verifyAccessToken } = require("../utils/token");
 const { recordRateLimitEvent } = require("../services/rate-limit-metrics.service");
+const { getClientIp } = require("../utils/client-ip");
 
 const memoryCounters = new Map();
 
@@ -35,10 +36,6 @@ const formatIdentity = (kind, id, role) => {
   return `${kind}:${id}`;
 };
 
-const getClientIp = (req) => {
-  const header = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return header || req.ip || req.socket?.remoteAddress || "unknown";
-};
 
 const getActorIdentity = (req) => {
   if (req.authIdentity) {

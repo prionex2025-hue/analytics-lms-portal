@@ -1,13 +1,10 @@
 const crypto = require("crypto");
 const { createAuditLog } = require("./audit.service");
+const { getClientIp } = require("../utils/client-ip");
 
 const hashValue = (value) =>
   crypto.createHash("sha256").update(String(value || "")).digest("hex").slice(0, 24);
 
-const getClientIp = (req = {}) => {
-  const forwardedFor = String(req.headers?.["x-forwarded-for"] || "").split(",")[0].trim();
-  return forwardedFor || req.ip || req.socket?.remoteAddress || "unknown";
-};
 
 const getUserAgent = (req = {}) => String(req.headers?.["user-agent"] || "").slice(0, 200);
 

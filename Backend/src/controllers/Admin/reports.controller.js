@@ -616,6 +616,14 @@ const getReportAnalytics = asyncHandler(async (req, res) => {
   res.status(200).json(payload);
 });
 
+// Query strings can be parsed into nested objects (?testId[not]=x). These
+// values end up in DB filters, so accept only plain scalars.
+const toScalarQueryValue = (value) => {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const normalized = String(value).trim();
+  return normalized || undefined;
+};
+
 const resolveDateFilters = (query = {}) => {
   const dateFromInput = query.dateFrom;
   const dateToInput = query.dateTo;
@@ -623,17 +631,17 @@ const resolveDateFilters = (query = {}) => {
   const validDateTo = toValidDate(dateToInput);
 
   const result = {
-    testId: query.testId,
-    departmentId: query.departmentId,
-    batchId: query.batchId,
-    studentId: query.studentId,
+    testId: toScalarQueryValue(query.testId),
+    departmentId: toScalarQueryValue(query.departmentId),
+    batchId: toScalarQueryValue(query.batchId),
+    studentId: toScalarQueryValue(query.studentId),
     year: normalizeStudentYear(query.year) || undefined,
     studentScope: normalizeStudentScope(query.studentScope),
     passoutYear: normalizePassoutYear(query.passoutYear) || undefined,
     passoutCohortId: normalizeOptionalId(query.passoutCohortId) || undefined,
     dateFrom: validDateFrom ? validDateFrom.toISOString() : undefined,
     dateTo: validDateTo ? validDateTo.toISOString() : undefined,
-    mode: query.mode || "department",
+    mode: toScalarQueryValue(query.mode) || "department",
   };
 
   if (!result.dateFrom && !result.dateTo && query.dateRange && query.dateRange !== "custom") {

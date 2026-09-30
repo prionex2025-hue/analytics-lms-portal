@@ -75,7 +75,7 @@ const {
 } = require("./middleware/auth");
 
 const app = express();
-app.set("trust proxy", 1);
+app.set("trust proxy", env.trustProxy);
 
 morgan.token("request-id", (req) => req.id || "-");
 
@@ -359,11 +359,11 @@ const buildCoreHealthSnapshot = async () => {
     body: {
       status: ready ? "ok" : "degraded",
       checks,
+      // Public, unauthenticated endpoint: report status only. Detailed errors
+      // stay in the server logs; super admins get latency via /api/super-admin/system/health.
       redis: {
         configured: redisHealth.configured,
         available: redisHealth.available,
-        latencyMs: redisHealth.latencyMs,
-        error: redisHealth.error,
       },
       uptime: Math.floor(process.uptime()),
     },
@@ -433,7 +433,7 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "https:"],
         fontSrc: ["'self'", "data:"],

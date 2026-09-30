@@ -107,6 +107,11 @@ services:
       MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required}
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-lms_portal}
       REQUEST_BODY_LIMIT: ${REQUEST_BODY_LIMIT:-5mb}
+      # host nginx -> frontend nginx -> api: two trusted proxy hops.
+      TRUST_PROXY: ${TRUST_PROXY:-2}
+      # SPA and API share lms.analyticsedify.com, so the refresh cookie never needs
+      # to be sent cross-site. "strict" blocks it from all cross-site requests (CSRF).
+      AUTH_COOKIE_SAMESITE: ${AUTH_COOKIE_SAMESITE:-strict}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-}
       JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}

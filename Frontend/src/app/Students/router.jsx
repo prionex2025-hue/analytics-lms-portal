@@ -58,7 +58,8 @@ const persistStudentAuth = (payload = {}) => {
   safeWriteSessionStorage(STUDENT_REFRESH_TOKEN_KEY, null);
   safeWriteStorage(STUDENT_SESSION_ID_KEY, payload.sessionId || null);
   safeWriteStorage(LEGACY_SESSION_KEY, payload.sessionId || null);
-  safeWriteStorage(STUDENT_USER_KEY, payload.user ? JSON.stringify(payload.user) : null);
+  safeWriteStorage(STUDENT_USER_KEY, null);
+  safeWriteSessionStorage(STUDENT_USER_KEY, payload.user ? JSON.stringify(payload.user) : null);
 };
 
 const clearStudentAuth = () => {
@@ -69,6 +70,7 @@ const clearStudentAuth = () => {
   safeWriteStorage(STUDENT_SESSION_ID_KEY, null);
   safeWriteStorage(LEGACY_SESSION_KEY, null);
   safeWriteStorage(STUDENT_USER_KEY, null);
+  safeWriteSessionStorage(STUDENT_USER_KEY, null);
 };
 
 const injectStudentReducers = async () => {

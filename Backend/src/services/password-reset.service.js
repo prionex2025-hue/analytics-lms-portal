@@ -6,6 +6,8 @@ const env = require("../config/env");
 const { ROLES, normalizeRole, isAdminLikeRole } = require("../constants/roles");
 const { ApiError } = require("../utils/http");
 const { revokeAllRefreshTokensForOwner } = require("./refresh-token-session.service");
+const { getClientIp } = require("../utils/client-ip");
+const { bumpPrincipalTokenVersion } = require("./auth-revocation.service");
 
 const GENERIC_RESET_MESSAGE = "If an account matches, password reset instructions will be sent.";
 const RESET_SUCCESS_MESSAGE = "Password reset successful. This reset link is now expired. Please sign in again.";
@@ -31,13 +33,6 @@ const escapeHtml = (value) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
-const getClientIp = (req) =>
-  String(req?.headers?.["x-forwarded-for"] || "")
-    .split(",")[0]
-    .trim() ||
-  req?.ip ||
-  req?.socket?.remoteAddress ||
-  null;
 
 const normalizePortal = ({ portal, scope, principal = null }) => {
   const requested = String(portal || "").trim().toLowerCase();
@@ -194,8 +189,14 @@ const sendResendPasswordResetEmail = async ({ email, resetUrl, expiresAt, portal
   }
 };
 
-const withGenericDelay = async () => {
-  await new Promise((resolve) => setTimeout(resolve, 75 + crypto.randomInt(75)));
+const MIN_RESET_REQUEST_MS = 400;
+
+const padResponseTime = async (startedAt) => {
+  const target = MIN_RESET_REQUEST_MS + crypto.randomInt(50);
+  const remaining = target - (Date.now() - startedAt);
+  if (remaining > 0) {
+    await new Promise((resolve) => setTimeout(resolve, remaining));
+  }
 };
 
 const findStudentPrincipal = async (db, identifier) => {
@@ -396,7 +397,7 @@ const createResetRecord = async ({ db, scope, principalContext, token, req }) =>
       usedAt: null,
       revokedAt: null,
       requestedAt: now,
-      requestedIp: getClientIp(req),
+      requestedIp: req ? getClientIp(req) : null,
       requestedUserAgent: req?.headers?.["user-agent"] || null,
     },
   });
@@ -431,42 +432,65 @@ const dispatchResetNotification = async ({ scope, email, token, expiresAt, porta
   };
 };
 
+const markDeliveryFailed = async ({ db, scope, resetRecordId, delivery }) => {
+  await db.passwordResetToken.update({
+    where: { id: resetRecordId },
+    data: {
+      revokedAt: new Date(),
+      revokedReason: delivery?.reason || "delivery_failed",
+    },
+  }).catch(() => {});
+  console.warn("Password reset delivery failed", { scope, reason: delivery?.reason });
+};
+
 const requestPasswordReset = async ({ scope, identifier, portal = null, req, db: providedDb = null }) => {
   if (!VALID_SCOPES.has(scope)) {
     throw new ApiError(400, "Invalid password reset scope", null, "INVALID_PASSWORD_RESET_SCOPE");
   }
 
+  // Every outcome (unknown account, inactive account, email sent) takes the
+  // same minimum time, so response timing does not reveal which accounts exist.
+  const startedAt = Date.now();
   const db = providedDb || (await models.init()).dbClient;
   const principalContext = await findPrincipal(db, scope, identifier);
   if (!principalContext?.principal?.id || principalContext.principal.isActive === false) {
-    await withGenericDelay();
+    await padResponseTime(startedAt);
     return { message: GENERIC_RESET_MESSAGE };
   }
 
   const token = crypto.randomBytes(32).toString("base64url");
   const resetRecord = await createResetRecord({ db, scope, principalContext, token, req });
-  const delivery = await dispatchResetNotification({
-    scope,
-    email: principalContext.email,
-    token,
-    expiresAt: resetRecord.expiresAt,
-    portal,
-    principal: principalContext.principal,
-  });
+  const exposeToken = env.passwordReset.returnToken || env.passwordReset.deliveryMode === "response";
+  const deliver = () =>
+    dispatchResetNotification({
+      scope,
+      email: principalContext.email,
+      token,
+      expiresAt: resetRecord.expiresAt,
+      portal,
+      principal: principalContext.principal,
+    }).then(async (delivery) => {
+      if (!delivery.delivered) {
+        await markDeliveryFailed({ db, scope, resetRecordId: resetRecord.id, delivery });
+      }
+      return delivery;
+    });
 
-  if (!delivery.delivered) {
-    await db.passwordResetToken.update({
-      where: { id: resetRecord.id },
-      data: {
-        revokedAt: new Date(),
-        revokedReason: delivery.reason || "delivery_failed",
-      },
-    }).catch(() => {});
-    console.warn("Password reset delivery failed", { scope, reason: delivery.reason });
+  if (exposeToken) {
+    // Development/test only: the token is returned inline, so deliver first.
+    await deliver();
+  } else {
+    // Send the email in the background: waiting on the mail provider would make
+    // "account exists" responses measurably slower than "no account" ones.
+    deliver().catch((error) =>
+      markDeliveryFailed({ db, scope, resetRecordId: resetRecord.id, delivery: { reason: error?.message } })
+    );
   }
 
+  await padResponseTime(startedAt);
+
   const response = { message: GENERIC_RESET_MESSAGE };
-  if (env.passwordReset.returnToken || env.passwordReset.deliveryMode === "response") {
+  if (exposeToken) {
     response.resetToken = token;
     response.resetUrl = buildResetUrl({ scope, token, portal, principal: principalContext.principal });
     response.expiresAt = new Date(resetRecord.expiresAt).toISOString();
@@ -507,6 +531,16 @@ const resetPasswordWithToken = async ({ scope, token, password, db: providedDb =
     throw new ApiError(400, "Invalid or expired password reset token", null, "INVALID_PASSWORD_RESET_TOKEN");
   }
 
+  // Claim the token atomically before changing anything, so two concurrent
+  // requests carrying the same token cannot both succeed.
+  const claim = await db.passwordResetToken.updateMany({
+    where: { id: record.id, usedAt: null, revokedAt: null },
+    data: { usedAt: new Date() },
+  });
+  if (Number(claim?.count || 0) !== 1) {
+    throw new ApiError(400, "Invalid or expired password reset token", null, "INVALID_PASSWORD_RESET_TOKEN");
+  }
+
   const passwordHash = await bcrypt.hash(String(password || ""), 10);
   await db[principalContext.modelName].update({
     where: { id: principalContext.principal.id },
@@ -522,10 +556,9 @@ const resetPasswordWithToken = async ({ scope, token, password, db: providedDb =
     reason: "password_reset",
   });
 
-  await db.passwordResetToken.update({
-    where: { id: record.id },
-    data: { usedAt: new Date() },
-  });
+  // Invalidate access tokens that were issued before the reset (they would
+  // otherwise stay valid until they expire).
+  await bumpPrincipalTokenVersion(db, principalContext.modelName, principalContext.principal.id);
 
   return {
     message: RESET_SUCCESS_MESSAGE,

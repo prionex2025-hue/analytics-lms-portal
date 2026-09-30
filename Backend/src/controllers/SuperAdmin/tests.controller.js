@@ -1432,7 +1432,7 @@ const forceSubmitAttempt = asyncHandler(async (req, res) => {
   const submission = await db.submission.findFirst({
     where: { id: submissionId, testId },
     include: {
-      user: { select: { fullName: true } },
+      user: { select: { fullName: true, departmentId: true } },
       test: { select: { id: true, collegeId: true } },
     },
   });
@@ -1471,7 +1471,7 @@ const forceSubmitAttempt = asyncHandler(async (req, res) => {
   };
 
   emitToTestRoom(testId, "test_status_change", payload);
-  emitToCollege(submission.test?.collegeId, "test_status_change", payload);
+  emitToCollege(submission.test?.collegeId, "test_status_change", payload, { departmentId: submission.user?.departmentId || null });
 
   res.status(200).json({ message: "Submission force-submitted", submission: completed });
 });
@@ -1485,7 +1485,7 @@ const extendAttemptTime = asyncHandler(async (req, res) => {
   const submission = await db.submission.findFirst({
     where: { id: submissionId, testId },
     include: {
-      user: { select: { fullName: true } },
+      user: { select: { fullName: true, departmentId: true } },
       test: { select: { id: true, collegeId: true } },
     },
   });
@@ -1536,7 +1536,7 @@ const extendAttemptTime = asyncHandler(async (req, res) => {
   };
 
   emitToTestRoom(testId, "student_status_update", payload);
-  emitToCollege(submission.test?.collegeId, "student_status_update", payload);
+  emitToCollege(submission.test?.collegeId, "student_status_update", payload, { departmentId: submission.user?.departmentId || null });
 
   res.status(200).json({ message: "Time extended", session: updated });
 });

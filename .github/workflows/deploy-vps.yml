@@ -34,8 +34,10 @@ jobs:
 
       - name: Validate deploy ref
         id: ref
+        env:
+          # Passed via env (not ${{ }} in the script) so the input can't inject shell.
+          REF_INPUT: ${{ inputs.ref }}
         run: |
-          REF_INPUT="${{ inputs.ref }}"
           if ! printf '%s' "$REF_INPUT" | grep -qE '^[A-Za-z0-9._/-]*$'; then
             echo "::error::Invalid ref (only alphanumeric, . _ / - allowed): $REF_INPUT"
             exit 1

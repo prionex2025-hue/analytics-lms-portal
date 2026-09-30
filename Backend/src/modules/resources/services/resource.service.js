@@ -358,11 +358,13 @@ const assertValidExternalUrl = (resourceType, externalUrl) => {
   }
 
   const host = parsed.hostname.toLowerCase();
-  if (resourceType === RESOURCE_TYPES.YOUTUBE_URL && !host.endsWith("youtube.com") && host !== "youtu.be") {
+  const isHostOrSubdomain = (domain) => host === domain || host.endsWith(`.${domain}`);
+
+  if (resourceType === RESOURCE_TYPES.YOUTUBE_URL && !isHostOrSubdomain("youtube.com") && host !== "youtu.be") {
     throw new ApiError(422, "YouTube resources must use a youtube.com or youtu.be URL");
   }
 
-  if (resourceType === RESOURCE_TYPES.GOOGLE_DRIVE_URL && !host.endsWith("drive.google.com") && !host.endsWith("docs.google.com")) {
+  if (resourceType === RESOURCE_TYPES.GOOGLE_DRIVE_URL && !isHostOrSubdomain("drive.google.com") && !isHostOrSubdomain("docs.google.com")) {
     throw new ApiError(422, "Google Drive resources must use a Google Drive or Google Docs URL");
   }
 };

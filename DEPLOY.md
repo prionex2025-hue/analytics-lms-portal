@@ -128,6 +128,9 @@ Now `nano Backend/.env.production` and set:
 | `FRONTEND_ORIGIN` | `https://lms.yourdomain.com` |
 | `PASSWORD_RESET_FRONTEND_BASE_URL` and all `PASSWORD_RESET_*_URL` | `https://lms.yourdomain.com/...` |
 | `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | your Cloudinary credentials |
+| `TRUST_PROXY` | `2` (host nginx → frontend nginx → API). Wrong values break per-IP rate limiting (docker-compose defaults to 2) |
+| `AUTH_COOKIE_SAMESITE` | `strict` (site and API share one domain) |
+| `GRAFANA_ADMIN_PASSWORD` | generated value — the monitoring stack refuses to start without it |
 | **Off-server backup** (required by `prod:check`) | set `BACKUP_RCLONE_DESTINATION=...` **or** `BACKUP_SYNC_COMMAND=...` + `BACKUP_SYNC_CONFIGURED=true` |
 
 `MONGODB_URI` must use the **app** user + replica set:

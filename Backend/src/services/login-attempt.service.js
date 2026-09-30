@@ -49,53 +49,74 @@ const clearAttempt = async (key) => {
   memoryAttempts.delete(key);
 };
 
-const getLockoutMs = (failedCount) => {
-  if (failedCount < env.loginLockout.maxAttempts) {
+// Two independent counters per login identifier:
+//  - identifier + client IP: locks after `maxAttempts`. This is the normal
+//    brute-force brake, and because it is IP-scoped a stranger cannot lock a
+//    student out of their own account (e.g. right before an exam).
+//  - identifier alone: locks only after `accountMaxAttempts` (much higher),
+//    still stopping a distributed guessing attack spread across many IPs.
+const getLockoutMs = (failedCount, threshold) => {
+  if (failedCount < threshold) {
     return 0;
   }
 
-  const exponent = Math.min(failedCount - env.loginLockout.maxAttempts, 8);
+  const exponent = Math.min(failedCount - threshold, 8);
   return Math.min(env.loginLockout.baseLockoutMs * (2 ** exponent), env.loginLockout.maxLockoutMs);
 };
 
-const assertLoginAllowed = async ({ scope, identifier }) => {
-  const key = buildKey(scope, identifier);
-  const attempt = await readAttempt(key);
-  const lockedUntil = Number(attempt?.lockedUntil || 0);
+const buildKeys = ({ scope, identifier, ip }) => [
+  { key: buildKey(`${scope}:ip:${String(ip || "unknown")}`, identifier), threshold: env.loginLockout.maxAttempts },
+  { key: buildKey(`${scope}:account`, identifier), threshold: env.loginLockout.accountMaxAttempts },
+];
 
-  if (lockedUntil > getNow()) {
-    const retryAfterSeconds = Math.ceil((lockedUntil - getNow()) / 1000);
-    throw new ApiError(
-      429,
-      "Too many failed login attempts. Please retry later.",
-      { retryAfterSeconds },
-      "ACCOUNT_LOCKED"
-    );
+const assertLoginAllowed = async ({ scope, identifier, ip }) => {
+  for (const { key } of buildKeys({ scope, identifier, ip })) {
+    const attempt = await readAttempt(key);
+    const lockedUntil = Number(attempt?.lockedUntil || 0);
+
+    if (lockedUntil > getNow()) {
+      const retryAfterSeconds = Math.ceil((lockedUntil - getNow()) / 1000);
+      throw new ApiError(
+        429,
+        "Too many failed login attempts. Please retry later.",
+        { retryAfterSeconds },
+        "ACCOUNT_LOCKED"
+      );
+    }
   }
 };
 
-const recordLoginFailure = async ({ scope, identifier }) => {
-  const key = buildKey(scope, identifier);
-  const current = await readAttempt(key);
-  const failedCount = Number(current?.failedCount || 0) + 1;
-  const lockoutMs = getLockoutMs(failedCount);
-  const lockedUntil = lockoutMs > 0 ? getNow() + lockoutMs : 0;
+const recordLoginFailure = async ({ scope, identifier, ip }) => {
+  let locked = false;
+  let retryAfterSeconds = 0;
+  let failedCount = 0;
 
-  await writeAttempt(key, {
-    failedCount,
-    lockedUntil,
-    lastFailedAt: new Date().toISOString(),
-  });
+  for (const { key, threshold } of buildKeys({ scope, identifier, ip })) {
+    const current = await readAttempt(key);
+    const count = Number(current?.failedCount || 0) + 1;
+    const lockoutMs = getLockoutMs(count, threshold);
+    const lockedUntil = lockoutMs > 0 ? getNow() + lockoutMs : 0;
 
-  return {
-    failedCount,
-    locked: lockedUntil > getNow(),
-    retryAfterSeconds: lockedUntil > getNow() ? Math.ceil((lockedUntil - getNow()) / 1000) : 0,
-  };
+    await writeAttempt(key, {
+      failedCount: count,
+      lockedUntil,
+      lastFailedAt: new Date().toISOString(),
+    });
+
+    failedCount = Math.max(failedCount, count);
+    if (lockedUntil > getNow()) {
+      locked = true;
+      retryAfterSeconds = Math.max(retryAfterSeconds, Math.ceil((lockedUntil - getNow()) / 1000));
+    }
+  }
+
+  return { failedCount, locked, retryAfterSeconds };
 };
 
-const clearLoginFailures = async ({ scope, identifier }) => {
-  await clearAttempt(buildKey(scope, identifier));
+const clearLoginFailures = async ({ scope, identifier, ip }) => {
+  for (const { key } of buildKeys({ scope, identifier, ip })) {
+    await clearAttempt(key);
+  }
 };
 
 module.exports = {
