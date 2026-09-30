@@ -3,7 +3,10 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { superAdminApi } from "@/services/api";
-import { EmptyState, Pagination, StatCard, StatusBadge, TabNav, Th } from "@/components/Reports/components";
+import { CheckCircle2, ShieldAlert, Undo2 } from "lucide-react";
+import { EmptyState, Pagination, StatusBadge, TabNav, Th } from "@/components/Reports/components";
+import { Button } from "@/components/ui/button";
+import { Callout, ErrorState, PageHeader, SearchInput, StatTile } from "@/components/common/page-kit";
 import { formatDateLabel } from "@/components/Reports/utils";
 import ViolationReviewDialog from "@/components/Reports/ViolationReviewDialog";
 import { SUPER_REVIEW_ACTIONS } from "@/components/Reports/reviewActions";
@@ -125,64 +128,66 @@ export default function EscalationsPage() {
   const isFiltered = Boolean(collegeId || search);
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-4 sm:px-6">
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">Integrity Review</p>
-        <h1 className="mt-1 text-2xl font-bold text-text-primary sm:text-3xl">Escalations</h1>
-        <p className="mt-1 text-sm text-text-secondary">
-          Anomalies college admins escalated from their reports. Confirm or dismiss each one — your decision is final.
-        </p>
-        <div className="mt-4">
-          <TabNav tabs={tabs} active={status} onChange={(next) => updateParams({ status: next === "pending" ? "" : next })} />
-        </div>
-      </section>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Integrity review"
+        title="Escalations"
+        description="Anomalies college admins escalated from their reports. Confirm or dismiss each one — your decision is final."
+      />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard iconName="alert" iconTone={summary.pending ? "danger" : "warning"} label="Pending" value={summary.pending || 0} sub="Awaiting your decision" flag={summary.pending > 0} />
-        <StatCard iconName="target" iconTone="success" label="Resolved" value={summary.resolved || 0} sub="Confirmed or dismissed" />
-        <StatCard iconName="students" iconTone="navy" label="Withdrawn" value={summary.withdrawn || 0} sub="Dismissed by the admin after escalating" />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
+        <StatTile icon={ShieldAlert} label="Pending" value={summary.pending || 0} hint="Awaiting your decision" tone={summary.pending ? "danger" : "neutral"} />
+        <StatTile icon={CheckCircle2} label="Resolved" value={summary.resolved || 0} hint="Confirmed or dismissed" tone="success" />
+        <StatTile icon={Undo2} label="Withdrawn" value={summary.withdrawn || 0} hint="Dismissed by the admin after escalating" tone="neutral" />
       </div>
 
-      <section className="rounded-2xl border border-border bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        <div className="flex flex-wrap items-end gap-3 border-b border-border/70 p-4">
-          <label className="w-full space-y-1 text-xs text-text-secondary sm:w-64">
-            <span>College</span>
-            <select
-              value={collegeId}
-              onChange={(event) => updateParams({ college: event.target.value })}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
-            >
-              <option value="">All colleges</option>
-              {colleges.map((college) => (
-                <option key={college.id} value={college.id}>{college.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="w-full flex-1 space-y-1 text-xs text-text-secondary sm:min-w-64">
-            <span>Search</span>
-            <input
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              placeholder="Test, student, roll no, admin, or reason"
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm"
-            />
-          </label>
-          {escalationsQuery.isFetching && !escalationsQuery.isLoading ? <span className="pb-2 text-xs text-text-secondary">Updating…</span> : null}
+      <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+        <div className="border-b border-border px-4 pt-3 sm:px-5">
+          <TabNav tabs={tabs} active={status} onChange={(next) => updateParams({ status: next === "pending" ? "" : next })} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 sm:px-5">
+          <select
+            aria-label="College"
+            value={collegeId}
+            onChange={(event) => updateParams({ college: event.target.value })}
+            className="ui-select w-full sm:w-64"
+          >
+            <option value="">All colleges</option>
+            {colleges.map((college) => (
+              <option key={college.id} value={college.id}>{college.name}</option>
+            ))}
+          </select>
+          <SearchInput
+            className="min-w-0 flex-1 basis-64"
+            label="Search escalations"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Test, student, roll no, admin, or reason"
+          />
+          {escalationsQuery.isFetching && !escalationsQuery.isLoading ? (
+            <span className="text-xs text-text-secondary" role="status">Updating…</span>
+          ) : null}
         </div>
 
         {escalationsQuery.data?.truncated ? (
-          <p className="border-b border-border/70 bg-amber-500/10 px-4 py-2 text-xs text-text-secondary">
+          <Callout tone="warning" className="rounded-none border-x-0 border-t-0 px-4 py-2.5 text-xs sm:px-5">
             Showing the 500 most recent escalations. Filter by college to narrow older ones.
-          </p>
+          </Callout>
         ) : null}
 
         {escalationsQuery.isLoading ? (
-          <div className="p-6 text-sm text-text-secondary">Loading escalations…</div>
-        ) : escalationsQuery.isError ? (
-          <div className="m-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">
-            Unable to load escalations.{" "}
-            <button type="button" onClick={() => escalationsQuery.refetch()} className="font-semibold underline">Retry</button>
+          <div className="space-y-2 p-4 sm:p-5" role="status" aria-label="Loading escalations">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <div key={index} className="h-12 animate-pulse rounded-lg bg-muted motion-reduce:animate-none" />
+            ))}
           </div>
+        ) : escalationsQuery.isError ? (
+          <ErrorState
+            className="m-4"
+            title="Unable to load escalations"
+            description="Check your connection and try again."
+            onRetry={() => escalationsQuery.refetch()}
+          />
         ) : items.length === 0 ? (
           <EmptyState
             title={isFiltered ? "No matching escalations" : emptyCopy.title}
@@ -190,7 +195,7 @@ export default function EscalationsPage() {
           />
         ) : (
           <>
-            <div className="overflow-x-auto">
+            <div className="relative overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr>
@@ -217,7 +222,7 @@ export default function EscalationsPage() {
                         {item.college?.id ? (
                           <Link
                             to={`/super-admin/reports?college=${item.college.id}&test=${item.testId}`}
-                            className="text-xs font-semibold text-primary hover:opacity-70"
+                            className="rounded text-xs font-semibold text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
                           >
                             Open report
                           </Link>
@@ -246,17 +251,15 @@ export default function EscalationsPage() {
                         {item.status === "withdrawn" ? (
                           <span className="text-xs text-text-secondary">—</span>
                         ) : (
-                          <button
+                          <Button
                             type="button"
+                            size="lg"
+                            variant={item.status === "pending" ? "default" : "outline"}
                             onClick={() => setReviewTarget(item)}
-                            className={
-                              item.status === "pending"
-                                ? "rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
-                                : "rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-text-primary hover:bg-muted"
-                            }
+                            className="rounded-lg px-3"
                           >
                             {item.status === "pending" ? "Review" : "Revise"}
-                          </button>
+                          </Button>
                         )}
                       </td>
                     </tr>

@@ -1,6 +1,7 @@
 import { Suspense, createElement, lazy, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { Navigate, Outlet, RouterProvider, createBrowserRouter, useLocation } from "react-router-dom";
+import { Lock } from "lucide-react";
 import {
   accountInactiveDetected,
   applyRefreshPayload,
@@ -16,6 +17,7 @@ import IdleSessionTimeout from "@/components/common/IdleSessionTimeout";
 import LoginPage from "@/pages/Students/LoginPage";
 import { registerAuthInterceptorHandlers } from "@/services/httpClient";
 import RouteErrorElement from "@/components/common/RouteErrorElement";
+import { LoadingState } from "@/components/Students/ui/StudentUI";
 
 const STUDENT_ACCESS_TOKEN_KEY = "student_access_token";
 const STUDENT_REFRESH_TOKEN_KEY = "student_refresh_token";
@@ -130,7 +132,7 @@ const StudentPasswordResetPage = lazy(async () => {
   };
 });
 
-function PageRoute({ Page, fallback = <div className="grid min-h-[40vh] place-items-center text-text-secondary">Loading...</div> }) {
+function PageRoute({ Page, fallback = <LoadingState /> }) {
   return (
     <Suspense fallback={fallback}>
       {createElement(Page)}
@@ -191,15 +193,18 @@ function AuthBootstrap() {
   }, [dispatch, sessionId, user]);
 
   if (!initialized) {
-    return <div className="grid min-h-screen place-items-center text-text-secondary">Initializing...</div>;
+    return <LoadingState fullScreen label="Preparing your portal…" />;
   }
 
   if (accountInactive) {
     return (
-      <div className="grid min-h-screen place-items-center bg-muted p-6">
-        <div className="w-full max-w-xl rounded-xl border border-border bg-card p-8 text-center shadow-sm">
-          <h1 className="text-2xl font-semibold text-text-primary">Account Access Blocked</h1>
-          <p className="mt-3 text-sm text-text-secondary">
+      <div className="grid min-h-screen place-items-center bg-background p-6">
+        <div role="alert" className="w-full max-w-md rounded-xl border border-border bg-card p-8 text-center shadow-sm">
+          <span className="mx-auto grid size-12 place-items-center rounded-full bg-danger/10 text-danger">
+            <Lock className="size-5" aria-hidden="true" />
+          </span>
+          <h1 className="mt-4 text-xl font-semibold text-text-primary">Account access blocked</h1>
+          <p className="mt-2 text-sm leading-6 text-text-secondary">
             Your account is currently inactive. Please contact your institution administrator to reactivate access.
           </p>
         </div>
@@ -255,7 +260,7 @@ const router = createBrowserRouter([
         element: <ProtectedRoute />,
         children: [
           {
-            element: <PageRoute Page={AppShell} fallback={<div className="grid min-h-screen place-items-center text-text-secondary">Loading portal...</div>} />,
+            element: <PageRoute Page={AppShell} fallback={<LoadingState fullScreen label="Loading portal…" />} />,
             children: [
               { path: "/", element: <Navigate to="/resume" replace /> },
               { path: "/resume", element: <PageRoute Page={ResumeAttemptPage} /> },
@@ -273,7 +278,7 @@ const router = createBrowserRouter([
           },
           {
             path: "/tests/:testId/take",
-            element: <PageRoute Page={TestEnvironmentPage} fallback={<div className="grid min-h-screen place-items-center text-text-secondary">Loading secure test environment...</div>} />,
+            element: <PageRoute Page={TestEnvironmentPage} fallback={<LoadingState fullScreen label="Loading secure test environment…" />} />,
           },
           {
             path: "/tests/:testId/instructions",
@@ -281,7 +286,7 @@ const router = createBrowserRouter([
           },
           {
             path: "/test/:attemptId",
-            element: <PageRoute Page={TestEnvironmentPage} fallback={<div className="grid min-h-screen place-items-center text-text-secondary">Loading secure test environment...</div>} />,
+            element: <PageRoute Page={TestEnvironmentPage} fallback={<LoadingState fullScreen label="Loading secure test environment…" />} />,
           },
           { path: "/submission/:submissionId", element: <PageRoute Page={SubmissionPage} /> },
         ],

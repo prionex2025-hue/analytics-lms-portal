@@ -19,14 +19,16 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { adminApi, superAdminApi } from "@/services/api";
+import ConfirmActionDialog from "@/components/Admin/ConfirmActionDialog";
+import SkeletonBlock from "@/components/common/SkeletonBlock";
+import { DetailList, EmptyState, FormField, Modal, PageHeader, PaginationBar, SearchInput, SectionCard, StatTile, StatusBadge } from "@/components/common/page-kit";
+import { cn } from "@/lib/utils";
+import { ui } from "@/styles/ui-tokens";
 import {
   clearSelectedLearningResource,
   createLearningResourceSubject,
@@ -122,6 +124,7 @@ export default function LearningResourcesWorkspace({
   const roleState = useSelector((state) => state.learningResources?.[role]);
   const admin = useAdminAuthState()?.admin;
   const { subjects = [], resources = [], popular = [], analytics, pagination, loading, uploading, selectedResource } = roleState || {};
+  const [pendingDelete, setPendingDelete] = useState(null);
   const [filters, setFilters] = useState({
     q: "",
     subjectId: "",
@@ -366,359 +369,391 @@ export default function LearningResourcesWorkspace({
   const analyticsSummary = analytics?.summary || {};
   const canDeleteSubject = (subject) => canCreateSubject && (isSuper ? subject.isGlobal : !subject.isGlobal);
 
+  const totalResources = pagination?.total ?? visibleResources.length;
+  const lineTab =
+    "flex-none rounded-none px-0.5 pt-1 pb-3 text-text-secondary data-active:text-primary after:!bottom-[-1px] after:!bg-primary";
+
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-text-primary">{title}</h1>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant="secondary">{subjects.length} Subjects</Badge>
-            <Badge variant="secondary">{pagination?.total ?? visibleResources.length} Resources</Badge>
-            {selectedSubject ? <Badge>{selectedSubject.name}</Badge> : null}
-          </div>
+    <div className="space-y-6">
+      <PageHeader
+        title={title}
+        description={`${subjects.length} subject${subjects.length === 1 ? "" : "s"} · ${totalResources} resource${totalResources === 1 ? "" : "s"}${selectedSubject ? ` · Filtered to ${selectedSubject.name}` : ""}`}
+      />
+
+      <Tabs defaultValue="resources" className="gap-5">
+        <div className="relative -mx-4 overflow-x-auto overflow-y-hidden px-4 sm:mx-0 sm:px-0">
+          <TabsList variant="line" className="h-auto! w-full min-w-max justify-start gap-6 rounded-none border-b border-border p-0">
+            <TabsTrigger value="resources" className={lineTab}><BookOpen className="size-4" />Resources</TabsTrigger>
+            {canManage ? <TabsTrigger value="upload" className={lineTab}><Upload className="size-4" />Upload</TabsTrigger> : null}
+            {canManage ? <TabsTrigger value="subjects" className={lineTab}><Plus className="size-4" />Subjects</TabsTrigger> : null}
+            {canViewAnalytics ? <TabsTrigger value="analytics" className={lineTab}><BarChart3 className="size-4" />Analytics</TabsTrigger> : null}
+          </TabsList>
         </div>
-      </div>
 
-      <Tabs defaultValue="resources" className="space-y-4">
-        <TabsList className="flex w-full flex-wrap justify-start gap-1">
-          <TabsTrigger value="resources"><BookOpen className="mr-2 size-4" />Resources</TabsTrigger>
-          {canManage ? <TabsTrigger value="upload"><Upload className="mr-2 size-4" />Upload</TabsTrigger> : null}
-          {canManage ? <TabsTrigger value="subjects"><Plus className="mr-2 size-4" />Subjects</TabsTrigger> : null}
-          {canViewAnalytics ? <TabsTrigger value="analytics"><BarChart3 className="mr-2 size-4" />Analytics</TabsTrigger> : null}
-        </TabsList>
-
-        <TabsContent value="resources" className="space-y-4">
-          <Card className="rounded-lg border-border">
-            <CardContent className="grid gap-3 pt-5 md:grid-cols-[minmax(180px,1fr)_180px_160px_140px]">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-secondary" />
-                <Input
-                  value={filters.q}
-                  onChange={(event) => updateFilter("q", event.target.value)}
-                  placeholder="Search resources"
-                  className="pl-9"
-                />
-              </div>
-              <Select value={filters.subjectId || "all"} onValueChange={(value) => updateFilter("subjectId", value === "all" ? "" : value)}>
-                <SelectTrigger><SelectValue placeholder="Subject" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Subjects</SelectItem>
-                  {subjects.map((subject) => (
-                    <SelectItem key={subject.id} value={subject.id}>{subject.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={filters.resourceType} onValueChange={(value) => updateFilter("resourceType", value)}>
-                <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  {RESOURCE_TYPES.map((type) => (
-                    <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={`${filters.sortBy}:${filters.sortDir}`} onValueChange={(value) => {
-                const [sortBy, sortDir] = value.split(":");
+        <TabsContent value="resources" className="space-y-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))]">
+            <SearchInput
+              className="sm:col-span-2 lg:col-span-1"
+              label="Search resources"
+              value={filters.q}
+              onChange={(event) => updateFilter("q", event.target.value)}
+              placeholder="Search resources"
+            />
+            <select aria-label="Subject" className="ui-select w-full" value={filters.subjectId || "all"} onChange={(event) => updateFilter("subjectId", event.target.value === "all" ? "" : event.target.value)}>
+              <option value="all">All Subjects</option>
+              {subjects.map((subject) => (
+                <option key={subject.id} value={subject.id}>{subject.name}</option>
+              ))}
+            </select>
+            <select aria-label="Type" className="ui-select w-full" value={filters.resourceType} onChange={(event) => updateFilter("resourceType", event.target.value)}>
+              <option value="all">All Types</option>
+              {RESOURCE_TYPES.map((type) => (
+                <option key={type.value} value={type.value}>{type.label}</option>
+              ))}
+            </select>
+            <select
+              aria-label="Sort"
+              className="ui-select w-full"
+              value={`${filters.sortBy}:${filters.sortDir}`}
+              onChange={(event) => {
+                const [sortBy, sortDir] = event.target.value.split(":");
                 setFilters((current) => ({ ...current, sortBy, sortDir, page: 1 }));
-              }}>
-                <SelectTrigger><SelectValue placeholder="Sort" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="createdAt:desc">Newest</SelectItem>
-                  <SelectItem value="title:asc">Title</SelectItem>
-                  <SelectItem value="downloadCount:desc">Downloads</SelectItem>
-                  <SelectItem value="viewCount:desc">Views</SelectItem>
-                </SelectContent>
-              </Select>
-            </CardContent>
-          </Card>
+              }}
+            >
+              <option value="createdAt:desc">Newest</option>
+              <option value="title:asc">Title</option>
+              <option value="downloadCount:desc">Downloads</option>
+              <option value="viewCount:desc">Views</option>
+            </select>
+          </div>
 
           {popular.length > 0 ? (
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {popular.slice(0, 5).map((resource) => (
-                <button
-                  key={`popular-${resource.id}`}
-                  type="button"
-                  onClick={() => openResource(resource)}
-                  className="min-w-56 rounded-lg border border-border bg-card px-3 py-2 text-left text-sm shadow-sm transition hover:border-primary"
-                >
-                  <span className="line-clamp-1 font-medium text-text-primary">{resource.title}</span>
-                  <span className="mt-1 block text-xs text-text-secondary">{resource.downloadCount || 0} downloads</span>
-                </button>
-              ))}
+            <div>
+              <p className="mb-2 text-xs font-medium text-text-secondary">Popular right now</p>
+              <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+                {popular.slice(0, 5).map((resource) => (
+                  <button
+                    key={`popular-${resource.id}`}
+                    type="button"
+                    onClick={() => openResource(resource)}
+                    className="min-w-56 rounded-lg border border-border bg-card px-3 py-2.5 text-left text-sm shadow-xs outline-none transition-colors hover:border-primary/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+                  >
+                    <span className="line-clamp-1 font-medium text-text-primary">{resource.title}</span>
+                    <span className="mt-0.5 block text-xs text-text-secondary">{resource.downloadCount || 0} downloads</span>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
 
-          <div className="grid gap-3 xl:grid-cols-2">
-            {loading ? <Card className="rounded-lg border-border"><CardContent className="p-5 text-sm text-text-secondary">Loading resources...</CardContent></Card> : null}
-            {!loading && visibleResources.length === 0 ? (
-              <Card className="rounded-lg border-border"><CardContent className="p-5 text-sm text-text-secondary">No resources found.</CardContent></Card>
-            ) : null}
-            {visibleResources.map((resource) => {
-              const Icon = getResourceIcon(resource.resourceType);
-              return (
-                <Card key={resource.id} className="rounded-lg border-border">
-                  <CardContent className="space-y-4 p-4">
+          {loading ? (
+            <div className="grid gap-3 xl:grid-cols-2" aria-busy="true">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <SkeletonBlock key={index} className="h-40" />
+              ))}
+            </div>
+          ) : visibleResources.length === 0 ? (
+            <EmptyState icon={BookOpen} title="No resources found" description="Try a different subject, type, or search term." />
+          ) : (
+            <ul className="grid gap-3 xl:grid-cols-2">
+              {visibleResources.map((resource) => {
+                const Icon = getResourceIcon(resource.resourceType);
+                return (
+                  <li key={resource.id} className={cn(ui.cardInteractive, "flex flex-col p-4")}>
                     <div className="flex items-start gap-3">
-                      <div className="grid size-10 shrink-0 place-items-center rounded-md bg-muted text-primary">
-                        <Icon className="size-5" />
+                      <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                        <Icon className="size-5" aria-hidden="true" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="line-clamp-1 text-base font-semibold text-text-primary">{resource.title}</h2>
-                          <Badge variant="outline">{resource.resourceType}</Badge>
-                          <Badge variant="secondary">{resource.visibilityScope}</Badge>
+                        <h2 className="line-clamp-1 text-base font-semibold text-text-primary">{resource.title}</h2>
+                        <p className="mt-0.5 line-clamp-2 text-sm text-text-secondary">{resource.description || resource.subject?.name || "Resource"}</p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <StatusBadge tone="info">{resource.resourceType}</StatusBadge>
+                          <StatusBadge tone="neutral">{resource.visibilityScope}</StatusBadge>
                         </div>
-                        <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{resource.description || resource.subject?.name || "Resource"}</p>
                       </div>
                     </div>
 
-                    <div className="grid gap-2 text-xs text-text-secondary sm:grid-cols-4">
-                      <span>{resource.subject?.name || "Subject"}</span>
-                      <span>{formatBytes(resource.fileSize)}</span>
-                      <span>{formatDate(resource.createdAt)}</span>
-                      <span>{resource.downloadCount || 0} downloads</span>
-                    </div>
+                    <p className="mt-3 text-xs text-text-secondary">
+                      {[resource.subject?.name || "Subject", formatBytes(resource.fileSize), formatDate(resource.createdAt), `${resource.downloadCount || 0} downloads`]
+                        .filter((part) => part && part !== "-")
+                        .join(" · ")}
+                    </p>
 
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="outline" onClick={() => openResource(resource)}>
-                        <Eye className="size-4" /> Details
-                      </Button>
-                      <Button size="sm" onClick={() => handleDownload(resource)}>
+                    <div className="mt-auto flex flex-wrap gap-2 pt-4">
+                      <Button className="h-9 rounded-lg" onClick={() => handleDownload(resource)}>
                         <Download className="size-4" /> {FILE_TYPES.has(resource.resourceType) ? "Download" : "Open"}
+                      </Button>
+                      <Button variant="outline" className="h-9 rounded-lg" onClick={() => openResource(resource)}>
+                        <Eye className="size-4" /> Details
                       </Button>
                       {canManage ? (
                         <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={async () => {
-                            try {
-                              await dispatch(deleteLearningResource({ role, id: resource.id })).unwrap();
-                              toast.success("Resource deleted");
-                            } catch (error) {
-                              toast.error(error?.message || "Delete failed");
-                            }
-                          }}
+                          variant="ghost"
+                          className="ml-auto h-9 rounded-lg text-danger hover:bg-danger/10 hover:text-danger"
+                          onClick={() => setPendingDelete({ kind: "resource", target: resource })}
                         >
                           <Trash2 className="size-4" /> Delete
                         </Button>
                       ) : null}
                     </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
 
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="outline" disabled={(pagination?.page || 1) <= 1} onClick={() => updateFilter("page", Math.max(1, (pagination?.page || 1) - 1))}>
-              Prev
-            </Button>
-            <span className="text-sm text-text-secondary">Page {pagination?.page || 1}{pagination?.totalPages ? ` / ${pagination.totalPages}` : ""}</span>
-            <Button variant="outline" disabled={pagination?.totalPages && pagination.page >= pagination.totalPages} onClick={() => updateFilter("page", (pagination?.page || 1) + 1)}>
-              Next
-            </Button>
-          </div>
+          {(pagination?.totalPages || 1) > 1 ? (
+            <PaginationBar
+              page={pagination?.page || 1}
+              pages={pagination?.totalPages || 1}
+              total={pagination?.total}
+              disabled={loading}
+              onPageChange={(next) => updateFilter("page", Math.max(1, next))}
+            />
+          ) : null}
         </TabsContent>
 
         {canManage ? (
-          <TabsContent value="upload" className="space-y-4">
-            <Card className="rounded-lg border-border">
-              <CardHeader><CardTitle>Upload Resource</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Input value={uploadForm.title} onChange={(event) => updateUploadForm("title", event.target.value)} placeholder="Title" />
-                  <Select value={uploadForm.subjectId || "none"} onValueChange={(value) => updateUploadForm("subjectId", value === "none" ? "" : value)}>
-                    <SelectTrigger><SelectValue placeholder="Subject" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Select Subject</SelectItem>
+          <TabsContent value="upload">
+            <SectionCard title="Upload resource" description="Share a file or link with the colleges and departments you choose.">
+              <form
+                className="max-w-3xl space-y-4"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submitUpload();
+                }}
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FormField label="Title" htmlFor="lr-title" required>
+                    <Input id="lr-title" className={ui.field} value={uploadForm.title} onChange={(event) => updateUploadForm("title", event.target.value)} />
+                  </FormField>
+                  <FormField label="Subject" htmlFor="lr-subject" required>
+                    <select id="lr-subject" className="ui-select w-full" value={uploadForm.subjectId || ""} onChange={(event) => updateUploadForm("subjectId", event.target.value)}>
+                      <option value="">Select Subject</option>
                       {subjects.map((subject) => (
-                        <SelectItem key={subject.id} value={subject.id}>{subject.name}</SelectItem>
+                        <option key={subject.id} value={subject.id}>{subject.name}</option>
                       ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={uploadForm.resourceType} onValueChange={(value) => updateUploadForm("resourceType", value)}>
-                    <SelectTrigger><SelectValue placeholder="Resource Type" /></SelectTrigger>
-                    <SelectContent>
+                    </select>
+                  </FormField>
+                  <FormField label="Resource type" htmlFor="lr-type">
+                    <select id="lr-type" className="ui-select w-full" value={uploadForm.resourceType} onChange={(event) => updateUploadForm("resourceType", event.target.value)}>
                       {RESOURCE_TYPES.map((type) => (
-                        <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
+                        <option key={type.value} value={type.value}>{type.label}</option>
                       ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={uploadForm.visibilityScope} onValueChange={(value) => updateUploadForm("visibilityScope", value)}>
-                    <SelectTrigger><SelectValue placeholder="Visibility" /></SelectTrigger>
-                    <SelectContent>
+                    </select>
+                  </FormField>
+                  <FormField label="Visibility" htmlFor="lr-visibility">
+                    <select id="lr-visibility" className="ui-select w-full" value={uploadForm.visibilityScope} onChange={(event) => updateUploadForm("visibilityScope", event.target.value)}>
                       {visibilityOptions.map((scope) => (
-                        <SelectItem key={scope} value={scope}>{scope}</SelectItem>
+                        <option key={scope} value={scope}>{scope}</option>
                       ))}
-                    </SelectContent>
-                  </Select>
+                    </select>
+                  </FormField>
                 </div>
 
-                <Textarea value={uploadForm.description} onChange={(event) => updateUploadForm("description", event.target.value)} placeholder="Description" />
+                <FormField label="Description" htmlFor="lr-description">
+                  <Textarea id="lr-description" className="rounded-lg" value={uploadForm.description} onChange={(event) => updateUploadForm("description", event.target.value)} />
+                </FormField>
 
                 {isSuper && uploadForm.visibilityScope !== "GLOBAL" ? (
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="mb-2 text-sm font-medium text-text-primary">Colleges</p>
+                  <fieldset className="rounded-lg border border-border p-3">
+                    <legend className="px-1 text-sm font-medium text-text-primary">Colleges</legend>
                     <div className="grid gap-2 md:grid-cols-2">
                       {colleges.map((college) => (
-                        <label key={college.id} className="flex items-center gap-2 text-sm text-text-secondary">
-                          <Checkbox
-                            checked={(uploadForm.collegeIds || []).includes(college.id)}
-                            onCheckedChange={() => toggleUploadArray("collegeIds", college.id)}
-                          />
+                        <label key={college.id} className="flex cursor-pointer items-center gap-2.5 rounded-md px-1 py-1 text-sm text-text-primary hover:bg-muted/40">
+                          <Checkbox checked={(uploadForm.collegeIds || []).includes(college.id)} onCheckedChange={() => toggleUploadArray("collegeIds", college.id)} />
                           {college.name}
                         </label>
                       ))}
                     </div>
-                  </div>
+                  </fieldset>
                 ) : null}
 
                 {FILE_TYPES.has(uploadForm.resourceType) ? (
-                  <Input type="file" onChange={(event) => updateUploadForm("file", event.target.files?.[0] || null)} />
+                  <FormField label="File" htmlFor="lr-file" required>
+                    <Input id="lr-file" type="file" className="h-10 rounded-lg" onChange={(event) => updateUploadForm("file", event.target.files?.[0] || null)} />
+                  </FormField>
                 ) : (
-                  <Input value={uploadForm.externalUrl} onChange={(event) => updateUploadForm("externalUrl", event.target.value)} placeholder="External URL" />
+                  <FormField label="External URL" htmlFor="lr-url" required>
+                    <Input id="lr-url" type="url" placeholder="https://" className={ui.field} value={uploadForm.externalUrl} onChange={(event) => updateUploadForm("externalUrl", event.target.value)} />
+                  </FormField>
                 )}
 
                 {uploadForm.visibilityScope === "DEPARTMENT" && isDepartmentAdmin ? (
-                  <div className="rounded-lg border border-border bg-muted px-3 py-2 text-sm text-text-secondary">
-                    Resources will be assigned to your department only.
-                  </div>
+                  <p className="rounded-lg bg-muted/60 px-3 py-2 text-sm text-text-secondary">Resources will be assigned to your department only.</p>
                 ) : null}
 
                 {uploadForm.visibilityScope === "DEPARTMENT" && !isDepartmentAdmin && departments.length > 0 ? (
-                  <div className="rounded-lg border border-border p-3">
-                    <p className="mb-2 text-sm font-medium text-text-primary">Departments</p>
+                  <fieldset className="rounded-lg border border-border p-3">
+                    <legend className="px-1 text-sm font-medium text-text-primary">Departments</legend>
                     <div className="grid gap-2 md:grid-cols-2">
                       {departments.map((department) => (
-                        <label key={department.id} className="flex items-center gap-2 text-sm text-text-secondary">
+                        <label key={department.id} className="flex cursor-pointer items-center gap-2.5 rounded-md px-1 py-1 text-sm text-text-primary hover:bg-muted/40">
                           <Checkbox
                             checked={(uploadForm.departmentIds || []).includes(department.id)}
                             onCheckedChange={() => toggleUploadArray("departmentIds", department.id)}
                           />
                           {department.name}
-                          {department.college?.name ? <span className="text-xs text-text-secondary/80">({department.college.name})</span> : null}
+                          {department.college?.name ? <span className="text-xs text-text-secondary">({department.college.name})</span> : null}
                         </label>
                       ))}
                     </div>
-                  </div>
+                  </fieldset>
                 ) : null}
 
-                <Input value={uploadForm.tags} onChange={(event) => updateUploadForm("tags", event.target.value)} placeholder="Tags, comma separated" />
-                <Button onClick={submitUpload} disabled={uploading}>
+                <FormField label="Tags" htmlFor="lr-tags" hint="Comma separated">
+                  <Input id="lr-tags" className={ui.field} value={uploadForm.tags} onChange={(event) => updateUploadForm("tags", event.target.value)} />
+                </FormField>
+                <Button type="submit" className={ui.btn} disabled={uploading}>
                   <Upload className="size-4" /> {uploading ? "Uploading..." : "Upload Resource"}
                 </Button>
-              </CardContent>
-            </Card>
+              </form>
+            </SectionCard>
           </TabsContent>
         ) : null}
 
         {canManage ? (
           <TabsContent value="subjects" className="space-y-4">
             {canCreateSubject ? (
-              <Card className="rounded-lg border-border">
-                <CardContent className="flex flex-col gap-3 pt-5 sm:flex-row">
-                  <Input value={subjectDraft} onChange={(event) => setSubjectDraft(event.target.value)} placeholder="Subject name" />
-                  <Button onClick={submitSubject}><Plus className="size-4" /> Add Subject</Button>
-                </CardContent>
-              </Card>
+              <SectionCard>
+                <form
+                  className="flex flex-col gap-2 sm:flex-row sm:items-end"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    submitSubject();
+                  }}
+                >
+                  <FormField label="New subject" htmlFor="lr-subject-name" className="flex-1">
+                    <Input id="lr-subject-name" className={ui.field} value={subjectDraft} onChange={(event) => setSubjectDraft(event.target.value)} />
+                  </FormField>
+                  <Button type="submit" className={ui.btn} disabled={!String(subjectDraft || "").trim()}>
+                    <Plus className="size-4" /> Add Subject
+                  </Button>
+                </form>
+              </SectionCard>
             ) : null}
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {subjects.map((subject) => (
-                <Card key={subject.id} className="rounded-lg border-border">
-                  <CardContent className="space-y-3 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h2 className="font-semibold text-text-primary">{subject.name}</h2>
-                        <p className="text-sm text-text-secondary">{subject.resourceCount || 0} resources</p>
-                      </div>
-                      {subject.isGlobal ? <Badge variant="outline">Global</Badge> : <Badge variant="secondary">College</Badge>}
+            {subjects.length === 0 ? (
+              <EmptyState icon={BookOpen} title="No subjects yet" description="Subjects group related resources together." />
+            ) : (
+              <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {subjects.map((subject) => (
+                  <li key={subject.id} className={cn(ui.card, "flex items-start justify-between gap-3 p-4")}>
+                    <div className="min-w-0">
+                      <h2 className="truncate font-semibold text-text-primary">{subject.name}</h2>
+                      <p className="text-sm text-text-secondary">{subject.resourceCount || 0} resources</p>
+                      <StatusBadge tone={subject.isGlobal ? "info" : "neutral"} className="mt-2">{subject.isGlobal ? "Global" : "College"}</StatusBadge>
                     </div>
                     {canDeleteSubject(subject) ? (
                       <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={async () => {
-                          try {
-                            await dispatch(deleteLearningResourceSubject({ role, id: subject.id })).unwrap();
-                            toast.success("Subject deleted");
-                          } catch (error) {
-                            toast.error(error?.message || "Unable to delete subject");
-                          }
-                        }}
+                        variant="ghost"
+                        size="icon-lg"
+                        className="shrink-0 rounded-lg text-danger hover:bg-danger/10 hover:text-danger"
+                        onClick={() => setPendingDelete({ kind: "subject", target: subject })}
+                        title="Delete subject"
                       >
-                        <Trash2 className="size-4" /> Delete
+                        <Trash2 className="size-4" />
+                        <span className="sr-only">Delete subject {subject.name}</span>
                       </Button>
                     ) : null}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </TabsContent>
         ) : null}
 
         {canViewAnalytics ? (
           <TabsContent value="analytics" className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-4">
-              <Card className="rounded-lg border-border"><CardContent className="p-4"><p className="text-sm text-text-secondary">Resources</p><p className="text-2xl font-semibold">{analyticsSummary.totalResources || 0}</p></CardContent></Card>
-              <Card className="rounded-lg border-border"><CardContent className="p-4"><p className="text-sm text-text-secondary">Active</p><p className="text-2xl font-semibold">{analyticsSummary.activeResources || 0}</p></CardContent></Card>
-              <Card className="rounded-lg border-border"><CardContent className="p-4"><p className="text-sm text-text-secondary">Views</p><p className="text-2xl font-semibold">{analyticsSummary.totalViews || 0}</p></CardContent></Card>
-              <Card className="rounded-lg border-border"><CardContent className="p-4"><p className="text-sm text-text-secondary">Downloads</p><p className="text-2xl font-semibold">{analyticsSummary.totalDownloads || 0}</p></CardContent></Card>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <StatTile icon={BookOpen} label="Resources" value={analyticsSummary.totalResources || 0} />
+              <StatTile icon={BookOpen} label="Active" value={analyticsSummary.activeResources || 0} tone="success" />
+              <StatTile icon={Eye} label="Views" value={analyticsSummary.totalViews || 0} tone="neutral" />
+              <StatTile icon={Download} label="Downloads" value={analyticsSummary.totalDownloads || 0} tone="neutral" />
             </div>
-            <div className="grid gap-3 lg:grid-cols-2">
-              <Card className="rounded-lg border-border">
-                <CardHeader><CardTitle>Most Downloaded</CardTitle></CardHeader>
-                <CardContent className="space-y-2">
-                  {(analytics?.mostDownloaded || []).map((resource) => (
-                    <div key={`downloaded-${resource.id}`} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
-                      <span className="line-clamp-1">{resource.title}</span>
-                      <Badge variant="secondary">{resource.downloadCount || 0}</Badge>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-              <Card className="rounded-lg border-border">
-                <CardHeader><CardTitle>Most Viewed</CardTitle></CardHeader>
-                <CardContent className="space-y-2">
-                  {(analytics?.mostViewed || []).map((resource) => (
-                    <div key={`viewed-${resource.id}`} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
-                      <span className="line-clamp-1">{resource.title}</span>
-                      <Badge variant="secondary">{resource.viewCount || 0}</Badge>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {[
+                { title: "Most downloaded", rows: analytics?.mostDownloaded || [], value: (r) => r.downloadCount || 0, key: "downloaded" },
+                { title: "Most viewed", rows: analytics?.mostViewed || [], value: (r) => r.viewCount || 0, key: "viewed" },
+              ].map((block) => (
+                <SectionCard key={block.key} title={block.title} flush>
+                  {block.rows.length === 0 ? (
+                    <p className="p-5 text-center text-sm text-text-secondary">No activity yet.</p>
+                  ) : (
+                    <ol className="divide-y divide-border">
+                      {block.rows.map((resource, index) => (
+                        <li key={`${block.key}-${resource.id}`} className="flex items-center gap-3 px-4 py-2.5 text-sm sm:px-5">
+                          <span className="w-5 text-xs tabular-nums text-text-secondary">{index + 1}</span>
+                          <span className="line-clamp-1 flex-1 text-text-primary">{resource.title}</span>
+                          <span className="font-semibold tabular-nums text-text-primary">{block.value(resource)}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </SectionCard>
+              ))}
             </div>
           </TabsContent>
         ) : null}
       </Tabs>
 
-      <Dialog open={Boolean(selectedResource)} onOpenChange={(open) => !open && dispatch(clearSelectedLearningResource({ role }))}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{selectedResource?.title}</DialogTitle>
-          </DialogHeader>
-          {selectedResource ? (
-            <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                <Badge>{selectedResource.resourceType}</Badge>
-                <Badge variant="secondary">{selectedResource.visibilityScope}</Badge>
-                <Badge variant="outline">{selectedResource.subject?.name || "Subject"}</Badge>
-              </div>
-              <p className="text-sm text-text-secondary">{selectedResource.description || "No description"}</p>
-              <div className="grid gap-2 text-sm text-text-secondary sm:grid-cols-3">
-                <span>{formatBytes(selectedResource.fileSize)}</span>
-                <span>{selectedResource.viewCount || 0} views</span>
-                <span>{selectedResource.downloadCount || 0} downloads</span>
-              </div>
-              <div className="flex justify-end">
-                <Button onClick={() => handleDownload(selectedResource)}>
-                  <Download className="size-4" /> {FILE_TYPES.has(selectedResource.resourceType) ? "Download" : "Open"}
-                </Button>
-              </div>
+      <Modal
+        open={Boolean(selectedResource)}
+        onOpenChange={(open) => !open && dispatch(clearSelectedLearningResource({ role }))}
+        size="lg"
+        title={selectedResource?.title || "Resource"}
+        footer={
+          selectedResource ? (
+            <Button className={ui.btn} onClick={() => handleDownload(selectedResource)}>
+              <Download className="size-4" /> {FILE_TYPES.has(selectedResource.resourceType) ? "Download" : "Open"}
+            </Button>
+          ) : null
+        }
+      >
+        {selectedResource ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-1.5">
+              <StatusBadge tone="info">{selectedResource.resourceType}</StatusBadge>
+              <StatusBadge tone="neutral">{selectedResource.visibilityScope}</StatusBadge>
+              <StatusBadge tone="neutral">{selectedResource.subject?.name || "Subject"}</StatusBadge>
             </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+            <p className="text-sm leading-6 text-text-secondary">{selectedResource.description || "No description"}</p>
+            <DetailList
+              columns={3}
+              items={[
+                { label: "Size", value: formatBytes(selectedResource.fileSize) },
+                { label: "Views", value: selectedResource.viewCount || 0 },
+                { label: "Downloads", value: selectedResource.downloadCount || 0 },
+              ]}
+            />
+          </div>
+        ) : null}
+      </Modal>
+
+      <ConfirmActionDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+        title={pendingDelete?.kind === "subject" ? "Delete subject" : "Delete resource"}
+        description={`Delete “${pendingDelete?.target?.title || pendingDelete?.target?.name || "this item"}”? This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmVariant="destructive"
+        onConfirm={async () => {
+          const current = pendingDelete;
+          setPendingDelete(null);
+          if (!current?.target?.id) return;
+          try {
+            if (current.kind === "subject") {
+              await dispatch(deleteLearningResourceSubject({ role, id: current.target.id })).unwrap();
+              toast.success("Subject deleted");
+            } else {
+              await dispatch(deleteLearningResource({ role, id: current.target.id })).unwrap();
+              toast.success("Resource deleted");
+            }
+          } catch (error) {
+            toast.error(error?.message || (current.kind === "subject" ? "Unable to delete subject" : "Delete failed"));
+          }
+        }}
+      />
     </div>
   );
 }

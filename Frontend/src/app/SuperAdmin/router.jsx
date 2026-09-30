@@ -7,6 +7,7 @@ import SuperAdminLoginPage from "@/pages/SuperAdmin/LoginPage";
 import IdleSessionTimeout from "@/components/common/IdleSessionTimeout";
 import RouteErrorElement from "@/components/common/RouteErrorElement";
 import { useNoIndexRoute } from "@/hooks/useNoIndexRoute";
+import { LoadingState } from "@/components/common/page-kit";
 
 const injectSuperAdminReducers = async () => {
   const [dashboard, panel, ui, questionBank, testCreation, learningResources] = await Promise.all([
@@ -71,7 +72,7 @@ const SuperAdminPasswordResetPage = lazy(async () => {
   };
 });
 
-function PageRoute({ Page, fallback = <div className="grid min-h-[40vh] place-items-center text-text-secondary">Loading...</div> }) {
+function PageRoute({ Page, fallback = <LoadingState /> }) {
   return (
     <Suspense fallback={fallback}>
       {createElement(Page)}
@@ -90,7 +91,7 @@ function SuperAdminBootstrap() {
   }, [dispatch]);
 
   if (!initialized) {
-    return <div className="grid min-h-screen place-items-center text-text-secondary">Initializing super admin session...</div>;
+    return <LoadingState fullScreen label="Initializing super admin session…" />;
   }
 
   return (
@@ -140,7 +141,7 @@ const router = createBrowserRouter([
         element: <SuperAdminProtectedRoute />,
         children: [
           {
-            element: <PageRoute Page={SuperAdminPortalLayout} fallback={<div className="grid min-h-screen place-items-center text-text-secondary">Loading super admin workspace...</div>} />,
+            element: <PageRoute Page={SuperAdminPortalLayout} fallback={<LoadingState fullScreen label="Loading super admin workspace…" />} />,
             children: [
               { path: "/super-admin", element: <Navigate to="/super-admin/dashboard" replace /> },
               { path: "/super-admin/dashboard", element: <PageRoute Page={SuperAdminDashboardPage} /> },

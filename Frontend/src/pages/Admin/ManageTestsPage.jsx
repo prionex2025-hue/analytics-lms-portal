@@ -3,10 +3,8 @@ import { useDispatch, useSelector } from "react-redux";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchAdminTests, transitionAdminTestStatus, deleteAdminTest } from "@/features/Admin/adminPanelSlice";
 import { openTestCreationDialog, openTestEditDialog, setTestCreationContext } from "@/features/Admin/testCreationSlice";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import TestCreationDialog from "@/components/Admin/TestCreationDialog";
 import PermissionDenied from "@/components/Admin/PermissionDenied";
 import ConfirmActionDialog from "@/components/Admin/ConfirmActionDialog";
@@ -24,15 +22,34 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { adminApi } from "@/services/api";
-import { Copy } from "lucide-react";
+import { Activity, Archive, BarChart3, FileCheck2, Layers, Link2, MoreHorizontal, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { DataTable, EmptyState, FormField, PageHeader, PaginationBar, SearchInput, SectionCard, StatusBadge } from "@/components/common/page-kit";
+import { cn } from "@/lib/utils";
 import { ASSESSMENT_FORMATS, normalizeAssessmentFormat } from "@/lib/testConfig";
 
 const STATUS_TONE = {
-  DRAFT: "bg-muted text-text-secondary border-border",
-  SCHEDULED: "bg-primary/10 text-primary border-primary/30",
-  LIVE: "bg-success/10 text-success border-success/30",
-  COMPLETED: "bg-teal-50 text-teal-700 border-teal-200",
-  ARCHIVED: "bg-background text-text-secondary border-border",
+  DRAFT: "neutral",
+  SCHEDULED: "info",
+  LIVE: "success",
+  COMPLETED: "info",
+  ARCHIVED: "neutral",
+};
+
+const STATUS_LABEL = {
+  ALL: "All",
+  DRAFT: "Draft",
+  SCHEDULED: "Scheduled",
+  LIVE: "Live",
+  COMPLETED: "Completed",
+  ARCHIVED: "Archived",
 };
 
 const normalizeStatus = (status) => {
@@ -353,167 +370,275 @@ export default function ManageTestsPage() {
     return <PermissionDenied action="view or manage tests" />;
   }
 
+  const selectableIds = tests.filter((item) => !isAdminReadOnlyTest(item)).map((item) => item.id);
+  const allSelected = tests.length > 0 && selectedIds.length === tests.length;
+  const openBulk = (action) => {
+    setBulkAction(action);
+    setBulkOpen(true);
+  };
+
+  const columns = [
+    {
+      key: "select",
+      header: (
+        <input
+          className="ui-checkbox"
+          type="checkbox"
+          aria-label="Select all tests on this page"
+          checked={allSelected}
+          onChange={(event) => setSelectedIds(event.target.checked ? selectableIds : [])}
+        />
+      ),
+      mobileLabel: "Select",
+      headerClassName: "w-10",
+      cell: (test) => (
+        <input
+          className="ui-checkbox"
+          type="checkbox"
+          aria-label={`Select ${test.title}`}
+          checked={selectedIds.includes(test.id)}
+          disabled={isAdminReadOnlyTest(test)}
+          onChange={(event) => setSelectedIds((prev) => (event.target.checked ? [...new Set([...prev, test.id])] : prev.filter((id) => id !== test.id)))}
+        />
+      ),
+    },
+    {
+      key: "test",
+      header: "Test",
+      primary: true,
+      cell: (test) => {
+        const isModuleTest = normalizeAssessmentFormat(test?.assessmentFormat ?? test?.assessment_format) === ASSESSMENT_FORMATS.MODULE_TEST;
+        const moduleSectionCount = isModuleTest ? (Array.isArray(test?.modules) ? test.modules.filter((mod) => Number(mod?.durationMins) > 0).length : 0) : 0;
+        return (
+          <div className="min-w-0 max-w-sm">
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-medium text-text-primary">
+              <span className="truncate">{test.title}</span>
+              {isModuleTest ? (
+                <StatusBadge tone="info" icon={Layers} className="h-5 px-2 text-[11px]">
+                  Module Test{moduleSectionCount > 0 ? ` · ${moduleSectionCount} sections` : ""}
+                </StatusBadge>
+              ) : null}
+            </p>
+            {isAdminReadOnlyTest(test) ? <p className="text-xs text-amber-700 dark:text-warning">{managedByLabel(test)}</p> : null}
+          </div>
+        );
+      },
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (test) => {
+        const status = normalizeStatus(test.status);
+        return (
+          <StatusBadge tone={STATUS_TONE[status] || "neutral"}>
+            {status === "LIVE" ? <span className="size-1.5 rounded-full bg-current motion-safe:animate-pulse" aria-hidden="true" /> : null}
+            {STATUS_LABEL[status] || status}
+          </StatusBadge>
+        );
+      },
+    },
+    {
+      key: "target",
+      header: "Target",
+      className: "text-text-secondary",
+      cell: (test) => `${test?.department?.name || "Department"} · ${test?.batchAssignments?.length || 0} batches`,
+    },
+    {
+      key: "dates",
+      header: "Date range",
+      className: "whitespace-nowrap text-text-secondary",
+      cell: (test) => `${new Date(test.startsAt).toLocaleDateString()} – ${new Date(test.endsAt).toLocaleDateString()}`,
+    },
+    { key: "attempts", header: "Attempts", align: "right", className: "tabular-nums", cell: (test) => Number(test?._count?.submissions || 0) },
+    {
+      key: "actions",
+      actions: true,
+      align: "right",
+      cell: (test) => {
+        const status = normalizeStatus(test.status);
+        const adminReadOnly = isAdminReadOnlyTest(test);
+        const canOpenFullEditor = status === "DRAFT";
+        const transitions = canTransition && !adminReadOnly ? transitionsForStatus(status) : [];
+        const showDelete = canDelete && !adminReadOnly && status === "DRAFT";
+        return (
+          <div className="flex items-center justify-end gap-1.5">
+            {canMonitor && status === "LIVE" ? (
+              <Button size="lg" variant="outline" className="rounded-lg" onClick={() => navigate(`${basePath}/tests/${test.id}/monitoring`)}>
+                <Activity className="size-4" />
+                Monitor
+              </Button>
+            ) : null}
+            {canEdit && !adminReadOnly && canOpenFullEditor ? (
+              <Button size="lg" variant="outline" className="rounded-lg" onClick={() => onOpenEdit(test.id)} disabled={editingTestId === test.id}>
+                <Pencil className="size-4" />
+                {editingTestId === test.id ? "Opening..." : "Edit Test"}
+              </Button>
+            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="icon-lg" variant="ghost" className="rounded-lg text-text-secondary">
+                  <MoreHorizontal className="size-4" />
+                  <span className="sr-only">More actions for {test.title}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                {canViewReports ? (
+                  <DropdownMenuItem className="h-9 gap-2 px-2" onSelect={() => navigate(`${basePath}/reports?test=${encodeURIComponent(test.id)}`)}>
+                    <BarChart3 className="size-4" /> Reports
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem className="h-9 gap-2 px-2" disabled={!test.id} onSelect={() => copyShareLink(test)}>
+                  <Link2 className="size-4" /> Copy Link
+                </DropdownMenuItem>
+                {transitions.length ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel className="text-xs font-normal text-text-secondary">Change status</DropdownMenuLabel>
+                    {transitions.map((transition) => (
+                      <DropdownMenuItem key={`${test.id}-${transition.action}`} className="h-9 gap-2 px-2" onSelect={() => onTransition(test, transition.action)}>
+                        {transition.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                ) : null}
+                {showDelete ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="h-9 gap-2 px-2" variant="destructive" onSelect={() => onDeleteDraft(test)}>
+                      <Trash2 className="size-4" /> Delete
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        );
+      },
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <Card className="rounded-2xl border-border">
-        <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <div>
-            <CardTitle>Create Test</CardTitle>
-            <CardDescription>Open the multi-step modal to create, validate, and publish tests.</CardDescription>
-          </div>
-          {canCreateTest ? (
-            <>
-              <Button onClick={openCreateDialog} className="bg-primary hover:bg-primary-dark">
-                Create Test
-              </Button>
-              <TestCreationDialog hideTrigger />
-            </>
-          ) : <PermissionDenied action="create tests" />}
-        </CardHeader>
-      </Card>
+      <PageHeader
+        title="Tests"
+        description="Create tests with the multi-step builder, then manage their lifecycle from draft to archive."
+        actions={
+          canCreateTest ? (
+            <Button onClick={openCreateDialog} className="h-10 rounded-lg px-4">
+              <Plus className="size-4" />
+              Create Test
+            </Button>
+          ) : null
+        }
+      />
+      {canCreateTest ? <TestCreationDialog hideTrigger /> : <PermissionDenied action="create tests" />}
 
       {canListTests ? (
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>Existing Tests</CardTitle>
-            <CardDescription>Use lifecycle filters and transition actions to manage test state safely.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid gap-2 md:grid-cols-4">
-              <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search by name or description" />
-              <select className="h-10 rounded-md border border-border px-3 text-sm" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
-                {SORT_FIELDS.map((item) => (
-                  <option key={item.value} value={item.value}>{item.label}</option>
-                ))}
-              </select>
-              <select className="h-10 rounded-md border border-border px-3 text-sm" value={sortOrder} onChange={(event) => setSortOrder(event.target.value)}>
-                <option value="desc">Desc</option>
-                <option value="asc">Asc</option>
-              </select>
-              <Button variant="outline" onClick={() => setBulkOpen(true)} disabled={selectedIds.length === 0}>Bulk Actions ({selectedIds.length})</Button>
+        <SectionCard
+          flush
+          footer={
+            (pagination.totalPages || 1) > 1 ? (
+              <PaginationBar
+                page={pagination.page || page}
+                pages={pagination.totalPages || 1}
+                total={typeof pagination.total === "number" ? pagination.total : undefined}
+                disabled={loading}
+                onPageChange={(next) => setPage(Math.max(1, next))}
+              />
+            ) : null
+          }
+        >
+          <div className="relative -mb-px overflow-x-auto overflow-y-hidden border-b border-border px-4 sm:px-5">
+            <div role="tablist" aria-label="Filter by status" className="flex min-w-max gap-5">
+              {STATUS_FILTERS.map((status) => {
+                const isActive = activeStatus === status;
+                const count = statusCounts[status] || 0;
+                return (
+                  <button
+                    key={status}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => {
+                      setActiveStatus(status);
+                      setPage(1);
+                    }}
+                    className={cn(
+                      "relative flex h-12 items-center gap-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+                      isActive ? "text-primary" : "text-text-secondary hover:text-text-primary"
+                    )}
+                  >
+                    {STATUS_LABEL[status] || status}
+                    <span className={cn("rounded-full px-1.5 text-xs tabular-nums", isActive ? "bg-primary/10" : "bg-muted")}>{count}</span>
+                    {isActive ? <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-primary" aria-hidden="true" /> : null}
+                  </button>
+                );
+              })}
             </div>
+          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {STATUS_FILTERS.map((status) => {
-              const isActive = activeStatus === status;
-              const count = statusCounts[status] || 0;
-              return (
-                <Button
-                  key={status}
-                  type="button"
-                  size="sm"
-                  variant={isActive ? "default" : "outline"}
-                  onClick={() => { setActiveStatus(status); setPage(1); }}
-                >
-                  {status} ({count})
+          <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 sm:px-5">
+            <SearchInput
+              className="min-w-0 flex-1 basis-60"
+              label="Search tests"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Search by name or description"
+            />
+            <select aria-label="Sort by" className="ui-select" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+              {SORT_FIELDS.map((item) => (
+                <option key={item.value} value={item.value}>Sort: {item.label}</option>
+              ))}
+            </select>
+            <select aria-label="Sort order" className="ui-select" value={sortOrder} onChange={(event) => setSortOrder(event.target.value)}>
+              <option value="desc">Descending</option>
+              <option value="asc">Ascending</option>
+            </select>
+          </div>
+
+          {selectedIds.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 border-b border-border bg-primary/5 px-4 py-2.5 sm:px-5" role="region" aria-label="Bulk actions">
+              <span className="text-sm font-medium text-text-primary">{selectedIds.length} selected</span>
+              <div className="ml-auto flex flex-wrap gap-2">
+                <Button variant="outline" className="h-9 rounded-lg" onClick={() => openBulk("ARCHIVE")}>
+                  <Archive className="size-4" />
+                  Archive
                 </Button>
-              );
-            })}
-          </div>
-
-          {loading ? <p className="text-sm text-text-secondary">Loading tests...</p> : null}
-          {!loading && tests.length === 0 ? <p className="text-sm text-text-secondary">No tests available.</p> : null}
-          <div className="overflow-x-auto rounded-xl border border-border">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-background">
-                <tr>
-                  <th className="px-3 py-2 text-left"><input type="checkbox" checked={tests.length > 0 && selectedIds.length === tests.length} onChange={(event) => setSelectedIds(event.target.checked ? tests.filter((item) => !isAdminReadOnlyTest(item)).map((item) => item.id) : [])} /></th>
-                  <th className="px-3 py-2 text-left">Test Name</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="px-3 py-2 text-left">Target</th>
-                  <th className="px-3 py-2 text-left">Date Range</th>
-                  <th className="px-3 py-2 text-left">Attempts</th>
-                  <th className="px-3 py-2 text-left">Avg Score</th>
-                  <th className="px-3 py-2 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-card">
-                {tests.map((test) => {
-                  const totalAttempts = Number(test?._count?.submissions || 0);
-                  const adminReadOnly = isAdminReadOnlyTest(test);
-                  const canOpenFullEditor = normalizeStatus(test.status) === "DRAFT";
-                  const isModuleTest = normalizeAssessmentFormat(test?.assessmentFormat ?? test?.assessment_format) === ASSESSMENT_FORMATS.MODULE_TEST;
-                  const moduleSectionCount = isModuleTest ? (Array.isArray(test?.modules) ? test.modules.filter((mod) => Number(mod?.durationMins) > 0).length : 0) : 0;
-                  return (
-                    <tr key={test.id}>
-                      <td className="px-3 py-2"><input type="checkbox" checked={selectedIds.includes(test.id)} disabled={adminReadOnly} onChange={(event) => setSelectedIds((prev) => event.target.checked ? [...new Set([...prev, test.id])] : prev.filter((id) => id !== test.id))} /></td>
-                      <td className="px-3 py-2 font-medium text-text-primary">
-                        {test.title}
-                        {isModuleTest ? (
-                          <span className="ml-2 inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
-                            Module Test{moduleSectionCount > 0 ? ` · ${moduleSectionCount} sections` : ""}
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-2"><span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_TONE[normalizeStatus(test.status)] || STATUS_TONE.DRAFT}`}>{normalizeStatus(test.status)}</span></td>
-                      <td className="px-3 py-2 text-text-secondary">
-                        {test?.department?.name || "Department"} / {test?.batchAssignments?.length || 0} batches
-                        {adminReadOnly ? <span className="ml-2 text-xs text-amber-700">({managedByLabel(test)})</span> : null}
-                      </td>
-                      <td className="px-3 py-2 text-text-secondary">{new Date(test.startsAt).toLocaleDateString()} - {new Date(test.endsAt).toLocaleDateString()}</td>
-                      <td className="px-3 py-2 text-text-secondary">{totalAttempts}</td>
-                      <td className="px-3 py-2 text-text-secondary">{totalAttempts > 0 ? "Computed" : "-"}</td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex justify-end gap-1">
-                          {canViewReports ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => navigate(`${basePath}/reports?test=${encodeURIComponent(test.id)}`)}
-                            >
-                              Reports
-                            </Button>
-                          ) : null}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => copyShareLink(test)}
-                            disabled={!test.id}
-                          >
-                            <Copy className="mr-1 size-3.5" />
-                            Link
-                          </Button>
-                          {canMonitor && normalizeStatus(test.status) === "LIVE" ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => navigate(`${basePath}/tests/${test.id}/monitoring`)}
-                            >
-                              Monitor
-                            </Button>
-                          ) : null}
-                          {canEdit && !adminReadOnly && canOpenFullEditor ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => onOpenEdit(test.id)}
-                              disabled={editingTestId === test.id}
-                            >
-                              {editingTestId === test.id ? "Opening..." : "Edit Test"}
-                            </Button>
-                          ) : null}
-                          {canTransition && !adminReadOnly ? transitionsForStatus(normalizeStatus(test.status)).map((transition) => (
-                            <Button key={`${test.id}-${transition.action}`} type="button" size="sm" variant={transition.action === "DELETE" ? "destructive" : "outline"} onClick={() => onTransition(test, transition.action)}>{transition.label}</Button>
-                          )) : null}
-                          {canDelete && !adminReadOnly && normalizeStatus(test.status) === "DRAFT" ? <Button size="sm" variant="destructive" onClick={() => onDeleteDraft(test)}>Delete</Button> : null}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-text-secondary">Page {pagination.page || page} of {pagination.totalPages || 1}</p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={(pagination.page || page) <= 1}>Previous</Button>
-                <Button variant="outline" size="sm" onClick={() => setPage((prev) => prev + 1)} disabled={(pagination.page || page) >= (pagination.totalPages || 1)}>Next</Button>
+                {canDelete ? (
+                  <Button variant="ghost" className="h-9 rounded-lg text-danger hover:bg-danger/10 hover:text-danger" onClick={() => openBulk("DELETE")}>
+                    <Trash2 className="size-4" />
+                    Delete
+                  </Button>
+                ) : null}
+                <Button variant="ghost" className="h-9 rounded-lg text-text-secondary" onClick={() => setSelectedIds([])}>
+                  <X className="size-4" />
+                  Clear
+                </Button>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          ) : null}
+
+          <DataTable
+            columns={columns}
+            rows={tests}
+            getRowKey={(test) => test.id}
+            loading={loading}
+            minWidth={980}
+            caption="Tests"
+            rowClassName={(test) => (selectedIds.includes(test.id) ? "bg-primary/5" : "")}
+            empty={
+              <EmptyState
+                icon={FileCheck2}
+                title={search || activeStatus !== "ALL" ? "No tests match these filters" : "No tests available"}
+                description={canCreateTest ? "Create your first test with the button above." : "Tests assigned to you will appear here."}
+                className="border-0"
+              />
+            }
+          />
+        </SectionCard>
       ) : null}
 
       <ConfirmActionDialog
@@ -534,13 +659,13 @@ export default function ManageTestsPage() {
               Type <strong>{deleteDialog.test?.title}</strong> to permanently delete this draft test.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="delete-name">Test name</Label>
-            <Input id="delete-name" value={deleteConfirmName} onChange={(event) => setDeleteConfirmName(event.target.value)} />
-          </div>
+          <FormField label="Test name" htmlFor="delete-name">
+            <Input id="delete-name" autoComplete="off" className="h-10 rounded-lg" value={deleteConfirmName} onChange={(event) => setDeleteConfirmName(event.target.value)} />
+          </FormField>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               disabled={deleteConfirmName.trim() !== String(deleteDialog.test?.title || "")}
               onClick={() => {
                 if (deleteDialog.test?.id) dispatch(deleteAdminTest(deleteDialog.test.id));
@@ -556,21 +681,12 @@ export default function ManageTestsPage() {
       <ConfirmActionDialog
         open={bulkOpen}
         onOpenChange={setBulkOpen}
-        title="Bulk Action Confirmation"
+        title={bulkAction === "ARCHIVE" ? "Archive selected tests" : "Delete selected tests"}
         description={`You are about to ${bulkAction === "ARCHIVE" ? "archive" : "delete"} ${selectedTests.length} tests. ${bulkPreview.valid} valid, ${bulkPreview.skipped} skipped.`}
-        confirmLabel="Proceed"
+        confirmLabel={bulkAction === "ARCHIVE" ? "Archive" : "Delete"}
+        confirmVariant={bulkAction === "DELETE" ? "destructive" : "default"}
         onConfirm={runBulkAction}
       />
-
-      {bulkOpen ? (
-        <div className="fixed right-6 bottom-6 z-50 rounded-xl border border-border bg-card p-3 shadow-lg">
-          <p className="mb-2 text-xs text-text-secondary">Choose bulk action</p>
-          <div className="flex gap-2">
-            <Button size="sm" variant={bulkAction === "ARCHIVE" ? "default" : "outline"} onClick={() => setBulkAction("ARCHIVE")}>Archive</Button>
-            <Button size="sm" variant={bulkAction === "DELETE" ? "destructive" : "outline"} onClick={() => setBulkAction("DELETE")}>Delete</Button>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

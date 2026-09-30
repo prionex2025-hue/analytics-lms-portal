@@ -20,7 +20,7 @@ export default function FiltersBar({ filters, tests, departments, batches, loadi
         <label className="space-y-1 text-sm">
           <span className="font-medium text-text-secondary">Test</span>
           <select
-            className="h-10 w-full rounded-lg border border-border bg-background px-3"
+            className="ui-select w-full"
             value={filters.testId}
             onChange={(event) => onFilterChange("testId", event.target.value)}
           >
@@ -36,7 +36,7 @@ export default function FiltersBar({ filters, tests, departments, batches, loadi
         <label className="space-y-1 text-sm">
           <span className="font-medium text-text-secondary">Department</span>
           <select
-            className="h-10 w-full rounded-lg border border-border bg-background px-3"
+            className="ui-select w-full"
             value={filters.departmentId}
             onChange={(event) => onFilterChange("departmentId", event.target.value)}
           >
@@ -52,7 +52,7 @@ export default function FiltersBar({ filters, tests, departments, batches, loadi
         <label className="space-y-1 text-sm">
           <span className="font-medium text-text-secondary">Batch</span>
           <select
-            className="h-10 w-full rounded-lg border border-border bg-background px-3"
+            className="ui-select w-full"
             value={filters.batchId}
             onChange={(event) => onFilterChange("batchId", event.target.value)}
           >
@@ -68,7 +68,7 @@ export default function FiltersBar({ filters, tests, departments, batches, loadi
         <label className="space-y-1 text-sm">
           <span className="font-medium text-text-secondary">Date range</span>
           <select
-            className="h-10 w-full rounded-lg border border-border bg-background px-3"
+            className="ui-select w-full"
             value={filters.dateRange}
             onChange={(event) => onFilterChange("dateRange", event.target.value)}
           >

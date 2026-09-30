@@ -2,11 +2,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarClock, Clock3, Rocket } from "lucide-react";
+import { ArrowRight, CalendarClock, CalendarX2, Clock3, Hourglass, Lock, Repeat, Users } from "lucide-react";
 import { upcomingTestsQueryOptions, testAccessQueryOptions } from "@/services/studentQueries";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState, MetaItem, PageHeader, SectionHeader, StatusBadge } from "@/components/Students/ui/StudentUI";
+import { cn } from "@/lib/utils";
+import { ui } from "@/styles/ui-tokens";
+
+const formatDayParts = (value) => {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return { month: "--", day: "--" };
+  return {
+    month: date.toLocaleString([], { month: "short" }),
+    day: date.getDate(),
+  };
+};
 
 const pickId = (item) => item?.id || item?.test_id || item?.testId;
 
@@ -126,103 +136,119 @@ export default function UpcomingTestsPage() {
     };
   }, [now, tests]);
 
+  const header = (
+    <PageHeader
+      title="Upcoming tests"
+      description="Scheduled tests assigned to you. Access is verified by the server when you open the instructions."
+    />
+  );
+
   if (tests.length === 0) {
     return (
-      <section className="space-y-5">
-        <Card className="rounded-2xl border border-primary/25 bg-linear-to-br from-primary-dark via-primary to-primary-dark p-6 text-primary-foreground shadow-lg shadow-primary/30">
-        <div className="flex items-center gap-2 text-primary-foreground/90">
-          <Rocket className="size-4" />
-          <p className="text-xs font-semibold tracking-[0.12em] uppercase">Upcoming Window</p>
-        </div>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">Upcoming Tests</h1>
-        <p className="mt-2 text-sm text-primary-foreground/90">Start access is validated on server when you click Attend Now.</p>
-      </Card>
-        <Card className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
-          <p className="text-lg font-semibold text-text-primary">No upcoming tests</p>
-          <p className="mt-2 text-sm text-text-secondary">New schedules will appear here automatically.</p>
-        </Card>
+      <section className={ui.pageSection}>
+        {header}
+        <EmptyState
+          icon={CalendarClock}
+          title="No upcoming tests"
+          description="New schedules will appear here automatically."
+        />
       </section>
     );
   }
 
   return (
-    <section className="space-y-6">
-      <Card className="rounded-2xl border border-primary/25 bg-linear-to-br from-primary-dark via-primary to-primary-dark p-6 text-primary-foreground shadow-lg shadow-primary/30">
-        <div className="flex items-center gap-2 text-primary-foreground/90">
-          <Rocket className="size-4" />
-          <p className="text-xs font-semibold tracking-[0.12em] uppercase">Upcoming Window</p>
-        </div>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">Upcoming Tests</h1>
-        <p className="mt-2 text-sm text-primary-foreground/90">Start access is validated on server when you click Attend Now.</p>
-      </Card>
-
-      <div className="space-y-4">
-        {upcoming.map((test) => {
-          const countdown = toCountdown(test.start - now);
-
-          return (
-            <Card key={test.id} className="rounded-xl border border-border bg-card p-5">
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0 space-y-2">
-                  <p className="truncate text-lg font-semibold text-text-primary">{test.title || test.name || "Untitled Test"}</p>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
-                    <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1">
-                      <CalendarClock className="size-3.5" />
-                      {formatDate(test.startsAt || test.startAt)}
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1">
-                      <Clock3 className="size-3.5" />
-                      {test.durationMins || test.duration || 0} mins
-                    </span>
-                    <span className="rounded-md bg-muted px-2 py-1">Attempts: {test.attemptsAllowed || 1}</span>
-                    {getAssignedDepartments(test).length > 0 ? (
-                      <span className="rounded-md bg-primary/10 px-2 py-1 text-primary-dark">
-                        Dept Scope ({getAssignedDepartments(test).length})
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="text-sm text-text-secondary">{countdown}</p>
-                </div>
-
-                {test.state === "LOCKED" ? (
-                  <Badge variant="secondary" className="bg-muted text-text-secondary">Locked</Badge>
-                ) : (
-                  <Button
-                    className="h-10 rounded-lg bg-primary text-primary-foreground hover:bg-primary-dark"
-                    onMouseEnter={() => {
-                      queryClient.prefetchQuery(testAccessQueryOptions(test.id));
-                    }}
-                    onClick={() => {
-                      navigate(`/tests/${test.id}/instructions`);
-                    }}
-                  >
-                    View Instructions
-                  </Button>
-                )}
-              </div>
-            </Card>
-          );
-        })}
-      </div>
+    <section className={ui.pageSection}>
+      {header}
 
       <div className="space-y-3">
-        <h2 className="text-xl font-semibold text-text-primary">Past (Missed)</h2>
-        {past.length === 0 ? (
-          <Card className="rounded-xl border border-dashed border-border bg-card p-5 text-sm text-text-secondary">
-            No missed tests.
-          </Card>
+        <SectionHeader title="Scheduled" count={upcoming.length} />
+        {upcoming.length === 0 ? (
+          <EmptyState icon={CalendarClock} title="Nothing scheduled" description="There are no tests scheduled right now." />
         ) : (
-          past.map((test) => (
-            <Card key={test.id} className="rounded-xl border border-border bg-background p-4">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="font-medium text-text-primary">{test.title || test.name || "Untitled Test"}</p>
+          <ul className="space-y-3">
+            {upcoming.map((test) => {
+              const countdown = toCountdown(test.start - now);
+              const departments = getAssignedDepartments(test).length;
+              const day = formatDayParts(test.startsAt || test.startAt);
+              const isLive = test.state === "LIVE";
+
+              return (
+                <li key={test.id} className={cn(ui.card, "flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:p-5")}>
+                  <div
+                    className={cn(
+                      "hidden size-16 shrink-0 flex-col items-center justify-center rounded-xl border sm:flex",
+                      isLive ? "border-success/30 bg-success/10 text-success" : "border-border bg-muted/60 text-text-primary"
+                    )}
+                    aria-hidden="true"
+                  >
+                    <span className="text-[11px] font-semibold uppercase tracking-wide">{day.month}</span>
+                    <span className="text-xl font-semibold leading-none tabular-nums">{day.day}</span>
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="truncate text-base font-semibold text-text-primary sm:text-lg">{test.title || test.name || "Untitled Test"}</h3>
+                      {isLive ? (
+                        <StatusBadge tone="success">
+                          <span className="size-1.5 rounded-full bg-current motion-safe:animate-pulse" aria-hidden="true" />
+                          Live now
+                        </StatusBadge>
+                      ) : (
+                        <StatusBadge tone="info" icon={Hourglass} className="tabular-nums">{countdown}</StatusBadge>
+                      )}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                      <MetaItem icon={CalendarClock}>{formatDate(test.startsAt || test.startAt)}</MetaItem>
+                      <MetaItem icon={Clock3}>{test.durationMins || test.duration || 0} mins</MetaItem>
+                      <MetaItem icon={Repeat}>Attempts: {test.attemptsAllowed || 1}</MetaItem>
+                      {departments > 0 ? <MetaItem icon={Users}>Dept scope ({departments})</MetaItem> : null}
+                    </div>
+                  </div>
+
+                  {test.state === "LOCKED" ? (
+                    <StatusBadge tone="neutral" icon={Lock} className="h-8 self-start px-3 sm:self-center">Locked</StatusBadge>
+                  ) : (
+                    <Button
+                      className={cn(ui.btn, "w-full sm:w-auto")}
+                      onMouseEnter={() => {
+                        queryClient.prefetchQuery(testAccessQueryOptions(test.id));
+                      }}
+                      onFocus={() => {
+                        queryClient.prefetchQuery(testAccessQueryOptions(test.id));
+                      }}
+                      onClick={() => {
+                        navigate(`/tests/${test.id}/instructions`);
+                      }}
+                    >
+                      View Instructions
+                      <ArrowRight className="size-4" />
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className="space-y-3 pt-2">
+        <SectionHeader title="Missed" description="Tests whose window ended without a submission." count={past.length} />
+        {past.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border px-4 py-5 text-center text-sm text-text-secondary">
+            No missed tests. Nice work.
+          </p>
+        ) : (
+          <ul className={cn(ui.card, "divide-y divide-border overflow-hidden")}>
+            {past.map((test) => (
+              <li key={test.id} className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-text-primary">{test.title || test.name || "Untitled Test"}</p>
                   <p className="text-xs text-text-secondary">Ended {formatDate(test.endsAt || test.endTime)}</p>
                 </div>
-                <Badge variant="ended">Missed</Badge>
-              </div>
-            </Card>
-          ))
+                <StatusBadge tone="danger" icon={CalendarX2}>Missed</StatusBadge>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </section>

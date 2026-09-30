@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { adminApi } from "@/services/api";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -11,12 +9,32 @@ import { Textarea } from "@/components/ui/textarea";
 import SkeletonBlock from "@/components/common/SkeletonBlock";
 import { parseSpreadsheetRows } from "@/lib/spreadsheet";
 
+import ConfirmActionDialog from "@/components/Admin/ConfirmActionDialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AlertTriangle, FileUp, GraduationCap, KeyRound, Plus, Search, UserPlus, Users } from "lucide-react";
+import {
+  Callout,
+  CredentialList,
+  CredentialPanel,
+  DetailList,
+  EmptyState,
+  FormField,
+  MiniStat,
+  PageHeader,
+  PaginationBar,
+  SearchInput,
+  SectionCard,
+  StatusBadge,
+} from "@/components/common/page-kit";
+import { cn } from "@/lib/utils";
 const IMPORT_SAMPLE = [
   "fullName,email,enrollNumber,department,year,batch",
   "Alice Doe,alice@example.com,20261001,Computer Science,1,CSE-2027-A",
 ].join("\n");
 const YEAR_OPTIONS = ["1", "2", "3", "4"];
 const YEAR_PROMOTION_CONFIRMATION = "PROMOTE STUDENTS YEAR";
+const LINE_TAB = "flex-none rounded-none px-0.5 pt-1 pb-3 text-text-secondary data-active:text-primary after:!bottom-[-1px] after:!bg-primary";
+
 
 const normalizeColumnKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -57,6 +75,7 @@ export default function CollegeAdminStudentsPage() {
   const [createdCredentials, setCreatedCredentials] = useState(null);
   const [resetCredentials, setResetCredentials] = useState(null);
   const [importCredentials, setImportCredentials] = useState(null);
+  const [confirmReset, setConfirmReset] = useState(false);
   const [yearPromotionConfirmation, setYearPromotionConfirmation] = useState("");
   const [yearPromotionVerified, setYearPromotionVerified] = useState(false);
 
@@ -272,390 +291,465 @@ export default function CollegeAdminStudentsPage() {
     }
   }, [importJobQuery.data, queryClient]);
 
-  return (
-    <div className="space-y-6">
-      {banner.type ? (
-        <Alert variant={banner.type === "error" ? "destructive" : "default"} className={banner.type === "warning" ? "border-warning/30 bg-warning/10 text-warning" : ""}>
-          <AlertTitle>{banner.title}</AlertTitle>
-          <AlertDescription>{banner.message}</AlertDescription>
-        </Alert>
-      ) : null}
+  // College admins see the whole college: no department scoping and no per-permission gating
+  // (matching this page's original behaviour); the shared layout below reads these flags.
+  const isDepartmentScopedAdmin = false;
+  const scopedDepartmentId = "";
+  const scopedDepartmentName = "";
+  const canViewBatches = true;
+  const canManageStudents = true;
+  const canBulkImport = true;
+  const canAssignStudentsToBatch = true;
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Create Student Account</CardTitle>
-          <CardDescription>College admins can create student credentials directly without self-registration.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2">
-            <Input
-              placeholder="Full name"
-              value={studentForm.fullName}
-              onChange={(event) => setStudentForm((prev) => ({ ...prev, fullName: event.target.value }))}
-            />
-            <Input
-              type="email"
-              placeholder="Email"
-              value={studentForm.email}
-              onChange={(event) => setStudentForm((prev) => ({ ...prev, email: event.target.value }))}
-            />
+  const bannerTone = banner.type === "error" ? "danger" : banner.type === "warning" ? "warning" : "success";
+  const jobStatus = String(importJobQuery.data?.status || "").toLowerCase();
+  const createBatchOptions = Array.isArray(batches)
+    ? batches.filter((batch) => {
+        if (!studentForm.department) return true;
+        const selected = String(studentForm.department).toLowerCase();
+        const batchDeptName = String(batch.department?.name || "").toLowerCase();
+        return (
+          String(batch.departmentId) === String(studentForm.department) ||
+          String(batch.department?.id) === String(studentForm.department) ||
+          (batchDeptName && batchDeptName === selected)
+        );
+      })
+    : [];
+
+  const directory = (
+    <SectionCard
+      flush
+      title="College student directory"
+      description="Search college students, inspect profiles, and assign batches."
+      footer={
+        (studentPagination?.totalPages || 1) > 1 ? (
+          <PaginationBar page={studentPagination?.page || page} pages={studentPagination?.totalPages || 1} onPageChange={(next) => setPage(Math.max(next, 1))} />
+        ) : null
+      }
+    >
+      <form
+        className="grid gap-3 border-b border-border px-4 py-3 sm:grid-cols-2 sm:px-5 lg:grid-cols-[minmax(0,1.5fr)_repeat(3,minmax(0,1fr))_auto]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          studentsQuery.refetch();
+        }}
+      >
+        <SearchInput
+          className="sm:col-span-2 lg:col-span-1"
+          label="Search students"
+          placeholder="Search by name/email"
+          value={search}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setPage(1);
+          }}
+        />
+        <select
+          aria-label="Department"
+          className="ui-select w-full"
+          value={directoryFilters.departmentId}
+          onChange={(event) => {
+            setDirectoryFilters((prev) => ({ ...prev, departmentId: event.target.value }));
+            setPage(1);
+          }}
+          disabled={isDepartmentScopedAdmin}
+        >
+          {!isDepartmentScopedAdmin ? <option value="">All college departments</option> : null}
+          {isDepartmentScopedAdmin ? (
+            <option value={scopedDepartmentId}>{scopedDepartmentName || "Scoped Department"}</option>
+          ) : (
+            Array.isArray(departments) && departments.map((department) => (
+              <option key={department.id} value={department.id}>{department.name}</option>
+            ))
+          )}
+        </select>
+        <select
+          aria-label="Batch"
+          className="ui-select w-full"
+          value={directoryFilters.batchId}
+          onChange={(event) => {
+            setDirectoryFilters((prev) => ({ ...prev, batchId: event.target.value }));
+            setPage(1);
+          }}
+          disabled={!canViewBatches}
+        >
+          <option value="">All batches</option>
+          {Array.isArray(batches)
+            ? batches
+                .filter((batch) => !directoryFilters.departmentId || String(batch.departmentId) === String(directoryFilters.departmentId))
+                .map((batch) => (
+                  <option key={batch.id} value={batch.id}>{batch.name}</option>
+                ))
+            : null}
+        </select>
+        <select
+          aria-label="Year"
+          className="ui-select w-full"
+          value={directoryFilters.year}
+          onChange={(event) => {
+            setDirectoryFilters((prev) => ({ ...prev, year: event.target.value }));
+            setPage(1);
+          }}
+        >
+          <option value="">All years</option>
+          {YEAR_OPTIONS.map((year) => (
+            <option key={year} value={year}>{year} YEAR</option>
+          ))}
+        </select>
+        <Button type="submit" variant="outline" className="h-10 rounded-lg px-4">
+          <Search className="size-4" />
+          Search
+        </Button>
+      </form>
+
+      <div className="grid xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="min-w-0 xl:border-r xl:border-border">
+          {studentsQuery.isLoading ? (
+            <div className="space-y-2 p-4" aria-busy="true">
+              <SkeletonBlock className="h-14 rounded-lg" />
+              <SkeletonBlock className="h-14 rounded-lg" />
+              <SkeletonBlock className="h-14 rounded-lg" />
+            </div>
+          ) : students.length === 0 ? (
+            <EmptyState icon={Users} title="No students found" description="No students found for the selected college filters." className="border-0" />
+          ) : (
+            <ul className="divide-y divide-border">
+              {students.map((student) => {
+                const batchLabel = Array.isArray(student.batches) && student.batches.length > 0
+                  ? student.batches.map((batch) => batch.name).join(", ")
+                  : (student.batch?.name || "-");
+                const active = selectedStudentId === student.id;
+                return (
+                  <li key={student.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedStudentId(student.id);
+                        setBatchIdInput("");
+                      }}
+                      aria-pressed={active}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-3 px-4 py-3 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset sm:px-5",
+                        active ? "bg-primary/5" : "hover:bg-muted/40"
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className={cn("block truncate font-medium", active ? "text-primary" : "text-text-primary")}>{student.fullName}</span>
+                        <span className="block truncate text-xs text-text-secondary">{student.email} · {student.studentId}</span>
+                      </span>
+                      <span className="shrink-0 text-right text-xs text-text-secondary">
+                        <span className="block truncate">{student.department?.name || "-"}</span>
+                        <span className="block max-w-35 truncate">{batchLabel}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <aside className="border-t border-border p-4 sm:p-5 xl:border-t-0">
+          {studentProfileQuery.isLoading ? (
+            <div className="space-y-2" aria-busy="true">
+              <SkeletonBlock className="h-6" />
+              <SkeletonBlock className="h-6" />
+              <SkeletonBlock className="h-10" />
+            </div>
+          ) : !selectedStudent ? (
+            <p className="py-6 text-center text-sm text-text-secondary">Select a student for profile details.</p>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <p className="text-base font-semibold text-text-primary">{selectedStudent.fullName}</p>
+                <p className="text-xs text-text-secondary">{selectedStudent.email} · {selectedStudent.studentId}</p>
+              </div>
+              <DetailList
+                items={[
+                  { label: "Department", value: selectedStudent.department?.name || "-" },
+                  { label: "Year", value: selectedStudent.year ? `${selectedStudent.year} YEAR` : "-" },
+                  { label: "Total submissions", value: selectedStudent._count?.submissions || 0 },
+                ]}
+              />
+              <div>
+                <p className="mb-2 text-xs text-text-secondary">Assigned batches</p>
+                {Array.isArray(selectedStudent.batches) && selectedStudent.batches.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedStudent.batches.map((batch) => <StatusBadge key={batch.id} tone="info">{batch.name}</StatusBadge>)}
+                  </div>
+                ) : (
+                  <p className="text-sm text-text-secondary italic">No batches assigned yet</p>
+                )}
+              </div>
+
+              {canAssignStudentsToBatch ? (
+                <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row">
+                  <select aria-label="Batch to add" className="ui-select min-w-0 flex-1" value={batchIdInput} onChange={(event) => setBatchIdInput(event.target.value)}>
+                    <option value="">Select batch to add</option>
+                    {Array.isArray(batches) && batches.map((batch) => (
+                      <option key={batch.id} value={batch.id}>{batch.name} ({batch.department?.name || "-"})</option>
+                    ))}
+                  </select>
+                  <Button
+                    className="h-10 rounded-lg px-4"
+                    onClick={() => assignBatchMutation.mutate({ studentId: selectedStudent.id, batchId: batchIdInput })}
+                    disabled={assignBatchMutation.isPending || !batchIdInput}
+                  >
+                    <Plus className="size-4" />
+                    Add Batch
+                  </Button>
+                </div>
+              ) : null}
+
+              {canManageStudents ? (
+                <div className="space-y-3 border-t border-border pt-4">
+                  <Button variant="outline" className="h-10 w-full rounded-lg" onClick={() => setConfirmReset(true)} disabled={resetPasswordMutation.isPending}>
+                    <KeyRound className="size-4" />
+                    {resetPasswordMutation.isPending ? "Resetting..." : "Reset Password to Default Rule"}
+                  </Button>
+                  <CredentialPanel title="New credentials" credentials={resetCredentials} />
+                </div>
+              ) : null}
+            </div>
+          )}
+        </aside>
+      </div>
+    </SectionCard>
+  );
+
+  const createPanel = canManageStudents ? (
+    <SectionCard title="Create student account" description="College admins can create student credentials directly without self-registration.">
+      <form
+        className="space-y-5"
+        onSubmit={(event) => {
+          event.preventDefault();
+          createStudentMutation.mutate({
+            ...studentForm,
+            year: studentForm.year ? Number(studentForm.year) : undefined,
+          });
+        }}
+      >
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <FormField label="Full name" htmlFor="college-student-name" required>
+            <Input id="college-student-name" className="h-10 rounded-lg" value={studentForm.fullName} onChange={(event) => setStudentForm((prev) => ({ ...prev, fullName: event.target.value }))} />
+          </FormField>
+          <FormField label="Email" htmlFor="college-student-email" required>
+            <Input id="college-student-email" type="email" autoComplete="off" className="h-10 rounded-lg" value={studentForm.email} onChange={(event) => setStudentForm((prev) => ({ ...prev, email: event.target.value }))} />
+          </FormField>
+          <FormField label="Enroll number" htmlFor="college-student-enroll" hint="Used exactly as the Student ID." required>
+            <Input id="college-student-enroll" className="h-10 rounded-lg" value={studentForm.enrollNumber} onChange={(event) => setStudentForm((prev) => ({ ...prev, enrollNumber: event.target.value }))} />
+          </FormField>
+          <FormField label="Department" htmlFor="college-student-department" required>
             <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
+              id="college-student-department"
+              className="ui-select w-full"
               value={studentForm.department}
               onChange={(event) => setStudentForm((prev) => ({ ...prev, department: event.target.value }))}
+              disabled={isDepartmentScopedAdmin}
             >
-              <option value="">Select department</option>
-              {Array.isArray(departments) && departments.map((department) => (
-                <option key={department.id} value={department.name}>{department.name}</option>
-              ))}
+              {!isDepartmentScopedAdmin ? <option value="">Select department</option> : null}
+              {isDepartmentScopedAdmin ? (
+                <option value={scopedDepartmentName}>{scopedDepartmentName || "Scoped Department"}</option>
+              ) : (
+                Array.isArray(departments) && departments.map((department) => (
+                  <option key={department.id} value={department.name}>{department.name}</option>
+                ))
+              )}
             </select>
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={studentForm.year}
-              onChange={(event) => setStudentForm((prev) => ({ ...prev, year: event.target.value }))}
-            >
+          </FormField>
+          <FormField label="Year" htmlFor="college-student-year" required>
+            <select id="college-student-year" className="ui-select w-full" value={studentForm.year} onChange={(event) => setStudentForm((prev) => ({ ...prev, year: event.target.value }))}>
               <option value="">Select Year</option>
               <option value="1">1 YEAR</option>
               <option value="2">2 YEAR</option>
               <option value="3">3 YEAR</option>
               <option value="4">4 YEAR</option>
             </select>
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={studentForm.batch}
-              onChange={(event) => setStudentForm((prev) => ({ ...prev, batch: event.target.value }))}
-            >
+          </FormField>
+          <FormField label="Batch" htmlFor="college-student-batch" hint="Optional">
+            <select id="college-student-batch" className="ui-select w-full" value={studentForm.batch} onChange={(event) => setStudentForm((prev) => ({ ...prev, batch: event.target.value }))}>
               <option value="">Select batch (optional)</option>
-              {Array.isArray(batches)
-                ? batches
-                    .filter((batch) => {
-                      if (!studentForm.department) return true;
-                      const selected = String(studentForm.department).toLowerCase();
-                      const batchDeptName = String(batch.department?.name || "").toLowerCase();
-                      return (
-                        String(batch.departmentId) === String(studentForm.department) ||
-                        String(batch.department?.id) === String(studentForm.department) ||
-                        (batchDeptName && batchDeptName === selected)
-                      );
-                    })
-                    .map((batch) => (
-                      <option key={batch.id} value={batch.id}>{batch.name}</option>
-                    ))
-                : null}
+              {createBatchOptions.map((batch) => (
+                <option key={batch.id} value={batch.id}>{batch.name}</option>
+              ))}
             </select>
-            <Input
-              placeholder="Enroll number"
-              value={studentForm.enrollNumber}
-              onChange={(event) => setStudentForm((prev) => ({ ...prev, enrollNumber: event.target.value }))}
-            />
-          </div>
-          <p className="text-xs text-text-secondary">Student ID uses the entered enroll number exactly. Password rule: First 3 letters of full name (first letter capitalized) + @ + last 3 digits of enroll number.</p>
-          <Button
-            className="w-full sm:w-auto"
-            onClick={() => createStudentMutation.mutate({
-              ...studentForm,
-              year: studentForm.year ? Number(studentForm.year) : undefined,
-            })}
-            disabled={
-              createStudentMutation.isPending ||
-              !studentForm.fullName.trim() ||
-              !studentForm.email.trim() ||
-              !studentForm.department.trim() ||
-              !studentForm.year ||
-              !studentForm.enrollNumber.trim()
-            }
-          >
-            {createStudentMutation.isPending ? "Creating..." : "Create Student"}
+          </FormField>
+        </div>
+        <Callout tone="info" icon={KeyRound}>
+          Student ID uses the entered enroll number exactly. Password rule: First 3 letters of full name (first letter capitalized) + @ + last 3 digits of enroll number.
+        </Callout>
+        <Button
+          type="submit"
+          className="h-10 rounded-lg px-4"
+          disabled={
+            createStudentMutation.isPending ||
+            !studentForm.fullName.trim() ||
+            !studentForm.email.trim() ||
+            !studentForm.department.trim() ||
+            !studentForm.year ||
+            !studentForm.enrollNumber.trim()
+          }
+        >
+          <UserPlus className="size-4" />
+          {createStudentMutation.isPending ? "Creating..." : "Create Student"}
+        </Button>
+      </form>
+      <CredentialPanel className="mt-5" title="Student created — share these credentials securely" credentials={createdCredentials} />
+    </SectionCard>
+  ) : null;
+
+  const importPanel = canBulkImport ? (
+    <SectionCard title="Bulk import (Excel/CSV)" description="Upload .xlsx/.csv file or paste CSV. Runs as async job and supports large imports.">
+      <div className="space-y-4">
+        <Callout tone="info" title="Excel format (first row headers)">
+          <p>fullName, email, enrollNumber, department, year, batch</p>
+          <p className="mt-1">Student ID will use the enrollNumber value exactly. Example: Alice Doe, alice@example.com, 20261001, Computer Science, 1, CSE-2027-A</p>
+        </Callout>
+        <FormField label="Spreadsheet file" htmlFor="college-student-import-file" hint={importFileName ? `Loaded: ${importFileName}` : ".xlsx or .csv"}>
+          <Input id="college-student-import-file" type="file" accept=".xlsx,.csv" onChange={handleImportFile} className="h-10 w-full rounded-lg" />
+        </FormField>
+        <FormField label="CSV data" htmlFor="college-student-import-csv">
+          <Textarea id="college-student-import-csv" rows={8} className="rounded-lg font-mono text-xs" value={csvData} onChange={(event) => setCsvData(event.target.value)} />
+        </FormField>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button className="h-10 rounded-lg px-4" onClick={() => importMutation.mutate({ csvData })} disabled={importMutation.isPending}>
+            <FileUp className="size-4" />
+            {importMutation.isPending ? "Queueing..." : "Start Import"}
           </Button>
-          {createdCredentials ? (
-            <div className="rounded-lg border border-success/30 bg-success/10 p-3 text-sm text-success">
-              <p className="font-semibold">Student credentials</p>
-              <p>Email: {createdCredentials.identifier}</p>
-              <p>Student ID: {createdCredentials.studentId}</p>
-              <p>Password: {createdCredentials.password}</p>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Bulk Import (Excel/CSV)</CardTitle>
-          <CardDescription>Upload .xlsx/.csv file or paste CSV. Runs as async job and supports large imports.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="rounded-lg border border-border bg-background p-3 text-xs text-text-secondary">
-            <p className="font-semibold text-text-secondary">Excel format (first row headers):</p>
-            <p className="mt-1">fullName, email, enrollNumber, department, year, batch</p>
-            <p className="mt-1">Student ID will use the enrollNumber value exactly.</p>
-            <p className="mt-1">Example: Alice Doe, alice@example.com, 20261001, Computer Science, 1, CSE-2027-A</p>
+          {activeImportJobId ? <p className="font-mono text-xs break-all text-text-secondary">Job: {activeImportJobId}</p> : null}
+        </div>
+
+        {importJobQuery.data ? (
+          <div className="space-y-3 rounded-lg border border-border p-4" role="status">
+            <p className="flex items-center gap-2 text-sm font-medium text-text-primary">
+              Status
+              <StatusBadge tone={jobStatus === "completed" ? "success" : jobStatus === "failed" ? "danger" : "info"}>
+                {String(importJobQuery.data.status || "unknown").toUpperCase()}
+              </StatusBadge>
+            </p>
+            {importJobQuery.data.result ? (
+              <div className="grid grid-cols-3 gap-2">
+                <MiniStat label="Created" value={importJobQuery.data.result.created || 0} tone="success" />
+                <MiniStat label="Failed" value={importJobQuery.data.result.failed || 0} tone={importJobQuery.data.result.failed ? "danger" : undefined} />
+                <MiniStat label="Duplicates" value={importJobQuery.data.result.duplicates || 0} />
+              </div>
+            ) : null}
+            {importJobQuery.data.error ? <Callout tone="danger">Error: {importJobQuery.data.error}</Callout> : null}
+            <CredentialList entries={importCredentials} />
           </div>
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-            <Input type="file" accept=".xlsx,.csv" onChange={handleImportFile} className="w-full" />
-            {importFileName ? <p className="text-xs text-text-secondary">Loaded: {importFileName}</p> : null}
+        ) : null}
+      </div>
+    </SectionCard>
+  ) : null;
+
+  const promotePanel = (
+    <SectionCard title="Year updater" description="Promote the entire college one academic year forward.">
+      <div className="max-w-2xl space-y-4">
+        <Callout tone="warning" icon={AlertTriangle} title="Confirmation required">
+          This action promotes the entire college one year forward. 1st year becomes 2nd, 2nd becomes 3rd, 3rd becomes 4th, and 4th year students stay active.
+        </Callout>
+        <FormField
+          label="Step 1: type the confirmation text"
+          htmlFor="college-year-promotion"
+          hint={`Verification text must exactly match: ${YEAR_PROMOTION_CONFIRMATION}`}
+        >
+          <Input
+            id="college-year-promotion"
+            autoComplete="off"
+            spellCheck={false}
+            className="h-10 w-full rounded-lg font-mono md:max-w-md"
+            value={yearPromotionConfirmation}
+            onChange={(event) => {
+              setYearPromotionConfirmation(event.target.value);
+              setYearPromotionVerified(false);
+            }}
+            placeholder={YEAR_PROMOTION_CONFIRMATION}
+          />
+        </FormField>
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border px-3 py-3 text-sm text-text-primary">
+          <Checkbox checked={yearPromotionVerified} onCheckedChange={(checked) => setYearPromotionVerified(Boolean(checked))} className="mt-0.5" />
+          <span>
+            Step 2: I have verified that this is the annual promotion action for the whole college and understand that 4th year students remain active.
+          </span>
+        </label>
+        <Button
+          className="h-10 rounded-lg px-4"
+          variant="destructive"
+          onClick={() => promoteStudentsYearMutation.mutate({ confirmationText: yearPromotionConfirmation })}
+          disabled={
+            promoteStudentsYearMutation.isPending ||
+            !yearPromotionVerified ||
+            yearPromotionConfirmation.trim() !== YEAR_PROMOTION_CONFIRMATION
+          }
+        >
+          <GraduationCap className="size-4" />
+          {promoteStudentsYearMutation.isPending ? "Updating..." : "Promote All Students"}
+        </Button>
+      </div>
+    </SectionCard>
+  );
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Students"
+        description="Find, create, import, and promote student accounts across your college."
+      />
+
+      {banner.type ? (
+        <Callout tone={bannerTone} title={banner.title}>
+          {banner.message}
+        </Callout>
+      ) : null}
+
+      {createPanel || importPanel ? (
+        <Tabs defaultValue="directory" className="gap-5">
+          <div className="relative -mx-4 overflow-x-auto overflow-y-hidden px-4 sm:mx-0 sm:px-0">
+            <TabsList variant="line" className="h-auto! w-full min-w-max justify-start gap-6 rounded-none border-b border-border p-0">
+              <TabsTrigger value="directory" className={LINE_TAB}>
+                <Users className="size-4" />
+                Directory
+              </TabsTrigger>
+              {createPanel ? (
+                <TabsTrigger value="create" className={LINE_TAB}>
+                  <UserPlus className="size-4" />
+                  Add student
+                </TabsTrigger>
+              ) : null}
+              {importPanel ? (
+                <TabsTrigger value="import" className={LINE_TAB}>
+                  <FileUp className="size-4" />
+                  Bulk import
+                </TabsTrigger>
+              ) : null}
+              <TabsTrigger value="promote" className={LINE_TAB}>
+                <GraduationCap className="size-4" />
+                Year promotion
+              </TabsTrigger>
+            </TabsList>
           </div>
-          <Textarea rows={8} value={csvData} onChange={(event) => setCsvData(event.target.value)} />
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Button className="w-full sm:w-auto" onClick={() => importMutation.mutate({ csvData })} disabled={importMutation.isPending}>
-              {importMutation.isPending ? "Queueing..." : "Start Import"}
-            </Button>
-            {activeImportJobId ? <p className="break-all text-xs text-text-secondary">Job: {activeImportJobId}</p> : null}
-          </div>
+          <TabsContent value="directory">{directory}</TabsContent>
+          {createPanel ? <TabsContent value="create">{createPanel}</TabsContent> : null}
+          {importPanel ? <TabsContent value="import">{importPanel}</TabsContent> : null}
+          <TabsContent value="promote">{promotePanel}</TabsContent>
+        </Tabs>
+      ) : (
+        directory
+      )}
 
-          {importJobQuery.data ? (
-            <div className="rounded-lg border border-border p-3 text-sm">
-              <p className="font-medium text-text-primary">Status: {String(importJobQuery.data.status || "unknown").toUpperCase()}</p>
-              {importJobQuery.data.result ? (
-                <p className="mt-1 text-text-secondary">
-                  Created: {importJobQuery.data.result.created || 0} | Failed: {importJobQuery.data.result.failed || 0} | Duplicates: {importJobQuery.data.result.duplicates || 0}
-                </p>
-              ) : null}
-              {importJobQuery.data.error ? <p className="mt-1 text-danger">Error: {importJobQuery.data.error}</p> : null}
-              {importCredentials && importCredentials.length > 0 ? (
-                <div className="mt-3 max-h-60 overflow-auto rounded-lg border border-success/30 bg-success/10 p-3 text-xs text-success">
-                  <p className="font-semibold">Generated credentials (shown once)</p>
-                  <ul className="mt-1 space-y-1">
-                    {importCredentials.map((entry) => (
-                      <li key={`${entry.row}-${entry.studentId}`}>
-                        {entry.identifier} • {entry.studentId} • {entry.password}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>College Student Directory</CardTitle>
-          <CardDescription>Search college students, inspect profiles, assign batches, and monitor import jobs.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-            <Input placeholder="Search by name/email" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={directoryFilters.departmentId}
-              onChange={(event) => {
-                setDirectoryFilters((prev) => ({ ...prev, departmentId: event.target.value }));
-                setPage(1);
-              }}
-            >
-              <option value="">All college departments</option>
-              {Array.isArray(departments) && departments.map((department) => (
-                <option key={department.id} value={department.id}>{department.name}</option>
-              ))}
-            </select>
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={directoryFilters.batchId}
-              onChange={(event) => {
-                setDirectoryFilters((prev) => ({ ...prev, batchId: event.target.value }));
-                setPage(1);
-              }}
-            >
-              <option value="">All batches</option>
-              {Array.isArray(batches)
-                ? batches
-                    .filter((batch) => !directoryFilters.departmentId || String(batch.departmentId) === String(directoryFilters.departmentId))
-                    .map((batch) => (
-                      <option key={batch.id} value={batch.id}>{batch.name}</option>
-                    ))
-                : null}
-            </select>
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={directoryFilters.year}
-              onChange={(event) => {
-                setDirectoryFilters((prev) => ({ ...prev, year: event.target.value }));
-                setPage(1);
-              }}
-            >
-              <option value="">All years</option>
-              {YEAR_OPTIONS.map((year) => (
-                <option key={year} value={year}>{year} YEAR</option>
-              ))}
-            </select>
-            <Button className="w-full" variant="outline" onClick={() => studentsQuery.refetch()}>Search</Button>
-          </div>
-          <div className="grid gap-6 xl:grid-cols-[1fr_1.2fr]">
-            <div className="space-y-2">
-              {studentsQuery.isLoading ? (
-                <div className="space-y-2">
-                  <SkeletonBlock className="h-16" />
-                  <SkeletonBlock className="h-16" />
-                  <SkeletonBlock className="h-16" />
-                </div>
-              ) : null}
-              {!studentsQuery.isLoading && students.length === 0 ? <p className="text-sm text-text-secondary">No students found for the selected college filters.</p> : null}
-              {Array.isArray(students) && students.map((student) => {
-                const batchLabel = Array.isArray(student.batches) && student.batches.length > 0
-                  ? student.batches.map((batch) => batch.name).join(", ")
-                  : (student.batch?.name || "-");
-
-                return (
-                  <button
-                    key={student.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedStudentId(student.id);
-                      setBatchIdInput("");
-                    }}
-                    className={`flex w-full flex-col gap-3 rounded-xl border px-3 py-3 text-left sm:flex-row sm:items-center sm:justify-between ${selectedStudentId === student.id ? "border-primary/40 bg-primary/10" : "border-border"}`}
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-text-primary">{student.fullName}</p>
-                      <p className="mt-1 break-words text-xs leading-5 text-text-secondary">{student.email} | {student.studentId}</p>
-                    </div>
-                    <div className="min-w-0 text-xs text-text-secondary sm:text-right">
-                      <p className="truncate">{student.department?.name || "-"}</p>
-                      <p className="truncate sm:max-w-35">{batchLabel}</p>
-                    </div>
-                  </button>
-                );
-              })}
-              {(studentPagination?.totalPages || 1) > 1 ? (
-                <div className="flex flex-col gap-3 border-t border-border pt-3 text-xs text-text-secondary sm:flex-row sm:items-center sm:justify-between">
-                  <p>Page {studentPagination?.page || page} of {studentPagination?.totalPages || 1}</p>
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-                    <Button className="w-full sm:w-auto" variant="outline" size="sm" disabled={(studentPagination?.page || page) <= 1} onClick={() => setPage((prev) => Math.max(prev - 1, 1))}>Previous</Button>
-                    <Button className="w-full sm:w-auto" variant="outline" size="sm" disabled={(studentPagination?.page || 1) >= (studentPagination?.totalPages || 1)} onClick={() => setPage((prev) => prev + 1)}>Next</Button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="space-y-3 rounded-xl border border-border p-3">
-              {studentProfileQuery.isLoading ? (
-                <div className="space-y-2">
-                  <SkeletonBlock className="h-6" />
-                  <SkeletonBlock className="h-6" />
-                  <SkeletonBlock className="h-10" />
-                </div>
-              ) : null}
-              {!selectedStudent ? <p className="text-sm text-text-secondary">Select a student for profile details.</p> : null}
-              {selectedStudent ? (
-                <>
-                  <p className="text-base font-semibold text-text-primary">{selectedStudent.fullName}</p>
-                  <p className="break-words text-xs leading-5 text-text-secondary">{selectedStudent.email} | {selectedStudent.studentId}</p>
-                  <p className="text-xs text-text-secondary">Department: {selectedStudent.department?.name || "-"}</p>
-                  <p className="text-xs text-text-secondary">Year: {selectedStudent.year ? `${selectedStudent.year} YEAR` : "-"}</p>
-                  <p className="text-xs text-text-secondary">Total submissions: {selectedStudent._count?.submissions || 0}</p>
-                  {Array.isArray(selectedStudent.batches) && selectedStudent.batches.length > 0 ? (
-                    <div className="border-t border-border pt-2">
-                      <p className="mb-2 text-xs font-medium text-text-primary">Assigned batches:</p>
-                      <div className="space-y-1">
-                        {selectedStudent.batches.map((batch) => (
-                          <div key={batch.id} className="flex items-center justify-between rounded-md bg-primary/5 px-2 py-1 text-xs">
-                            <span className="min-w-0 break-words text-text-primary">{batch.name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-text-secondary italic">No batches assigned yet</p>
-                  )}
-
-                    <div className="grid gap-2 border-t border-border pt-2 md:grid-cols-3">
-                    <select className="h-10 rounded-md border border-border px-3 text-sm md:col-span-2" value={batchIdInput} onChange={(event) => setBatchIdInput(event.target.value)}>
-                      <option value="">Select batch to add</option>
-                      {Array.isArray(batches) && batches.map((batch) => (
-                        <option key={batch.id} value={batch.id}>{batch.name} ({batch.department?.name || "-"})</option>
-                      ))}
-                    </select>
-                    <Button
-                      className="w-full"
-                      onClick={() => assignBatchMutation.mutate({ studentId: selectedStudent.id, batchId: batchIdInput })}
-                      disabled={assignBatchMutation.isPending || !batchIdInput}
-                    >
-                      Add Batch
-                    </Button>
-                  </div>
-
-                  <div className="border-t border-border pt-2">
-                    <Button
-                      className="w-full"
-                      variant="outline"
-                      onClick={() => {
-                        setResetCredentials(null);
-                        resetPasswordMutation.mutate(selectedStudent.id);
-                      }}
-                      disabled={resetPasswordMutation.isPending}
-                    >
-                      {resetPasswordMutation.isPending ? "Resetting..." : "Reset Password to Default Rule"}
-                    </Button>
-                    {resetCredentials ? (
-                      <div className="mt-2 rounded-lg border border-success/30 bg-success/10 p-3 text-xs text-success">
-                        <p className="font-semibold">New credentials</p>
-                        <p>Email: {resetCredentials.identifier}</p>
-                        <p>Student ID: {resetCredentials.studentId}</p>
-                        <p>Password: {resetCredentials.password}</p>
-                      </div>
-                    ) : null}
-                  </div>
-
-                </>
-              ) : null}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Year Updater</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Alert className="border-amber-200 bg-amber-50 text-amber-900">
-            <AlertTitle>Confirmation required</AlertTitle>
-            <AlertDescription>
-              This action promotes the entire college one year forward. 1st year becomes 2nd, 2nd becomes 3rd, 3rd becomes 4th, and 4th year students stay active.
-            </AlertDescription>
-          </Alert>
-          <div className="mt-4 space-y-3">
-            <div>
-              <p className="mb-2 text-xs font-semibold tracking-wide text-text-secondary uppercase">Step 1: type the confirmation text</p>
-              <Input
-                value={yearPromotionConfirmation}
-                onChange={(event) => {
-                  setYearPromotionConfirmation(event.target.value);
-                  setYearPromotionVerified(false);
-                }}
-                placeholder={YEAR_PROMOTION_CONFIRMATION}
-                className="w-full md:max-w-md"
-              />
-            </div>
-            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm text-text-secondary">
-              <Checkbox
-                checked={yearPromotionVerified}
-                onCheckedChange={(checked) => setYearPromotionVerified(Boolean(checked))}
-                className="mt-0.5"
-              />
-              <span>
-                Step 2: I have verified that this is the annual promotion action for the whole college and understand that 4th year students remain active.
-              </span>
-            </label>
-            <div className="flex flex-col gap-2 text-xs text-text-secondary sm:flex-row sm:items-center sm:justify-between">
-              <p>Verification text must exactly match: {YEAR_PROMOTION_CONFIRMATION}</p>
-              <Button
-                className="w-full sm:w-auto"
-                variant="destructive"
-                onClick={() => promoteStudentsYearMutation.mutate({ confirmationText: yearPromotionConfirmation })}
-                disabled={
-                  promoteStudentsYearMutation.isPending ||
-                  !yearPromotionVerified ||
-                  yearPromotionConfirmation.trim() !== YEAR_PROMOTION_CONFIRMATION
-                }
-              >
-                {promoteStudentsYearMutation.isPending ? "Updating..." : "Promote All Students"}
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      
+      <ConfirmActionDialog
+        open={confirmReset}
+        onOpenChange={setConfirmReset}
+        title="Reset student password"
+        description={`Reset the password for ${selectedStudent?.fullName || "this student"} to the default rule? Their current password will stop working.`}
+        confirmLabel="Reset Password"
+        confirmVariant="destructive"
+        onConfirm={() => {
+          if (!selectedStudent?.id) return;
+          setResetCredentials(null);
+          resetPasswordMutation.mutate(selectedStudent.id);
+        }}
+      />
     </div>
   );
 }

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/common/page-kit";
 import {
   Dialog,
   DialogContent,
@@ -114,8 +116,6 @@ export default function ReportBuilderDialog({
     onOpenChange(false);
   };
 
-  const fieldClass = "h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary";
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
@@ -129,7 +129,7 @@ export default function ReportBuilderDialog({
         <div className="min-w-0 space-y-4">
           <label className="block space-y-1 text-xs text-text-secondary">
             <span>Report type</span>
-            <select value={type} onChange={(event) => setType(event.target.value)} className={fieldClass}>
+            <select value={type} onChange={(event) => setType(event.target.value)} className="ui-select w-full">
               {REPORT_TYPES.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
@@ -179,7 +179,7 @@ export default function ReportBuilderDialog({
                         checked={checked}
                         disabled={disabled}
                         onChange={() => toggleTest(test.id)}
-                        className="size-4 shrink-0 accent-primary"
+                        className="ui-checkbox shrink-0 accent-primary"
                       />
                       <span className="min-w-0 flex-1 truncate text-sm text-text-primary" title={test.title}>{test.title}</span>
                       {test.date ? <span className="shrink-0 text-[11px] tabular-nums">{formatShortDate(test.date)}</span> : null}
@@ -195,13 +195,14 @@ export default function ReportBuilderDialog({
 
           <div className="space-y-1 text-xs text-text-secondary">
             <span>Format</span>
-            <div className="flex overflow-hidden rounded-lg border border-border">
+            <div role="group" aria-label="Report format" className="flex overflow-hidden rounded-lg border border-border">
               {FORMATS.map((item) => (
                 <button
                   key={item.value}
                   type="button"
+                  aria-pressed={format === item.value}
                   onClick={() => setFormat(item.value)}
-                  className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${format === item.value ? "bg-primary text-white" : "bg-background text-text-primary hover:bg-muted"}`}
+                  className={`flex-1 px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${format === item.value ? "bg-primary text-primary-foreground" : "bg-background text-text-primary hover:bg-muted"}`}
                 >
                   {item.label}
                 </button>
@@ -216,7 +217,7 @@ export default function ReportBuilderDialog({
               value={remarks}
               onChange={(event) => setRemarks(event.target.value.slice(0, 2000))}
               placeholder="Notes to print on the report cover."
-              className="min-h-20 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-primary"
+              className="min-h-20 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             />
           </label>
 
@@ -228,26 +229,17 @@ export default function ReportBuilderDialog({
           ) : null}
 
           {blockedReason ? (
-            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600">{blockedReason}</p>
+            <Callout tone="warning">{blockedReason}</Callout>
           ) : null}
         </div>
 
         <DialogFooter>
-          <button
-            type="button"
-            onClick={() => onOpenChange(false)}
-            className="rounded-xl border border-border bg-card px-4 py-2 text-sm font-medium text-text-primary hover:bg-muted"
-          >
+          <Button variant="outline" className="h-10 rounded-lg px-4" onClick={() => onOpenChange(false)}>
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={Boolean(blockedReason)}
-            className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
+          </Button>
+          <Button className="h-10 rounded-lg px-4" onClick={handleGenerate} disabled={Boolean(blockedReason)}>
             Generate
-          </button>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

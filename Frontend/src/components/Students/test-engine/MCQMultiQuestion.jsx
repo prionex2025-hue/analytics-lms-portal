@@ -1,3 +1,5 @@
+import { OptionCard } from "@/components/Students/test-engine/OptionCard";
+
 export function MCQMultiQuestion({ question, answer, onChange, disabled }) {
   const selected = Array.isArray(answer?.selected_options) ? answer.selected_options : [];
 
@@ -14,23 +16,21 @@ export function MCQMultiQuestion({ question, answer, onChange, disabled }) {
   };
 
   return (
-    <div className="space-y-3">
-      {(question?.options || []).map((option) => (
-        <label
-          key={String(option)}
-          className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition ${
-            selected.includes(option) ? "border-primary bg-primary/10" : "border-border bg-card"
-          } ${disabled ? "cursor-not-allowed opacity-70" : ""}`}
-        >
-          <input
+    <div className="space-y-2.5">
+      <p className="text-xs text-text-secondary">Select all that apply.</p>
+      <div role="group" aria-label="Answer choices" className="space-y-2.5">
+        {(question?.options || []).map((option, index) => (
+          <OptionCard
+            key={String(option)}
             type="checkbox"
+            index={index}
+            label={option}
             checked={selected.includes(option)}
             disabled={disabled}
             onChange={() => toggleOption(option)}
           />
-          <span className="text-text-primary">{option}</span>
-        </label>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

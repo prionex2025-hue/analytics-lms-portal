@@ -1,6 +1,6 @@
 import { Card } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const toPercent = (value) => {
   const num = Number(value);
@@ -27,6 +27,7 @@ export function ReportsLineChart({ data = [] }) {
             item?.accuracy ??
             item?.score_percent ??
             item?.scorePercentage ??
+            item?.scorePercent ??
             item?.score
         ),
         sortKey:
@@ -58,8 +59,8 @@ export function ReportsLineChart({ data = [] }) {
 
   if (normalized.length === 0) {
     return (
-      <Card className="p-5">
-        <Empty className="border border-border">
+      <Card className="gap-0 py-0 rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
+        <Empty className="min-h-64 border border-dashed border-border">
           <EmptyHeader>
             <EmptyTitle>No Progress Data</EmptyTitle>
             <EmptyDescription>Take tests to see your score trend over time.</EmptyDescription>
@@ -71,9 +72,9 @@ export function ReportsLineChart({ data = [] }) {
 
   if (normalized.length === 1) {
     return (
-      <Card className="p-5">
-        <h3 className="text-base font-semibold text-text-primary">Score Trend (%)</h3>
-        <div className="mt-4 flex h-60 items-center justify-center rounded-xl border border-border bg-background">
+      <Card className="gap-0 py-0 rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
+        <div><h3 className="text-base font-semibold text-text-primary">Score trend</h3><p className="mt-0.5 text-sm text-text-secondary">Percentage score across your submitted tests.</p></div>
+        <div className="mt-4 flex h-60 items-center justify-center rounded-lg bg-muted/50">
           <div className="text-center">
             <p className="text-xs text-text-secondary">Only one test available</p>
             <p className="mt-1 text-3xl font-semibold text-primary">{normalized[0].value}%</p>
@@ -85,15 +86,16 @@ export function ReportsLineChart({ data = [] }) {
   }
 
   return (
-    <Card className="min-w-0 p-5">
-      <h3 className="text-base font-semibold text-text-primary">Test-wise Score Trend (%)</h3>
+    <Card className="min-w-0 gap-0 py-0 rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
+      <div><h3 className="text-base font-semibold text-text-primary">Score trend</h3><p className="mt-0.5 text-sm text-text-secondary">Percentage score across your submitted tests.</p></div>
       <div className="mt-4 h-64 w-full min-w-0">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 320, height: 200 }}>
           <LineChart data={normalized} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
-            <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
-            <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(value) => [`${value}%`, "Score"]} />
-            <Line dataKey="value" type="monotone" stroke="var(--primary-dark)" strokeWidth={2.5} dot={{ r: 3 }} />
+            <CartesianGrid vertical={false} stroke="var(--chart-grid)" strokeDasharray="3 3" />
+            <XAxis dataKey="label" tick={{ fontSize: 12, fill: "var(--text-secondary)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} interval="preserveStartEnd" />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: "var(--text-secondary)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+            <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-primary)", fontSize: 12 }} formatter={(value) => [`${value}%`, "Score"]} />
+            <Line dataKey="value" type="monotone" stroke="var(--primary)" strokeWidth={2} dot={{ r: 3, fill: "var(--primary)" }} activeDot={{ r: 5 }} />
           </LineChart>
         </ResponsiveContainer>
       </div>

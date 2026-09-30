@@ -1,14 +1,15 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { GraduationCap, Mail, User, Upload } from "lucide-react";
+import { BadgeCheck, Building2, Calendar, Camera, GraduationCap, Hash, Layers, Loader2, Mail, School, User } from "lucide-react";
 import { toast } from "sonner";
 import { ProfileSkeleton } from "@/components/common/page-skeletons";
-import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { studentApi } from "@/services/studentApi";
 import { profileQueryOptions } from "@/services/studentQueries";
 import { cropImageToSquare, validateAvatarFile } from "@/lib/image";
 import { optimizeCloudinaryImage } from "@/lib/cloudinary";
+import { Callout, ErrorState, PageHeader, StatusBadge } from "@/components/Students/ui/StudentUI";
+import { cn } from "@/lib/utils";
 import { ui } from "@/styles/ui-tokens";
 
 export default function ProfilePage() {
@@ -87,74 +88,97 @@ export default function ProfilePage() {
   }
 
   if (profileQuery.isError) {
-    return <div className="py-10 text-center text-sm text-text-secondary">{profileQuery.error?.message || "Unable to load profile."}</div>;
+    return (
+      <section className={ui.pageSection}>
+        <PageHeader title="Profile" />
+        <ErrorState
+          title="Unable to load profile"
+          description={profileQuery.error?.message || "Please try again in a moment."}
+          onRetry={() => profileQuery.refetch()}
+        />
+      </section>
+    );
   }
 
+  const fullName = user?.fullName || user?.name || "Student";
+  const rollNumber = user?.rollNumber || user?.studentId || "-";
+  const departmentName = user?.department?.name || user?.department || "-";
+  const collegeName = user?.college?.name || user?.college || "-";
+
+  const details = [
+    { label: "Full name", value: user?.fullName || user?.name || "-", icon: User },
+    { label: "Email", value: user?.email || "-", icon: Mail },
+    { label: "Roll number", value: rollNumber, icon: Hash },
+    { label: "College", value: collegeName, icon: School },
+    { label: "Department", value: departmentName, icon: Building2 },
+    { label: "Year", value: yearLabel, icon: Calendar },
+    { label: "Batch", value: batchLabel, icon: Layers },
+  ];
+
   return (
-    <section className="grid gap-5 lg:grid-cols-1 xl:grid-cols-[420px_1fr]">
-      <article className={`${ui.card} ${ui.cardPaddingLg}`}>
-        <div className="mx-auto flex flex-col items-center gap-3">
-          <Avatar size="lg" className="size-24 rounded-2xl">
-            <AvatarImage src={avatarDisplayUrl} alt="Profile avatar" className="rounded-2xl object-cover" />
-            <AvatarFallback className="rounded-2xl bg-primary/15 text-primary">
-              <User className="size-8" />
-            </AvatarFallback>
-          </Avatar>
+    <section className={ui.pageSection}>
+      <PageHeader title="Profile" description="Your academic identity as recorded by your institution." />
 
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-text-secondary">
-            <Upload className="size-3.5" />
-            {uploading ? "Uploading..." : "Upload Avatar"}
-            <input type="file" accept="image/png,image/jpeg" className="hidden" disabled={uploading} onChange={onAvatarSelected} />
-          </label>
-          <p className="text-xs text-text-secondary">JPG/PNG only, max 2MB, auto-cropped to square.</p>
-        </div>
+      <div className={cn(ui.card, "overflow-hidden")}>
+        <div className="h-20 bg-linear-to-r from-primary/15 via-primary/5 to-transparent sm:h-24" aria-hidden="true" />
+        <div className="flex flex-col gap-4 px-5 pb-5 sm:flex-row sm:items-end sm:gap-5 sm:px-6 sm:pb-6">
+          <div className="relative -mt-12 w-fit sm:-mt-14">
+            <Avatar className="size-24 rounded-2xl border-4 border-card bg-card shadow-sm after:hidden sm:size-28">
+              <AvatarImage src={avatarDisplayUrl} alt="Profile avatar" className="rounded-xl object-cover" />
+              <AvatarFallback className="rounded-xl bg-primary/10 text-primary">
+                <User className="size-9" />
+              </AvatarFallback>
+            </Avatar>
+            <label
+              className={cn(
+                "absolute -right-2 -bottom-2 grid size-10 cursor-pointer place-items-center rounded-full border border-border bg-card text-text-primary shadow-sm transition-colors hover:bg-muted focus-within:ring-3 focus-within:ring-ring/50",
+                uploading ? "cursor-wait opacity-80" : ""
+              )}
+              title="Change avatar"
+            >
+              {uploading ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none" /> : <Camera className="size-4" />}
+              <span className="sr-only">{uploading ? "Uploading..." : "Upload Avatar"}</span>
+              <input type="file" accept="image/png,image/jpeg" className="sr-only" disabled={uploading} onChange={onAvatarSelected} />
+            </label>
+          </div>
 
-        <h2 className="mt-4 text-center text-2xl font-semibold tracking-tight text-text-primary">{user?.fullName || user?.name || "Student"}</h2>
-        <p className="text-center text-sm text-text-secondary">{user?.rollNumber || user?.studentId || "-"}</p>
-
-        <div className="mt-6 space-y-3 text-sm">
-          <div className="flex items-center gap-2 rounded-xl bg-background p-3 text-text-secondary"><Mail className="size-4" /> {user?.email || "-"}</div>
-          <div className="flex items-center gap-2 rounded-xl bg-background p-3 text-text-secondary"><GraduationCap className="size-4" /> {user?.department?.name || user?.department || "Department"}</div>
-        </div>
-      </article>
-
-      <article className={`${ui.card} ${ui.cardPaddingLg}`}>
-        <h3 className="text-2xl font-semibold tracking-tight text-text-primary">Profile Details</h3>
-        <p className="mt-1 text-sm text-text-secondary">Read-only academic identity details from your institution records.</p>
-
-        <div className="mt-5 grid gap-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-xl border border-border bg-background p-3">
-              <p className="text-[11px] font-semibold tracking-wide text-text-secondary uppercase">Name</p>
-              <p className="mt-1 text-sm font-medium text-text-primary">{user?.fullName || user?.name || "-"}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background p-3">
-              <p className="text-[11px] font-semibold tracking-wide text-text-secondary uppercase">Email</p>
-              <p className="mt-1 text-sm font-medium text-text-primary">{user?.email || "-"}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background p-3">
-              <p className="text-[11px] font-semibold tracking-wide text-text-secondary uppercase">Roll Number</p>
-              <p className="mt-1 text-sm font-medium text-text-primary">{user?.rollNumber || user?.studentId || "-"}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background p-3">
-              <p className="text-[11px] font-semibold tracking-wide text-text-secondary uppercase">College</p>
-              <p className="mt-1 text-sm font-medium text-text-primary">{user?.college?.name || user?.college || "-"}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background p-3">
-              <p className="text-[11px] font-semibold tracking-wide text-text-secondary uppercase">Department</p>
-              <p className="mt-1 text-sm font-medium text-text-primary">{user?.department?.name || user?.department || "-"}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background p-3">
-              <p className="text-[11px] font-semibold tracking-wide text-text-secondary uppercase">Year</p>
-              <p className="mt-1 text-sm font-medium text-text-primary">{yearLabel}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background p-3">
-              <p className="text-[11px] font-semibold tracking-wide text-text-secondary uppercase">Batch</p>
-              <p className="mt-1 text-sm font-medium text-text-primary">{batchLabel}</p>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-xl font-semibold tracking-tight text-text-primary sm:text-2xl">{fullName}</h2>
+            <p className="mt-0.5 text-sm text-text-secondary">{user?.email || "-"}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <StatusBadge tone="info" icon={Hash}>{rollNumber}</StatusBadge>
+              {departmentName !== "-" ? <StatusBadge tone="neutral" icon={GraduationCap}>{departmentName}</StatusBadge> : null}
+              {yearLabel !== "-" ? <StatusBadge tone="neutral" icon={Calendar} className="capitalize">{yearLabel.toLowerCase()}</StatusBadge> : null}
             </div>
           </div>
         </div>
-      </article>
+        <p className="border-t border-border px-5 py-3 text-xs text-text-secondary sm:px-6">
+          {uploading ? "Uploading avatar…" : "Avatar: JPG or PNG, max 2MB. Images are auto-cropped to a square."}
+        </p>
+      </div>
+
+      <div className={cn(ui.card, ui.cardPaddingLg)}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className={ui.titleLg}>Academic details</h3>
+          <StatusBadge tone="neutral" icon={BadgeCheck}>Read-only</StatusBadge>
+        </div>
+        <dl className="mt-5 grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
+          {details.map((item) => (
+            <div key={item.label} className="flex min-w-0 gap-3">
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-text-secondary">
+                <item.icon className="size-4" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <dt className="text-xs text-text-secondary">{item.label}</dt>
+                <dd className="mt-0.5 break-words text-sm font-medium text-text-primary">{item.value}</dd>
+              </div>
+            </div>
+          ))}
+        </dl>
+        <Callout tone="info" className="mt-6">
+          These details come from your institution&apos;s records. Contact your administrator if anything looks incorrect.
+        </Callout>
+      </div>
     </section>
   );
 }

@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useDispatch, useSelector } from "react-redux";
 import { createSuperAdminUser, fetchSuperAdmins, fetchSuperColleges } from "@/features/SuperAdmin/superAdminPanelSlice";
 import { superAdminApi } from "@/services/api";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,6 +20,20 @@ import { toast } from "sonner";
 import ConfirmActionDialog from "@/components/Admin/ConfirmActionDialog";
 import TypedConfirmDialog from "@/components/SuperAdmin/TypedConfirmDialog";
 import { parseSpreadsheetRows } from "@/lib/spreadsheet";
+import { FileUp, KeyRound, Plus, RotateCcw, ShieldCheck, ShieldOff, ShieldUser } from "lucide-react";
+import {
+  Callout,
+  DataTable,
+  DisclosureSection,
+  EmptyState,
+  FormField,
+  MiniStat,
+  PageHeader,
+  SearchInput,
+  SectionCard,
+  StatusBadge,
+} from "@/components/common/page-kit";
+import { ui } from "@/styles/ui-tokens";
 
 const IMPORT_SAMPLE = [
   "fullName,email,employeeId,collegeCode,password,department",
@@ -79,8 +92,10 @@ export default function AdminsPage() {
 
   const loadAdmins = useCallback(() => dispatch(fetchSuperAdmins(buildAdminsQuery())), [buildAdminsQuery, dispatch]);
 
+  const [adminsLoading, setAdminsLoading] = useState(true);
+
   useEffect(() => {
-    loadAdmins();
+    Promise.resolve(loadAdmins()).finally(() => setAdminsLoading(false));
     dispatch(fetchSuperColleges());
   }, [dispatch, loadAdmins]);
 
@@ -294,193 +309,304 @@ export default function AdminsPage() {
     }
   };
 
+  const activeColleges = colleges.filter((college) => college?.isActive !== false);
+  const hasFilters = Boolean(filters.search || filters.collegeId || filters.status !== "all");
+
+  const columns = [
+    {
+      key: "admin",
+      header: "Admin",
+      primary: true,
+      cell: (admin) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-text-primary">{admin.fullName}</p>
+          <p className="truncate text-xs text-text-secondary">{admin.email}</p>
+        </div>
+      ),
+    },
+    { key: "employeeId", header: "Employee ID", className: "font-mono text-xs text-text-secondary", cell: (admin) => admin.employeeId || "—" },
+    { key: "college", header: "College", className: "max-w-56 truncate", cell: (admin) => admin.college?.name || "—" },
+    {
+      key: "role",
+      header: "Role",
+      cell: (admin) => (
+        <StatusBadge tone={admin.role === "COLLEGE_ADMIN" ? "info" : "neutral"}>{admin.role === "COLLEGE_ADMIN" ? "College Admin" : "Admin"}</StatusBadge>
+      ),
+    },
+    {
+      key: "access",
+      header: "Access",
+      cell: (admin) => (
+        <select
+          className="ui-select h-9"
+          aria-label={`Access profile for ${admin.fullName}`}
+          value={admin.accessProfile || "EDITOR"}
+          disabled={updatingProfileId === getAdminId(admin)}
+          onChange={(event) => updateAccessProfile(getAdminId(admin), event.target.value)}
+        >
+          <option value="EDITOR">Can Edit</option>
+          <option value="VIEW_ONLY">View Only</option>
+        </select>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (admin) => <StatusBadge tone={admin.isActive ? "success" : "danger"}>{admin.isActive ? "Active" : "Inactive"}</StatusBadge>,
+    },
+    {
+      key: "actions",
+      actions: true,
+      align: "right",
+      cell: (admin) => (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          <Button size="lg" variant="outline" className="rounded-lg" onClick={() => openResetConfirm(admin)}>
+            <KeyRound className="size-4" />
+            Reset password
+          </Button>
+          {admin.isActive ? (
+            <Button size="lg" variant="ghost" className="rounded-lg text-danger hover:bg-danger/10 hover:text-danger" onClick={() => openDeactivateConfirm(admin)}>
+              <ShieldOff className="size-4" />
+              Deactivate
+            </Button>
+          ) : (
+            <Button size="lg" variant="ghost" className="rounded-lg text-success hover:bg-success/10 hover:text-success" onClick={() => openReactivateConfirm(admin)}>
+              <ShieldCheck className="size-4" />
+              Reactivate
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <Card className="rounded-2xl border-border">
-        <CardHeader><CardTitle>Create Admin</CardTitle></CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-3">
-          <Input placeholder="Full Name" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} />
-          <Input placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          <Input placeholder="Employee ID" value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })} />
-          <Input placeholder="Password" value={form.password} type="password" onChange={(e) => setForm({ ...form, password: e.target.value })} />
-          <select className="h-8 rounded-lg border border-border px-2" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value, departmentId: "" })}>
-            <option value="ADMIN">Department Admin</option>
-            <option value="COLLEGE_ADMIN">College Admin</option>
-          </select>
-          <select
-            className="h-8 rounded-lg border border-border px-2"
-            value={form.collegeId}
-            onChange={(e) => setForm({ ...form, collegeId: e.target.value, departmentId: "" })}
-          >
-            <option value="">Select college</option>
-            {colleges.filter((college) => college?.isActive !== false).map((college) => (
-              <option key={college.id} value={college.id}>{college.name}</option>
-            ))}
-          </select>
-          {form.role === "ADMIN" ? (
-            <select
-              className="h-8 rounded-lg border border-border px-2"
-              value={form.departmentId}
-              onChange={(e) => setForm({ ...form, departmentId: e.target.value })}
-              disabled={!form.collegeId}
-            >
-              <option value="">Select department</option>
-              {departments.map((department) => (
-                <option key={department.id} value={department.id}>{department.name}</option>
-              ))}
-            </select>
-          ) : (
-            <div className="flex h-8 items-center rounded-lg border border-border px-2 text-xs text-text-secondary">
-              College admins are college-scoped; up to 5 active admins per college
-            </div>
-          )}
-          <select className="h-8 rounded-lg border border-border px-2" value={form.accessProfile} onChange={(e) => setForm({ ...form, accessProfile: e.target.value })}>
-            <option value="EDITOR">Can Edit</option>
-            <option value="VIEW_ONLY">View Only</option>
-          </select>
-          <Button className="sm:col-span-3 bg-primary hover:bg-primary" onClick={save} disabled={isSubmitting}>
-            {isSubmitting ? "Creating..." : "Create Admin"}
-          </Button>
-        </CardContent>
-      </Card>
+      <PageHeader title="Admins" description="Department and college admins across every college, with their access level." />
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Bulk Import Admins</CardTitle>
-          <CardDescription>Upload Excel/CSV and map each admin to a college by collegeId, collegeCode, or collegeName.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-3">
+      <SectionCard title="Create admin" description="Department admins are scoped to one department; college admins manage a whole college.">
+        <form
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save();
+          }}
+        >
+          <FormField label="Full name" htmlFor="admin-create-name" required>
+            <Input id="admin-create-name" className={ui.field} value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} />
+          </FormField>
+          <FormField label="Email" htmlFor="admin-create-email" required>
+            <Input id="admin-create-email" type="email" autoComplete="off" className={ui.field} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          </FormField>
+          <FormField label="Employee ID" htmlFor="admin-create-employee" required>
+            <Input id="admin-create-employee" className={ui.field} value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })} />
+          </FormField>
+          <FormField label="Password" htmlFor="admin-create-password" required>
+            <Input id="admin-create-password" type="password" autoComplete="new-password" className={ui.field} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          </FormField>
+          <FormField label="Role" htmlFor="admin-create-role">
+            <select id="admin-create-role" className="ui-select w-full" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value, departmentId: "" })}>
+              <option value="ADMIN">Department Admin</option>
+              <option value="COLLEGE_ADMIN">College Admin</option>
+            </select>
+          </FormField>
+          <FormField label="College" htmlFor="admin-create-college" required>
             <select
-              className="h-10 rounded-lg border border-border px-2"
-              value={importDefaultCollegeId}
-              onChange={(event) => setImportDefaultCollegeId(event.target.value)}
+              id="admin-create-college"
+              className="ui-select w-full"
+              value={form.collegeId}
+              onChange={(e) => setForm({ ...form, collegeId: e.target.value, departmentId: "" })}
             >
-              <option value="">Default college (optional)</option>
-              {colleges.filter((college) => college?.isActive !== false).map((college) => (
+              <option value="">Select college</option>
+              {activeColleges.map((college) => (
                 <option key={college.id} value={college.id}>{college.name}</option>
               ))}
             </select>
-            <Input type="file" accept=".csv,.xlsx" onChange={handleImportFile} />
-            <Button className="bg-primary py-5 text-white hover:bg-primary text-sm" onClick={() => { setImportCsv(IMPORT_SAMPLE); setImportFileName(""); setImportResult(null); }}>
+          </FormField>
+          {form.role === "ADMIN" ? (
+            <FormField label="Department" htmlFor="admin-create-department" hint={!form.collegeId ? "Choose a college first." : undefined} required>
+              <select
+                id="admin-create-department"
+                className="ui-select w-full"
+                value={form.departmentId}
+                onChange={(e) => setForm({ ...form, departmentId: e.target.value })}
+                disabled={!form.collegeId}
+              >
+                <option value="">Select department</option>
+                {departments.map((department) => (
+                  <option key={department.id} value={department.id}>{department.name}</option>
+                ))}
+              </select>
+            </FormField>
+          ) : (
+            <FormField label="Scope">
+              <p className="flex min-h-10 items-center rounded-lg bg-muted/50 px-3 text-xs text-text-secondary">
+                College admins are college-scoped; up to 5 active admins per college
+              </p>
+            </FormField>
+          )}
+          <FormField label="Access" htmlFor="admin-create-access">
+            <select id="admin-create-access" className="ui-select w-full" value={form.accessProfile} onChange={(e) => setForm({ ...form, accessProfile: e.target.value })}>
+              <option value="EDITOR">Can Edit</option>
+              <option value="VIEW_ONLY">View Only</option>
+            </select>
+          </FormField>
+          <div className="sm:col-span-2 lg:col-span-4">
+            <Button type="submit" className={ui.btn} disabled={isSubmitting}>
+              <Plus className="size-4" />
+              {isSubmitting ? "Creating..." : "Create Admin"}
+            </Button>
+          </div>
+        </form>
+      </SectionCard>
+
+      <DisclosureSection
+        icon={FileUp}
+        title="Bulk import admins"
+        description="Upload Excel/CSV and map each admin to a college by collegeId, collegeCode, or collegeName."
+      >
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Default college" htmlFor="admin-import-college" hint="Used when a row has no college column.">
+              <select
+                id="admin-import-college"
+                className="ui-select w-full"
+                value={importDefaultCollegeId}
+                onChange={(event) => setImportDefaultCollegeId(event.target.value)}
+              >
+                <option value="">Default college (optional)</option>
+                {activeColleges.map((college) => (
+                  <option key={college.id} value={college.id}>{college.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Spreadsheet file" htmlFor="admin-import-file" hint={importFileName ? `Loaded file: ${importFileName}` : ".csv or .xlsx"}>
+              <Input id="admin-import-file" type="file" accept=".csv,.xlsx" className="h-10 rounded-lg" onChange={handleImportFile} />
+            </FormField>
+          </div>
+
+          <FormField
+            label="CSV data"
+            htmlFor="admin-import-csv"
+            hint="Required columns: fullName, email, employeeId. Optional: password, department, collegeId, collegeCode, collegeName."
+          >
+            <Textarea
+              id="admin-import-csv"
+              className="min-h-40 rounded-lg font-mono text-xs"
+              value={importCsv}
+              onChange={(event) => setImportCsv(event.target.value)}
+            />
+          </FormField>
+
+          <div className="flex flex-wrap gap-2">
+            <Button className={ui.btn} onClick={startBulkImport} disabled={isImporting}>
+              <FileUp className="size-4" />
+              {isImporting ? "Importing..." : "Start Import"}
+            </Button>
+            <Button
+              variant="outline"
+              className={ui.btn}
+              onClick={() => {
+                setImportCsv(IMPORT_SAMPLE);
+                setImportFileName("");
+                setImportResult(null);
+              }}
+            >
+              <RotateCcw className="size-4" />
               Reset Sample
             </Button>
           </div>
 
-          <p className="text-xs text-text-secondary">
-            Required columns: fullName, email, employeeId. Optional: password, department, collegeId, collegeCode, collegeName.
-            {importFileName ? ` Loaded file: ${importFileName}` : ""}
-          </p>
-
-          <Textarea
-            className="min-h-45 font-mono text-xs"
-            value={importCsv}
-            onChange={(event) => setImportCsv(event.target.value)}
-          />
-
-          <Button className="bg-primary hover:bg-primary" onClick={startBulkImport} disabled={isImporting}>
-            {isImporting ? "Importing..." : "Start Import"}
-          </Button>
-
           {importResult ? (
-            <div className="rounded-xl border border-border p-3 text-sm text-text-secondary">
-              <p>Created: {importResult.created || 0}</p>
-              <p>Duplicates: {importResult.duplicates || 0}</p>
-              <p>Failed: {importResult.failed || 0}</p>
+            <div className="space-y-3" role="status">
+              <div className="grid grid-cols-3 gap-2">
+                <MiniStat label="Created" value={importResult.created || 0} tone="success" />
+                <MiniStat label="Duplicates" value={importResult.duplicates || 0} />
+                <MiniStat label="Failed" value={importResult.failed || 0} tone={importResult.failed ? "danger" : undefined} />
+              </div>
               {Array.isArray(importResult.errors) && importResult.errors.length > 0 ? (
-                <p className="mt-2 text-xs text-text-secondary">
-                  Latest errors: {importResult.errors.slice(0, 5).map((item) => `Row ${item.row}: ${item.reason}`).join(" | ")}
-                </p>
+                <Callout tone="warning" title="Latest errors">
+                  <ul className="mt-1 space-y-0.5 text-xs">
+                    {importResult.errors.slice(0, 5).map((item) => (
+                      <li key={`${item.row}-${item.reason}`}>Row {item.row}: {item.reason}</li>
+                    ))}
+                  </ul>
+                </Callout>
               ) : null}
             </div>
           ) : null}
-        </CardContent>
-      </Card>
+        </div>
+      </DisclosureSection>
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader><CardTitle>Admins</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-4">
-            <Input
-              className="sm:col-span-2"
-              placeholder="Search by name, email, or employee id"
-              value={filters.search}
-              onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
+      <SectionCard flush title="All admins">
+        <form
+          className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 sm:px-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            loadAdmins();
+          }}
+        >
+          <SearchInput
+            className="min-w-0 flex-1 basis-60"
+            placeholder="Search by name, email, or employee id"
+            value={filters.search}
+            onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
+          />
+          <select
+            className="ui-select"
+            aria-label="College"
+            value={filters.collegeId}
+            onChange={(event) => setFilters((prev) => ({ ...prev, collegeId: event.target.value }))}
+          >
+            <option value="">All colleges</option>
+            {colleges.map((college) => (
+              <option key={college.id} value={college.id}>{college.name}</option>
+            ))}
+          </select>
+          <select
+            className="ui-select"
+            aria-label="Status"
+            value={filters.status}
+            onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}
+          >
+            <option value="all">All status</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+          <Button type="submit" className={ui.btn}>Search</Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className={ui.btn}
+            disabled={!hasFilters}
+            onClick={() => {
+              setFilters({ search: "", collegeId: "", status: "all" });
+              dispatch(fetchSuperAdmins("?page=1&limit=100"));
+            }}
+          >
+            <RotateCcw className="size-4" />
+            Reset Filters
+          </Button>
+        </form>
+
+        <DataTable
+          columns={columns}
+          rows={admins}
+          getRowKey={(admin) => getAdminId(admin)}
+          loading={adminsLoading && admins.length === 0}
+          minWidth={1040}
+          caption="Admins"
+          rowClassName={(admin) => (admin.isActive ? "" : "bg-muted/30")}
+          empty={
+            <EmptyState
+              icon={ShieldUser}
+              title={hasFilters ? "No admins match these filters" : "No admins yet"}
+              description={hasFilters ? "Try clearing the filters." : "Create an admin using the form above."}
+              className="border-0"
             />
-
-            <select
-              className="h-10 rounded-lg border border-border px-2"
-              value={filters.collegeId}
-              onChange={(event) => setFilters((prev) => ({ ...prev, collegeId: event.target.value }))}
-            >
-              <option value="">All colleges</option>
-              {colleges.map((college) => (
-                <option key={college.id} value={college.id}>{college.name}</option>
-              ))}
-            </select>
-
-            <select
-              className="h-10 rounded-lg border border-border px-2"
-              value={filters.status}
-              onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}
-            >
-              <option value="all">All status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button className="bg-primary hover:bg-primary" onClick={loadAdmins}>Search</Button>
-            <Button
-              className="bg-red-500 hover:bg-red-500 text-white"
-              onClick={() => {
-                setFilters({ search: "", collegeId: "", status: "all" });
-                dispatch(fetchSuperAdmins("?page=1&limit=100"));
-              }}
-            >
-              Reset Filters
-            </Button>
-          </div>
-
-          {admins.map((admin) => (
-            <div key={getAdminId(admin)} className="flex flex-wrap items-center justify-between rounded-xl border border-border px-3 py-2 gap-2">
-              <div>
-                <p className="font-medium text-text-primary">{admin.fullName}</p>
-                <p className="text-xs text-text-secondary">{admin.email} • {admin.employeeId} • {admin.college?.name}</p>
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${admin.isActive ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
-                    {admin.isActive ? "Active" : "Inactive"}
-                  </span>
-                  <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${admin.role === "COLLEGE_ADMIN" ? "bg-emerald-500/10 text-emerald-700" : "bg-slate-500/10 text-slate-700"}`}>
-                    {admin.role === "COLLEGE_ADMIN" ? "College Admin" : "Admin"}
-                  </span>
-                  <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${String(admin.accessProfile || "EDITOR") === "VIEW_ONLY" ? "bg-blue-500/10 text-blue-600" : "bg-amber-500/10 text-amber-700"}`}>
-                    {String(admin.accessProfile || "EDITOR") === "VIEW_ONLY" ? "View Only" : "Can Edit"}
-                  </span>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <select
-                  className="h-8 rounded-lg border border-border px-2 text-xs"
-                  value={admin.accessProfile || "EDITOR"}
-                  disabled={updatingProfileId === getAdminId(admin)}
-                  onChange={(event) => updateAccessProfile(getAdminId(admin), event.target.value)}
-                >
-                  <option value="EDITOR">Can Edit</option>
-                  <option value="VIEW_ONLY">View Only</option>
-                </select>
-                <Button size="sm" className="bg-primary hover:bg-primary" onClick={() => openResetConfirm(admin)}>Reset Password</Button>
-                {admin.isActive ? (
-                  <Button size="sm" variant="destructive" onClick={() => openDeactivateConfirm(admin)}>Deactivate</Button>
-                ) : (
-                  <Button size="sm" className="bg-primary hover:bg-primary" onClick={() => openReactivateConfirm(admin)}>Reactivate</Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+          }
+        />
+      </SectionCard>
 
       <ConfirmActionDialog
         open={Boolean(pendingAction && pendingAction.type === "reactivate")}
@@ -498,15 +624,20 @@ export default function AdminsPage() {
             <AlertDialogTitle>{pendingAction?.title || "Reset Admin Password"}</AlertDialogTitle>
             <AlertDialogDescription>{pendingAction?.description || "Enter a new password for this admin."}</AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-2">
-            <p className="text-xs text-text-secondary">Password rule: at least 8 characters. This will replace the current password immediately.</p>
+          <FormField
+            label="New password"
+            htmlFor="admin-reset-password"
+            hint="At least 8 characters. This replaces the current password immediately."
+          >
             <Input
+              id="admin-reset-password"
               type="password"
+              autoComplete="new-password"
+              className={ui.field}
               value={resetPasswordValue}
               onChange={(event) => setResetPasswordValue(event.target.value)}
-              placeholder="Enter new password"
             />
-          </div>
+          </FormField>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={closeResetDialog}>Cancel</AlertDialogCancel>
             <AlertDialogAction

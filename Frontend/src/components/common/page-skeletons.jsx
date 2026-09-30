@@ -67,17 +67,16 @@ export function LeaderboardSkeleton() {
 
 export function EventsSkeleton() {
   return (
-    <section className="space-y-5">
-      <SkeletonBlock className="h-64" />
-      <div className="flex gap-2">
-        <SkeletonBlock className="h-8 w-18" />
-        <SkeletonBlock className="h-8 w-24" />
-        <SkeletonBlock className="h-8 w-24" />
+    <section className="space-y-6" aria-busy="true" aria-label="Loading">
+      <div className="space-y-2">
+        <SkeletonBlock className="h-7 w-40" />
+        <SkeletonBlock className="h-4 w-96 max-w-full" />
       </div>
+      <SkeletonBlock className="h-11 w-full max-w-xl rounded-lg" />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <SkeletonBlock className="h-64" />
-        <SkeletonBlock className="h-64" />
-        <SkeletonBlock className="h-64" />
+        <SkeletonBlock className="h-96" />
+        <SkeletonBlock className="h-96" />
+        <SkeletonBlock className="h-96" />
       </div>
     </section>
   );
@@ -85,9 +84,29 @@ export function EventsSkeleton() {
 
 export function ProfileSkeleton() {
   return (
-    <section className="grid gap-5 xl:grid-cols-[380px_1fr]">
-      <SkeletonBlock className="h-80" />
-      <SkeletonBlock className="h-80" />
+    <section className="space-y-6" aria-busy="true" aria-label="Loading">
+      <div className="space-y-2">
+        <SkeletonBlock className="h-7 w-32" />
+        <SkeletonBlock className="h-4 w-80 max-w-full" />
+      </div>
+      <SkeletonBlock className="h-56" />
+      <SkeletonBlock className="h-72" />
+    </section>
+  );
+}
+
+export function TestListSkeleton({ rows = 3 }) {
+  return (
+    <section className="space-y-6" aria-busy="true" aria-label="Loading">
+      <div className="space-y-2">
+        <SkeletonBlock className="h-7 w-56" />
+        <SkeletonBlock className="h-4 w-80 max-w-full" />
+      </div>
+      <div className="space-y-3">
+        {Array.from({ length: rows }).map((_, index) => (
+          <SkeletonBlock key={index} className="h-32" />
+        ))}
+      </div>
     </section>
   );
 }

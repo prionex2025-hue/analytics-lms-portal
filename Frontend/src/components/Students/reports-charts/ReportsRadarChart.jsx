@@ -20,8 +20,8 @@ export function ReportsRadarChart({ data = [] }) {
 
   if (normalized.length === 0) {
     return (
-      <Card className="p-5">
-        <Empty className="border border-border">
+      <Card className="gap-0 py-0 rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
+        <Empty className="min-h-64 border border-dashed border-border">
           <EmptyHeader>
             <EmptyTitle>No Topic Performance Data</EmptyTitle>
             <EmptyDescription>Topic-level analysis will appear once enough data is available.</EmptyDescription>
@@ -32,15 +32,15 @@ export function ReportsRadarChart({ data = [] }) {
   }
 
   return (
-    <Card className="min-w-0 p-5">
-      <h3 className="text-base font-semibold text-text-primary">Topic-wise Performance</h3>
+    <Card className="min-w-0 gap-0 py-0 rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
+      <div><h3 className="text-base font-semibold text-text-primary">Topic performance</h3><p className="mt-0.5 text-sm text-text-secondary">Average score by topic.</p></div>
       <div className="mt-4 h-64 w-full min-w-0">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 320, height: 200 }}>
           <RadarChart data={normalized}>
-            <PolarGrid />
-            <PolarAngleAxis dataKey="topic" tick={{ fontSize: 11 }} />
-            <Radar dataKey="value" stroke="var(--primary-dark)" fill="var(--primary-dark)" fillOpacity={0.3} />
-            <Tooltip formatter={(value) => [`${value}%`, "Score"]} />
+            <PolarGrid stroke="var(--border)" />
+            <PolarAngleAxis dataKey="topic" tick={{ fontSize: 12, fill: "var(--text-secondary)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+            <Radar dataKey="value" stroke="var(--primary)" fill="var(--primary)" fillOpacity={0.2} />
+            <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-primary)", fontSize: 12 }} formatter={(value) => [`${value}%`, "Score"]} />
           </RadarChart>
         </ResponsiveContainer>
       </div>

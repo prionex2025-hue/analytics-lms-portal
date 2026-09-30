@@ -46,7 +46,7 @@ export default function ViolationReviewDialog({ open, onOpenChange, studentName,
           <DialogDescription>{studentName || "Student"} - exam-time violations captured by proctoring.</DialogDescription>
         </DialogHeader>
 
-        {note ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-text-primary">{note}</div> : null}
+        {note ? <div className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-text-primary">{note}</div> : null}
 
         {events.length === 0 ? (
           <div className="rounded-xl border border-border bg-background p-4 text-sm text-text-secondary">
@@ -89,7 +89,7 @@ export default function ViolationReviewDialog({ open, onOpenChange, studentName,
                         </div>
                       </>
                     ) : null}
-                    {isCurrent && review.error ? <p className="text-xs text-red-500">{review.error}</p> : null}
+                    {isCurrent && review.error ? <p className="text-xs text-danger">{review.error}</p> : null}
                   </div>
                 </div>
               );

@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Trash2, Upload, X } from "lucide-react";
+import { Ban, CalendarDays, Download, Globe2, ImageOff, MapPin, Pencil, Plus, Save, Trash2, Upload, Users } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "@/services/api";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -14,6 +12,22 @@ import { validateImageFile } from "@/lib/image";
 import { optimizeCloudinaryImage } from "@/lib/cloudinary";
 import usePermission from "@/hooks/usePermission";
 import { ADMIN_PERMISSIONS } from "@/features/Admin/adminPermissions";
+import ConfirmActionDialog from "@/components/Admin/ConfirmActionDialog";
+import { Callout, EmptyState, ErrorState, FormField, Modal, PageHeader, PaginationBar, SectionCard, StatusBadge } from "@/components/common/page-kit";
+import { cn } from "@/lib/utils";
+
+const EVENT_STATUS_TONE = { ACTIVE: "success", EXPIRED: "neutral", CANCELLED: "danger" };
+const EVENT_STATUS_LABEL = { ACTIVE: "Active", EXPIRED: "Expired", CANCELLED: "Cancelled" };
+
+function FormGroup({ title, children }) {
+  return (
+    <fieldset className="min-w-0 border-t border-border pt-5 first:border-t-0 first:pt-0">
+      <legend className="sr-only">{title}</legend>
+      <p className="mb-4 text-sm font-semibold text-text-primary" aria-hidden="true">{title}</p>
+      <div className="space-y-4">{children}</div>
+    </fieldset>
+  );
+}
 
 const EVENT_TYPES = ["Workshop", "Hackathon", "Symposium", "Other"];
 const EVENT_PAGE_SIZE = 8;
@@ -82,6 +96,9 @@ export default function EventsPage() {
   const [eventImagePreview, setEventImagePreview] = useState("");
   const [editingEventId, setEditingEventId] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
+  const [formOpen, setFormOpen] = useState(false);
+  const [pendingDeleteEvent, setPendingDeleteEvent] = useState(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const canManageEvents = usePermission(ADMIN_PERMISSIONS.MANAGE_EVENTS);
   const canViewEvents = usePermission(ADMIN_PERMISSIONS.VIEW_EVENTS) || canManageEvents;
 
@@ -283,11 +300,12 @@ export default function EventsPage() {
 
   const saveEvent = () => {
     const payload = buildEventPayload();
+    const closeOnSuccess = { onSuccess: () => setFormOpen(false) };
     if (editingEventId) {
-      updateMutation.mutate({ eventId: editingEventId, payload });
+      updateMutation.mutate({ eventId: editingEventId, payload }, closeOnSuccess);
       return;
     }
-    createMutation.mutate(payload);
+    createMutation.mutate(payload, closeOnSuccess);
   };
 
   const onEventImageSelected = (event) => {
@@ -329,294 +347,375 @@ export default function EventsPage() {
     return <PermissionDenied action="access events" />;
   }
 
+  const bannerTone = banner.type === "error" ? "danger" : banner.type === "warning" ? "warning" : "success";
+  const saving = createMutation.isPending || updateMutation.isPending;
+  const canSave = !saving && form.title && form.startsAt && form.eventDate && !(form.feeType === "paid" && Number(form.registrationFee || 0) <= 0);
+  const scopeLabel = (event) =>
+    (event.visibilityScope || (event.isInterCollege ? "INTER_COLLEGE" : "COLLEGE_ONLY")) === "INTER_COLLEGE" ? "Inter-college" : "College-only";
+
+  const openCreate = () => {
+    resetForm();
+    setFormOpen(true);
+  };
+  const closeForm = (open) => {
+    if (open) return;
+    setFormOpen(false);
+    if (editingEventId) resetForm();
+  };
+
   return (
     <div className="space-y-6">
+      <PageHeader
+        title="Events"
+        description="Publish college and inter-college events, then track and export registrations."
+        actions={
+          canManageEvents ? (
+            <Button className="h-10 rounded-lg px-4" onClick={openCreate}>
+              <Plus className="size-4" />
+              Create Event
+            </Button>
+          ) : null
+        }
+      />
+
       {banner.type ? (
-        <Alert variant={banner.type === "error" ? "destructive" : "default"} className={banner.type === "warning" ? "border-warning/30 bg-warning/10 text-warning" : ""}>
-          <AlertTitle>{banner.title}</AlertTitle>
-          <AlertDescription>{banner.message}</AlertDescription>
-        </Alert>
+        <Callout tone={bannerTone} title={banner.title}>
+          {banner.message}
+        </Callout>
       ) : null}
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(300px,380px)_minmax(0,1fr)]">
+        <SectionCard
+          flush
+          title="Events"
+          description={`${events.length} total`}
+          footer={
+            events.length > EVENT_PAGE_SIZE ? (
+              <PaginationBar page={eventPage} pages={totalEventPages} onPageChange={(next) => setEventPage(Math.min(Math.max(next, 1), totalEventPages))} />
+            ) : null
+          }
+        >
+          {eventsQuery.isLoading ? (
+            <div className="space-y-2 p-4" aria-busy="true">
+              <SkeletonBlock className="h-20 rounded-lg" />
+              <SkeletonBlock className="h-20 rounded-lg" />
+              <SkeletonBlock className="h-20 rounded-lg" />
+            </div>
+          ) : eventsQuery.isError ? (
+            <ErrorState className="m-4" title="Unable to load events" description={eventsQuery.error?.message || "Unable to load events."} onRetry={() => eventsQuery.refetch()} />
+          ) : pagedEvents.length === 0 ? (
+            <EmptyState icon={CalendarDays} title="No events created yet" description={canManageEvents ? "Create your first event with the button above." : "Events will appear here once published."} className="border-0" />
+          ) : (
+            <ul className="divide-y divide-border">
+              {pagedEvents.map((event) => {
+                const status = getEventStatus(event);
+                const isExpired = status === "EXPIRED";
+                const active = selectedEventId === event.id;
+                return (
+                  <li key={event.id} className={cn("flex gap-3 px-4 py-3 transition-colors sm:px-5", active ? "bg-primary/5" : "hover:bg-muted/40")}>
+                    <div className="size-14 shrink-0 overflow-hidden rounded-lg bg-muted">
+                      {event.imageUrl ? (
+                        <img
+                          src={optimizeCloudinaryImage(event.imageUrl, { width: 160, height: 160, crop: "fill" })}
+                          alt=""
+                          width="56"
+                          height="56"
+                          loading="lazy"
+                          decoding="async"
+                          className={cn("size-full object-cover", isExpired ? "opacity-65 grayscale" : "")}
+                        />
+                      ) : (
+                        <div className="grid size-full place-items-center text-text-secondary/60">
+                          <ImageOff className="size-4" aria-hidden="true" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedEventId(event.id);
+                          setRegistrantPage(1);
+                        }}
+                        aria-pressed={active}
+                        className={cn("block w-full truncate rounded text-left font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50", active ? "text-primary" : "text-text-primary")}
+                      >
+                        {event.title}
+                      </button>
+                      <p className="mt-0.5 truncate text-xs text-text-secondary">
+                        {event.eventType} · {scopeLabel(event)} · {new Date(event.startsAt).toLocaleDateString()}
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <StatusBadge tone={EVENT_STATUS_TONE[status] || "neutral"}>{EVENT_STATUS_LABEL[status] || status}</StatusBadge>
+                        <span className="text-xs tabular-nums text-text-secondary">
+                          {event.registrantCount || 0}/{event.registrationLimit} registered
+                        </span>
+                      </div>
+                    </div>
+                    {canManageEvents ? (
+                      <div className="flex shrink-0 flex-col gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-lg"
+                          className="rounded-lg text-text-secondary"
+                          onClick={() => {
+                            startEdit(event);
+                            setFormOpen(true);
+                          }}
+                        >
+                          <Pencil className="size-4" />
+                          <span className="sr-only">Edit {event.title}</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-lg"
+                          className="rounded-lg text-text-secondary hover:bg-danger/10 hover:text-danger"
+                          disabled={deleteMutation.isPending}
+                          onClick={() => setPendingDeleteEvent(event)}
+                        >
+                          <Trash2 className="size-4" />
+                          <span className="sr-only">Delete {event.title}</span>
+                        </Button>
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </SectionCard>
+
+        <SectionCard
+          flush
+          title={selectedEvent ? selectedEvent.title : "Event registrants"}
+          description={
+            selectedEvent
+              ? `${registrants.length} registration${registrants.length === 1 ? "" : "s"} captured for this event.`
+              : "Select an event to review registrations, export attendees, or cancel the event."
+          }
+          actions={
+            selectedEvent ? (
+              <Button type="button" variant="outline" className="h-9 rounded-lg" disabled={selectedEventQuery.isLoading} onClick={downloadCsv}>
+                <Download className="size-4" />
+                Download Registrants
+              </Button>
+            ) : null
+          }
+          footer={
+            selectedEvent && registrants.length > REGISTRANT_PAGE_SIZE ? (
+              <PaginationBar
+                page={registrantPage}
+                pages={totalRegistrantPages}
+                onPageChange={(next) => setRegistrantPage(Math.min(Math.max(next, 1), totalRegistrantPages))}
+              />
+            ) : null
+          }
+        >
+          {!selectedEvent ? (
+            <EmptyState icon={Users} title="No event selected" description="Pick an event from the list to see who registered." className="border-0 py-12" />
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-3 text-sm text-text-secondary sm:px-5">
+                <span className="inline-flex items-center gap-1.5"><CalendarDays className="size-4" aria-hidden="true" />{new Date(selectedEvent.startsAt).toLocaleString()}</span>
+                {selectedEvent.location ? <span className="inline-flex items-center gap-1.5"><MapPin className="size-4" aria-hidden="true" />{selectedEvent.location}</span> : null}
+                <span className="inline-flex items-center gap-1.5"><Globe2 className="size-4" aria-hidden="true" />{scopeLabel(selectedEvent)}</span>
+              </div>
+
+              {canManageEvents && getEventStatus(selectedEvent) === "ACTIVE" ? (
+                <form
+                  className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-end sm:px-5"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (cancelReason.trim() && !cancelMutation.isPending) setConfirmCancel(true);
+                  }}
+                >
+                  <FormField label="Cancel this event" htmlFor="event-cancel-reason" hint="Registrants will see this reason." className="flex-1">
+                    <Input id="event-cancel-reason" className="h-10 rounded-lg" value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Cancellation reason" />
+                  </FormField>
+                  <Button type="submit" variant="ghost" className="h-10 rounded-lg text-danger hover:bg-danger/10 hover:text-danger" disabled={!cancelReason.trim() || cancelMutation.isPending}>
+                    <Ban className="size-4" />
+                    {cancelMutation.isPending ? "Cancelling..." : "Cancel Event"}
+                  </Button>
+                </form>
+              ) : null}
+
+              {selectedEventQuery.isLoading ? (
+                <div className="space-y-2 p-4" aria-busy="true">
+                  <SkeletonBlock className="h-10 rounded-lg" />
+                  <SkeletonBlock className="h-10 rounded-lg" />
+                </div>
+              ) : selectedEventQuery.isError ? (
+                <ErrorState className="m-4" title="Unable to load registrants" description={selectedEventQuery.error?.message || "Unable to load registrants."} onRetry={() => selectedEventQuery.refetch()} />
+              ) : pagedRegistrants.length === 0 ? (
+                <EmptyState icon={Users} title="No registrants yet" description="Registrations will appear here as students sign up." className="border-0" />
+              ) : (
+                <div className="relative overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/50 text-left text-xs font-medium tracking-wide text-text-secondary uppercase">
+                        <th className="h-10 px-4 first:pl-5">Name</th>
+                        <th className="h-10 px-4">Email</th>
+                        <th className="h-10 px-4 last:pr-5">Registered</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {pagedRegistrants.map((registrant, index) => {
+                        const student = registrant.student || registrant.user || registrant;
+                        const name = student.fullName || student.name || registrant.fullName || "-";
+                        const email = student.email || registrant.email || "-";
+                        const registeredAt = registrant.registeredAt || registrant.createdAt || registrant.updatedAt;
+                        return (
+                          <tr key={registrant.id || `${email}-${index}`} className="hover:bg-muted/40">
+                            <td className="px-4 py-3 font-medium text-text-primary first:pl-5">{name}</td>
+                            <td className="px-4 py-3 text-text-secondary">{email}</td>
+                            <td className="px-4 py-3 whitespace-nowrap text-text-secondary last:pr-5">{registeredAt ? new Date(registeredAt).toLocaleDateString() : "-"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </SectionCard>
+      </div>
 
       {canManageEvents ? (
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>{editingEventId ? "Edit Event" : "Create Event"}</CardTitle>
-            <CardDescription>Event date/deadline with custom registration fields and participant cap.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-          <div className="space-y-1.5">
-            <label htmlFor="event-title" className="text-sm font-medium text-text-secondary">Title</label>
-            <Input id="event-title" placeholder="Title" value={form.title} onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))} />
-          </div>
-          <div className="space-y-1.5">
-            <label htmlFor="event-description" className="text-sm font-medium text-text-secondary">Description</label>
-            <Textarea id="event-description" placeholder="Description" value={form.description} onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))} />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-text-secondary">Event photo</label>
-            <div className="flex flex-col gap-3 rounded-xl border border-dashed border-border bg-background/70 p-3 sm:flex-row sm:items-center">
-              <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-text-secondary">
-                <Upload className="size-4" />
-                {eventImageFile ? "Change Photo" : "Upload Photo"}
-                <input
-                  ref={eventImageInputRef}
-                  type="file"
-                  accept="image/png,image/jpeg"
-                  className="hidden"
-                  onChange={onEventImageSelected}
-                />
-              </label>
-              <p className="text-xs text-text-secondary">JPG/PNG only, max 2MB. The image will be uploaded to Cloudinary.</p>
-            </div>
-            {eventImagePreview ? (
-              <img
-                src={eventImagePreview}
-                alt="Event preview"
-                width="640"
-                height="320"
-                decoding="async"
-                className="h-44 w-full rounded-xl border border-border object-cover sm:h-52"
-              />
-            ) : null}
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1.5">
-              <label htmlFor="event-type" className="text-sm font-medium text-text-secondary">Event type</label>
-              <select id="event-type" className="h-10 w-full rounded-md border border-border px-3 text-sm" value={form.eventType} onChange={(event) => setForm((prev) => ({ ...prev, eventType: event.target.value }))}>
-                {EVENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="event-location" className="text-sm font-medium text-text-secondary">Location</label>
-              <Input id="event-location" placeholder="Location" value={form.location} onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="event-visibility" className="text-sm font-medium text-text-secondary">Participation scope</label>
-              <select id="event-visibility" className="h-10 w-full rounded-md border border-border px-3 text-sm" value={form.visibilityScope} onChange={(event) => setForm((prev) => ({ ...prev, visibilityScope: event.target.value }))}>
-                <option value="COLLEGE_ONLY">College Level Event</option>
-                <option value="INTER_COLLEGE">Inter-college Event (all colleges)</option>
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="event-max-participants" className="text-sm font-medium text-text-secondary">Max participants</label>
-              <Input id="event-max-participants" type="number" min={1} placeholder="Max participants" value={form.registrationLimit} onChange={(event) => setForm((prev) => ({ ...prev, registrationLimit: Number(event.target.value) }))} />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="event-fee-type" className="text-sm font-medium text-text-secondary">Registration fees</label>
-              <select id="event-fee-type" className="h-10 w-full rounded-md border border-border px-3 text-sm" value={form.feeType} onChange={(event) => setForm((prev) => ({ ...prev, feeType: event.target.value, registrationFee: event.target.value === "free" ? "" : prev.registrationFee }))}>
-                <option value="free">Free</option>
-                <option value="paid">Paid</option>
-              </select>
-            </div>
-            {form.feeType === "paid" ? (
-              <div className="space-y-1.5">
-                <label htmlFor="event-registration-fee" className="text-sm font-medium text-text-secondary">Amount</label>
-                <Input id="event-registration-fee" type="number" min={0} step="0.01" placeholder="Amount" value={form.registrationFee} onChange={(event) => setForm((prev) => ({ ...prev, registrationFee: event.target.value }))} />
-              </div>
-            ) : null}
-            <div className="space-y-1.5">
-              <label htmlFor="event-starts-at" className="text-sm font-medium text-text-secondary">Starts at</label>
-              <Input id="event-starts-at" type="datetime-local" value={form.startsAt} onChange={(event) => setForm((prev) => ({ ...prev, startsAt: event.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="event-ends-at" className="text-sm font-medium text-text-secondary">Ends at</label>
-              <Input id="event-ends-at" type="datetime-local" value={form.endsAt} onChange={(event) => setForm((prev) => ({ ...prev, endsAt: event.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="event-date" className="text-sm font-medium text-text-secondary">Event date</label>
-              <Input id="event-date" type="date" value={form.eventDate} onChange={(event) => setForm((prev) => ({ ...prev, eventDate: event.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="event-registration-deadline" className="text-sm font-medium text-text-secondary">Registration deadline</label>
-              <Input id="event-registration-deadline" type="date" value={form.registrationDeadline} onChange={(event) => setForm((prev) => ({ ...prev, registrationDeadline: event.target.value }))} />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <label htmlFor="event-registration-url" className="text-sm font-medium text-text-secondary">Registration URL (optional)</label>
-              <Input id="event-registration-url" placeholder="Registration URL (optional)" value={form.registrationUrl} onChange={(event) => setForm((prev) => ({ ...prev, registrationUrl: event.target.value }))} />
-            </div>
-          </div>
-
-          
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={saveEvent} disabled={createMutation.isPending || updateMutation.isPending || !form.title || !form.startsAt || !form.eventDate || (form.feeType === "paid" && Number(form.registrationFee || 0) <= 0)}>
-              {createMutation.isPending || updateMutation.isPending ? "Saving..." : editingEventId ? "Save Event" : "Create Event"}
-            </Button>
-            {editingEventId ? (
-              <Button type="button" variant="outline" onClick={resetForm}>
-                <X className="size-4" />
-                Cancel Edit
+        <Modal
+          open={formOpen}
+          onOpenChange={closeForm}
+          size="xl"
+          title={editingEventId ? "Edit Event" : "Create Event"}
+          description="Event date/deadline with custom registration fields and participant cap."
+          footer={
+            <>
+              <Button type="button" variant="outline" className="h-10 rounded-lg px-4" onClick={() => closeForm(false)}>Cancel</Button>
+              <Button type="submit" form="admin-event-form" className="h-10 rounded-lg px-4" disabled={!canSave}>
+                {editingEventId ? <Save className="size-4" /> : <Plus className="size-4" />}
+                {saving ? "Saving..." : editingEventId ? "Save Event" : "Create Event"}
               </Button>
-            ) : null}
-          </div>
-          </CardContent>
-        </Card>
+            </>
+          }
+        >
+          <form
+            id="admin-event-form"
+            className="space-y-6"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (canSave) saveEvent();
+            }}
+          >
+            <FormGroup title="Details">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
+                <div className="space-y-4">
+                  <FormField label="Title" htmlFor="event-title" required>
+                    <Input id="event-title" className="h-10 rounded-lg" value={form.title} onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))} />
+                  </FormField>
+                  <FormField label="Description" htmlFor="event-description">
+                    <Textarea id="event-description" className="min-h-24 rounded-lg" value={form.description} onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))} />
+                  </FormField>
+                </div>
+                <FormField label="Event photo" hint="JPG/PNG only, max 2MB.">
+                  <label className="group relative flex aspect-video cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-lg border border-dashed border-border bg-muted/40 text-sm text-text-secondary transition-colors hover:border-primary/50 hover:bg-primary/5 focus-within:ring-3 focus-within:ring-ring/50">
+                    {eventImagePreview ? (
+                      <img src={eventImagePreview} alt="Event preview" width="640" height="360" decoding="async" className="absolute inset-0 size-full object-cover" />
+                    ) : (
+                      <>
+                        <Upload className="size-5" aria-hidden="true" />
+                        <span className="font-medium">{eventImageFile ? "Change Photo" : "Upload Photo"}</span>
+                      </>
+                    )}
+                    <input ref={eventImageInputRef} type="file" accept="image/png,image/jpeg" className="sr-only" onChange={onEventImageSelected} />
+                  </label>
+                </FormField>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <FormField label="Event type" htmlFor="event-type">
+                  <select id="event-type" className="ui-select w-full" value={form.eventType} onChange={(event) => setForm((prev) => ({ ...prev, eventType: event.target.value }))}>
+                    {EVENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                </FormField>
+                <FormField label="Location" htmlFor="event-location">
+                  <Input id="event-location" className="h-10 rounded-lg" value={form.location} onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))} />
+                </FormField>
+                <FormField label="Participation scope" htmlFor="event-visibility">
+                  <select id="event-visibility" className="ui-select w-full" value={form.visibilityScope} onChange={(event) => setForm((prev) => ({ ...prev, visibilityScope: event.target.value }))}>
+                    <option value="COLLEGE_ONLY">College Level Event</option>
+                    <option value="INTER_COLLEGE">Inter-college Event (all colleges)</option>
+                  </select>
+                </FormField>
+              </div>
+            </FormGroup>
+
+            <FormGroup title="Schedule">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField label="Starts at" htmlFor="event-starts-at" required>
+                  <Input id="event-starts-at" type="datetime-local" className="h-10 rounded-lg" value={form.startsAt} onChange={(event) => setForm((prev) => ({ ...prev, startsAt: event.target.value }))} />
+                </FormField>
+                <FormField label="Ends at" htmlFor="event-ends-at">
+                  <Input id="event-ends-at" type="datetime-local" className="h-10 rounded-lg" value={form.endsAt} onChange={(event) => setForm((prev) => ({ ...prev, endsAt: event.target.value }))} />
+                </FormField>
+                <FormField label="Event date" htmlFor="event-date" required>
+                  <Input id="event-date" type="date" className="h-10 rounded-lg" value={form.eventDate} onChange={(event) => setForm((prev) => ({ ...prev, eventDate: event.target.value }))} />
+                </FormField>
+                <FormField label="Registration deadline" htmlFor="event-registration-deadline">
+                  <Input id="event-registration-deadline" type="date" className="h-10 rounded-lg" value={form.registrationDeadline} onChange={(event) => setForm((prev) => ({ ...prev, registrationDeadline: event.target.value }))} />
+                </FormField>
+              </div>
+            </FormGroup>
+
+            <FormGroup title="Registration">
+              <div className="grid gap-4 sm:grid-cols-3">
+                <FormField label="Max participants" htmlFor="event-max-participants">
+                  <Input id="event-max-participants" type="number" min={1} className="h-10 rounded-lg" value={form.registrationLimit} onChange={(event) => setForm((prev) => ({ ...prev, registrationLimit: Number(event.target.value) }))} />
+                </FormField>
+                <FormField label="Registration fees" htmlFor="event-fee-type">
+                  <select id="event-fee-type" className="ui-select w-full" value={form.feeType} onChange={(event) => setForm((prev) => ({ ...prev, feeType: event.target.value, registrationFee: event.target.value === "free" ? "" : prev.registrationFee }))}>
+                    <option value="free">Free</option>
+                    <option value="paid">Paid</option>
+                  </select>
+                </FormField>
+                {form.feeType === "paid" ? (
+                  <FormField label="Amount" htmlFor="event-registration-fee" required>
+                    <Input id="event-registration-fee" type="number" min={0} step="0.01" className="h-10 rounded-lg" value={form.registrationFee} onChange={(event) => setForm((prev) => ({ ...prev, registrationFee: event.target.value }))} />
+                  </FormField>
+                ) : null}
+              </div>
+              <FormField label="Registration URL" htmlFor="event-registration-url" hint="Optional">
+                <Input id="event-registration-url" type="url" placeholder="https://" className="h-10 rounded-lg" value={form.registrationUrl} onChange={(event) => setForm((prev) => ({ ...prev, registrationUrl: event.target.value }))} />
+              </FormField>
+            </FormGroup>
+          </form>
+        </Modal>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(280px,360px)_1fr]">
-        <Card className="rounded-2xl border-border">
-          <CardHeader><CardTitle>Events</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {eventsQuery.isLoading ? (
-              <div className="space-y-2">
-                <SkeletonBlock className="h-18" />
-                <SkeletonBlock className="h-18" />
-                <SkeletonBlock className="h-18" />
-              </div>
-            ) : null}
-            {eventsQuery.isError ? <p className="text-sm text-danger">{eventsQuery.error?.message || "Unable to load events."}</p> : null}
-            {!eventsQuery.isLoading && !eventsQuery.isError && pagedEvents.length === 0 ? <p className="text-sm text-text-secondary">No events created yet.</p> : null}
-            {pagedEvents.map((event) => {
-              const status = getEventStatus(event);
-              const isExpired = status === "EXPIRED";
+      <ConfirmActionDialog
+        open={Boolean(pendingDeleteEvent)}
+        onOpenChange={(open) => !open && setPendingDeleteEvent(null)}
+        title="Delete event"
+        description={`Delete “${pendingDeleteEvent?.title || "this event"}”? This cannot be undone.`}
+        confirmLabel="Delete Event"
+        confirmVariant="destructive"
+        onConfirm={() => {
+          const target = pendingDeleteEvent;
+          setPendingDeleteEvent(null);
+          if (target?.id) deleteMutation.mutate(target.id);
+        }}
+      />
 
-              return (
-              <div
-                key={event.id}
-                className={`w-full rounded-xl border px-3 py-2 text-left ${selectedEventId === event.id ? "border-primary/40 bg-primary/10" : "border-border"}`}
-              >
-                {event.imageUrl ? (
-                  <img
-                    src={optimizeCloudinaryImage(event.imageUrl, { width: 640, height: 320, crop: "fill" })}
-                    alt={`${event.title} cover`}
-                    width="640"
-                    height="320"
-                    loading="lazy"
-                    decoding="async"
-                    className={`mb-3 h-28 w-full rounded-lg object-cover ${isExpired ? "grayscale opacity-65" : ""}`}
-                  />
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedEventId(event.id);
-                    setRegistrantPage(1);
-                  }}
-                  className="w-full text-left"
-                >
-                  <p className="font-medium text-text-primary">{event.title}</p>
-                </button>
-                <p className="text-xs text-text-secondary">{event.eventType} • {(event.visibilityScope || (event.isInterCollege ? "INTER_COLLEGE" : "COLLEGE_ONLY")) === "INTER_COLLEGE" ? "Inter-college" : "College-only"} • {new Date(event.startsAt).toLocaleString()} • {event.registrantCount || 0}/{event.registrationLimit}</p>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {status !== "ACTIVE" ? <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-text-secondary">{status}</span> : null}
-                  {canManageEvents ? (
-                    <>
-                      <Button type="button" variant="outline" size="sm" onClick={() => startEdit(event)}>
-                        <Pencil className="size-4" />
-                        Edit
-                      </Button>
-                      <Button type="button" variant="destructive" size="sm" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate(event.id)}>
-                        <Trash2 className="size-4" />
-                        Delete
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
-              </div>
-              );
-            })}
-            {events.length > EVENT_PAGE_SIZE ? (
-              <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-text-secondary">
-                <p>Page {eventPage} of {totalEventPages}</p>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" disabled={eventPage <= 1} onClick={() => setEventPage((prev) => Math.max(prev - 1, 1))}>Previous</Button>
-                  <Button variant="outline" size="sm" disabled={eventPage >= totalEventPages} onClick={() => setEventPage((prev) => Math.min(prev + 1, totalEventPages))}>Next</Button>
-                </div>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>{selectedEvent ? selectedEvent.title : "Event Registrants"}</CardTitle>
-            <CardDescription>
-              {selectedEvent
-                ? `${registrants.length} registration${registrants.length === 1 ? "" : "s"} captured for this event.`
-                : "Select an event to review registrations, export attendees, or cancel the event."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!selectedEvent ? (
-              <p className="text-sm text-text-secondary">No event selected.</p>
-            ) : (
-              <>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button type="button" variant="outline" disabled={selectedEventQuery.isLoading} onClick={downloadCsv}>
-                    Download Registrants
-                  </Button>
-                  {canManageEvents && getEventStatus(selectedEvent) === "ACTIVE" ? (
-                    <>
-                      <Input
-                        value={cancelReason}
-                        onChange={(event) => setCancelReason(event.target.value)}
-                        placeholder="Cancellation reason"
-                        className="min-w-56 flex-1"
-                      />
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        disabled={!cancelReason.trim() || cancelMutation.isPending}
-                        onClick={() => cancelMutation.mutate({ eventId: selectedEventId, reason: cancelReason.trim() })}
-                      >
-                        {cancelMutation.isPending ? "Cancelling..." : "Cancel Event"}
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
-
-                {selectedEventQuery.isLoading ? (
-                  <div className="space-y-2">
-                    <SkeletonBlock className="h-12" />
-                    <SkeletonBlock className="h-12" />
-                  </div>
-                ) : null}
-                {selectedEventQuery.isError ? (
-                  <p className="text-sm text-danger">{selectedEventQuery.error?.message || "Unable to load registrants."}</p>
-                ) : null}
-                {!selectedEventQuery.isLoading && !selectedEventQuery.isError && pagedRegistrants.length === 0 ? (
-                  <p className="text-sm text-text-secondary">No registrants yet.</p>
-                ) : null}
-                {pagedRegistrants.length > 0 ? (
-                  <div className="overflow-hidden rounded-xl border border-border">
-                    <div className="grid grid-cols-[1.5fr_1.5fr_1fr] bg-muted px-3 py-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                      <span>Name</span>
-                      <span>Email</span>
-                      <span>Registered</span>
-                    </div>
-                    {pagedRegistrants.map((registrant, index) => {
-                      const student = registrant.student || registrant.user || registrant;
-                      const name = student.fullName || student.name || registrant.fullName || "-";
-                      const email = student.email || registrant.email || "-";
-                      const registeredAt = registrant.registeredAt || registrant.createdAt || registrant.updatedAt;
-                      return (
-                        <div key={registrant.id || `${email}-${index}`} className="grid grid-cols-[1.5fr_1.5fr_1fr] border-t border-border px-3 py-2 text-sm">
-                          <span className="truncate font-medium text-text-primary">{name}</span>
-                          <span className="truncate text-text-secondary">{email}</span>
-                          <span className="text-text-secondary">{registeredAt ? new Date(registeredAt).toLocaleDateString() : "-"}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-                {registrants.length > REGISTRANT_PAGE_SIZE ? (
-                  <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-text-secondary">
-                    <p>Page {registrantPage} of {totalRegistrantPages}</p>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" disabled={registrantPage <= 1} onClick={() => setRegistrantPage((prev) => Math.max(prev - 1, 1))}>Previous</Button>
-                      <Button variant="outline" size="sm" disabled={registrantPage >= totalRegistrantPages} onClick={() => setRegistrantPage((prev) => Math.min(prev + 1, totalRegistrantPages))}>Next</Button>
-                    </div>
-                  </div>
-                ) : null}
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-      </div>
+      <ConfirmActionDialog
+        open={confirmCancel}
+        onOpenChange={setConfirmCancel}
+        title="Cancel event"
+        description={`Cancel “${selectedEvent?.title || "this event"}”? Registrants will see the reason: “${cancelReason.trim()}”.`}
+        confirmLabel="Cancel Event"
+        cancelLabel="Keep Event"
+        confirmVariant="destructive"
+        onConfirm={() => cancelMutation.mutate({ eventId: selectedEventId, reason: cancelReason.trim() })}
+      />
     </div>
   );
 }

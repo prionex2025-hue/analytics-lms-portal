@@ -249,3 +249,72 @@
     @apply text-text-secondary;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Native form controls used by admin pages (raw <select>/<input type=checkbox>).
+ * One consistent, theme-aware look; layout (width, grid span) stays on the
+ * element's own utility classes.
+ * ------------------------------------------------------------------------- */
+@layer components {
+  .ui-select {
+    height: 2.5rem;
+    min-width: 0;
+    border-radius: 0.5rem;
+    border: 1px solid var(--input);
+    background-color: var(--card);
+    color: var(--text-primary);
+    padding: 0 2.25rem 0 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 1rem;
+    transition: border-color 150ms, box-shadow 150ms;
+    cursor: pointer;
+  }
+  .ui-select:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--input) 60%, var(--text-secondary) 40%);
+  }
+  .ui-select:focus-visible {
+    outline: none;
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 30%, transparent);
+  }
+  .ui-select:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+  .ui-select[multiple] {
+    height: auto;
+    min-height: 7rem;
+    padding: 0.375rem;
+    background-image: none;
+    cursor: default;
+  }
+  .ui-select[multiple] option {
+    border-radius: 0.375rem;
+    padding: 0.375rem 0.5rem;
+  }
+  .ui-select option {
+    background-color: var(--popover);
+    color: var(--popover-foreground);
+  }
+
+  .ui-checkbox {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    accent-color: var(--primary);
+    cursor: pointer;
+  }
+  .ui-checkbox:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .ui-checkbox:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+}

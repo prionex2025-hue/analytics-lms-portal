@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { KeyRound, Plus, RotateCcw, ShieldCheck, ShieldOff } from "lucide-react";
+import { KeyRound, Plus, RotateCcw, ShieldCheck, ShieldOff, UserCheck, UserCog, UserX, Users } from "lucide-react";
 import { superAdminApi } from "@/services/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +16,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import TypedConfirmDialog from "@/components/SuperAdmin/TypedConfirmDialog";
+import { DataTable, EmptyState, FormField, PageHeader, SearchInput, SectionCard, StatTile, StatusBadge, Toolbar } from "@/components/common/page-kit";
+import { ui } from "@/styles/ui-tokens";
 
 const initialForm = {
   name: "",
@@ -156,63 +157,123 @@ export default function SystemAdministratorsPage() {
     setAppliedFilters(initialFilters);
   };
 
+  const passwordHint = "8+ characters with upper and lower case, a number, and a symbol.";
+
+  const columns = [
+    {
+      key: "name",
+      header: "Administrator",
+      primary: true,
+      cell: (admin) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-text-primary">{admin.fullName || admin.name}</p>
+          <p className="truncate text-xs text-text-secondary">{admin.email}</p>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (admin) => <StatusBadge tone={admin.isActive ? "success" : "danger"}>{admin.isActive ? "Active" : "Inactive"}</StatusBadge>,
+    },
+    { key: "created", header: "Created", className: "whitespace-nowrap text-text-secondary", cell: (admin) => formatDate(admin.createdAt) },
+    { key: "lastLogin", header: "Last login", className: "whitespace-nowrap text-text-secondary", cell: (admin) => formatDate(admin.lastLoginAt) },
+    {
+      key: "actions",
+      actions: true,
+      align: "right",
+      cell: (admin) => (
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button size="lg" variant="outline" className="rounded-lg" onClick={() => openReset(admin)}>
+            <KeyRound className="size-4" />
+            Reset password
+          </Button>
+          {admin.isActive ? (
+            <Button
+              size="lg"
+              variant="ghost"
+              className="rounded-lg text-danger hover:bg-danger/10 hover:text-danger"
+              onClick={() => openDeactivate(admin)}
+              disabled={activeCount <= 1}
+              title={activeCount <= 1 ? "At least one active system administrator is required" : undefined}
+            >
+              <ShieldOff className="size-4" />
+              Deactivate
+            </Button>
+          ) : (
+            <Button size="lg" variant="outline" className="rounded-lg" onClick={() => openReactivate(admin)}>
+              <ShieldCheck className="size-4" />
+              Reactivate
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Card className="rounded-2xl border-border">
-          <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase text-text-secondary">Total</p>
-            <p className="mt-2 text-2xl font-semibold text-text-primary">{totalCount}</p>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border">
-          <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase text-text-secondary">Active</p>
-            <p className="mt-2 text-2xl font-semibold text-emerald-600">{activeCount}</p>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border">
-          <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase text-text-secondary">Inactive</p>
-            <p className="mt-2 text-2xl font-semibold text-rose-600">{Number(counts.inactiveSuperAdmins || 0)}</p>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border">
-          <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase text-text-secondary">Slots</p>
-            <p className="mt-2 text-2xl font-semibold text-primary">{remainingSlots}</p>
-          </CardContent>
-        </Card>
+      <PageHeader
+        title="System administrators"
+        description="Super admin accounts with full platform access. At least one must remain active."
+      />
+
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <StatTile icon={Users} label="Total" value={totalCount} />
+        <StatTile icon={UserCheck} label="Active" value={activeCount} tone="success" />
+        <StatTile icon={UserX} label="Inactive" value={Number(counts.inactiveSuperAdmins || 0)} tone="danger" />
+        <StatTile icon={UserCog} label="Remaining slots" value={remainingSlots} tone={remainingSlots > 0 ? "neutral" : "warning"} />
       </div>
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Create System Administrator</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3 lg:grid-cols-3">
-          <Input placeholder="Name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-          <Input placeholder="Email" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
-          <Input placeholder="Password" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
-          <Button className="w-full gap-2 bg-primary hover:bg-primary lg:col-span-3" onClick={createAdmin} disabled={createMutation.isPending || remainingSlots <= 0}>
-            <Plus className="size-4" />
-            {createMutation.isPending ? "Creating..." : "Create System Administrator"}
-          </Button>
-        </CardContent>
-      </Card>
+      <SectionCard
+        title="Create system administrator"
+        description={remainingSlots <= 0 ? "All slots are in use. Deactivate an account to free a slot." : `${remainingSlots} slot${remainingSlots === 1 ? "" : "s"} available.`}
+      >
+        <form
+          className="grid gap-4 lg:grid-cols-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createAdmin();
+          }}
+        >
+          <FormField label="Full name" htmlFor="sysadmin-name" required>
+            <Input id="sysadmin-name" className={ui.field} autoComplete="off" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          </FormField>
+          <FormField label="Email" htmlFor="sysadmin-email" required>
+            <Input id="sysadmin-email" className={ui.field} type="email" autoComplete="off" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+          </FormField>
+          <FormField label="Password" htmlFor="sysadmin-password" hint={passwordHint} required>
+            <Input id="sysadmin-password" className={ui.field} type="password" autoComplete="new-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+          </FormField>
+          <div className="lg:col-span-3">
+            <Button type="submit" className={ui.btn} disabled={createMutation.isPending || remainingSlots <= 0}>
+              <Plus className="size-4" />
+              {createMutation.isPending ? "Creating..." : "Create System Administrator"}
+            </Button>
+          </div>
+        </form>
+      </SectionCard>
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>System Administrators</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto_auto]">
-            <Input
+      <SectionCard
+        flush
+        title="All system administrators"
+        actions={
+          <form
+            className="flex w-full flex-wrap gap-2 sm:w-auto"
+            onSubmit={(event) => {
+              event.preventDefault();
+              applyFilters();
+            }}
+          >
+            <SearchInput
+              className="min-w-0 flex-1 sm:w-64 sm:flex-none"
               placeholder="Search by name or email"
               value={filters.search}
               onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
             />
             <select
-              className="h-10 rounded-lg border border-border px-2"
+              className="ui-select"
+              aria-label="Status"
               value={filters.status}
               onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}
             >
@@ -220,110 +281,24 @@ export default function SystemAdministratorsPage() {
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
-            <Button className="w-full bg-primary hover:bg-primary md:w-auto" onClick={applyFilters}>Search</Button>
-            <Button variant="outline" className="w-full gap-2 md:w-auto" onClick={resetFilters}>
+            <Button type="submit" className={ui.btn}>Search</Button>
+            <Button type="button" variant="ghost" className={ui.btn} onClick={resetFilters}>
               <RotateCcw className="size-4" />
               Reset
             </Button>
-          </div>
-
-          <div className="space-y-3 md:hidden">
-            {adminsQuery.isLoading ? (
-              <div className="rounded-xl border border-border px-3 py-6 text-sm text-text-secondary">Loading system administrators...</div>
-            ) : null}
-            {!adminsQuery.isLoading && systemAdmins.length === 0 ? (
-              <div className="rounded-xl border border-border px-3 py-6 text-sm text-text-secondary">No system administrators found.</div>
-            ) : null}
-            {systemAdmins.map((admin) => (
-              <div key={admin.id} className="rounded-xl border border-border p-3">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="min-w-0 truncate font-medium text-text-primary">{admin.fullName || admin.name}</p>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${admin.isActive ? "bg-emerald-500/10 text-emerald-700" : "bg-rose-500/10 text-rose-700"}`}>
-                      {admin.isActive ? "Active" : "Inactive"}
-                    </span>
-                  </div>
-                  <p className="break-words text-xs text-text-secondary">{admin.email}</p>
-                </div>
-                <div className="mt-3 grid gap-2 text-xs text-text-secondary">
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Created</span>
-                    <span className="text-right">{formatDate(admin.createdAt)}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Last Login</span>
-                    <span className="text-right">{formatDate(admin.lastLoginAt)}</span>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2">
-                  <Button size="sm" variant="outline" className="w-full gap-2" onClick={() => openReset(admin)}>
-                    <KeyRound className="size-4" />
-                    Reset Password
-                  </Button>
-                  {admin.isActive ? (
-                    <Button size="sm" variant="destructive" className="w-full gap-2" onClick={() => openDeactivate(admin)} disabled={activeCount <= 1}>
-                      <ShieldOff className="size-4" />
-                      Deactivate
-                    </Button>
-                  ) : (
-                    <Button size="sm" className="w-full gap-2 bg-primary hover:bg-primary" onClick={() => openReactivate(admin)}>
-                      <ShieldCheck className="size-4" />
-                      Reactivate
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="hidden overflow-x-auto rounded-xl border border-border md:block">
-            <div className="grid min-w-[860px] grid-cols-[1.3fr_1.4fr_110px_170px_170px_250px] bg-muted/60 px-3 py-2 text-xs font-semibold uppercase text-text-secondary">
-              <span>Name</span>
-              <span>Email</span>
-              <span>Status</span>
-              <span>Created</span>
-              <span>Last Login</span>
-              <span>Actions</span>
-            </div>
-            {adminsQuery.isLoading ? (
-              <div className="px-3 py-6 text-sm text-text-secondary">Loading system administrators...</div>
-            ) : null}
-            {!adminsQuery.isLoading && systemAdmins.length === 0 ? (
-              <div className="px-3 py-6 text-sm text-text-secondary">No system administrators found.</div>
-            ) : null}
-            {systemAdmins.map((admin) => (
-              <div key={admin.id} className="grid min-w-[860px] grid-cols-[1.3fr_1.4fr_110px_170px_170px_250px] items-center border-t border-border px-3 py-3 text-sm">
-                <span className="truncate font-medium text-text-primary">{admin.fullName || admin.name}</span>
-                <span className="truncate text-text-secondary">{admin.email}</span>
-                <span>
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${admin.isActive ? "bg-emerald-500/10 text-emerald-700" : "bg-rose-500/10 text-rose-700"}`}>
-                    {admin.isActive ? "Active" : "Inactive"}
-                  </span>
-                </span>
-                <span className="text-text-secondary">{formatDate(admin.createdAt)}</span>
-                <span className="text-text-secondary">{formatDate(admin.lastLoginAt)}</span>
-                <span className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" className="gap-2" onClick={() => openReset(admin)}>
-                    <KeyRound className="size-4" />
-                    Reset
-                  </Button>
-                  {admin.isActive ? (
-                    <Button size="sm" variant="destructive" className="gap-2" onClick={() => openDeactivate(admin)} disabled={activeCount <= 1}>
-                      <ShieldOff className="size-4" />
-                      Deactivate
-                    </Button>
-                  ) : (
-                    <Button size="sm" className="gap-2 bg-primary hover:bg-primary" onClick={() => openReactivate(admin)}>
-                      <ShieldCheck className="size-4" />
-                      Reactivate
-                    </Button>
-                  )}
-                </span>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+          </form>
+        }
+      >
+        <DataTable
+          columns={columns}
+          rows={systemAdmins}
+          getRowKey={(admin) => admin.id}
+          loading={adminsQuery.isLoading}
+          minWidth={820}
+          caption="System administrators"
+          empty={<EmptyState icon={UserCog} title="No system administrators found" description="Try a different search or status filter." className="border-0" />}
+        />
+      </SectionCard>
 
       <AlertDialog open={pendingAction?.type === "reset"} onOpenChange={(open) => !open && setPendingAction(null)}>
         <AlertDialogContent>
@@ -333,12 +308,16 @@ export default function SystemAdministratorsPage() {
               Enter a new password for {pendingAction?.admin?.fullName || pendingAction?.admin?.email || "this account"}.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <Input
-            type="password"
-            value={resetPasswordValue}
-            onChange={(event) => setResetPasswordValue(event.target.value)}
-            placeholder="New password"
-          />
+          <FormField label="New password" htmlFor="sysadmin-reset-password" hint={passwordHint}>
+            <Input
+              id="sysadmin-reset-password"
+              type="password"
+              autoComplete="new-password"
+              className={ui.field}
+              value={resetPasswordValue}
+              onChange={(event) => setResetPasswordValue(event.target.value)}
+            />
+          </FormField>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setResetPasswordValue("")}>Cancel</AlertDialogCancel>
             <AlertDialogAction disabled={resetMutation.isPending || !passwordIsStrong(resetPasswordValue)} onClick={confirmReset}>

@@ -1,17 +1,62 @@
 import { useMemo, useState } from "react";
-import { LockKeyhole, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Check, Circle, Eye, EyeOff, Loader2, LockKeyhole, Mail, MessageSquareText, Monitor, Moon, Palette, ShieldAlert, Sun } from "lucide-react";
 import { useDispatch, useSelector } from "react-redux";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { setTheme } from "@/features/Students/uiSlice";
 import { studentApi } from "@/services/studentApi";
 import { profileQueryOptions } from "@/services/studentQueries";
 import { openSupportMail } from "@/lib/supportMail";
+import { FieldLabel, PageHeader, SettingsSection } from "@/components/Students/ui/StudentUI";
+import { cn } from "@/lib/utils";
 import { ui } from "@/styles/ui-tokens";
+
+const THEME_OPTIONS = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: Monitor },
+];
+
+function PasswordField({ id, label, value, onChange, autoComplete, invalid }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <div className="relative">
+        <Input
+          id={id}
+          type={visible ? "text" : "password"}
+          autoComplete={autoComplete}
+          value={value}
+          onChange={onChange}
+          aria-invalid={invalid || undefined}
+          className={cn(ui.field, "pr-11")}
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((prev) => !prev)}
+          className="absolute top-1/2 right-1 grid size-8 -translate-y-1/2 place-items-center rounded-md text-text-secondary outline-none transition-colors hover:text-text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
+          aria-label={visible ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+        >
+          {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Requirement({ met, children }) {
+  return (
+    <li className={cn("flex items-center gap-2 text-sm", met ? "text-success" : "text-text-secondary")}>
+      {met ? <Check className="size-4" aria-hidden="true" /> : <Circle className="size-3.5" aria-hidden="true" />}
+      <span>{children}</span>
+      <span className="sr-only">{met ? "(met)" : "(not met)"}</span>
+    </li>
+  );
+}
 
 export default function SettingsPage() {
   const dispatch = useDispatch();
@@ -103,107 +148,144 @@ export default function SettingsPage() {
     });
   };
 
-  return (
-    <section className="grid gap-5 lg:grid-cols-1 xl:grid-cols-2">
-      <article className={`${ui.card} ${ui.cardPadding}`}>
-        <div className="mb-4 flex items-center gap-2">
-          <div className="grid size-9 place-items-center rounded-lg bg-primary/15 text-primary"><LockKeyhole className="size-4" /></div>
-          <h2 className="text-lg font-semibold text-text-primary">Change Password</h2>
-        </div>
+  const hasNewPassword = passwordForm.newPassword.length > 0;
+  const requirements = [
+    { met: passwordForm.newPassword.length >= 8, label: "At least 8 characters" },
+    { met: hasNewPassword && passwordForm.newPassword !== passwordForm.currentPassword, label: "Different from current password" },
+    { met: hasNewPassword && passwordForm.newPassword === passwordForm.confirmPassword, label: "Confirmation matches" },
+  ];
+  const canSubmitPassword = Boolean(passwordForm.currentPassword) && hasNewPassword && !updatePasswordMutation.isPending;
 
-        <div className="grid gap-3">
-          <Input
-            type="password"
-            className="rounded-xl border border-border bg-background px-3 py-2.5"
-            placeholder="Current password"
+  return (
+    <section className={ui.pageSection}>
+      <PageHeader title="Settings" description="Manage your password, appearance, and how you reach support." />
+
+      <SettingsSection
+        icon={LockKeyhole}
+        title="Change password"
+        description="Use a strong password you don't reuse elsewhere. Adding numbers and symbols makes it harder to guess."
+      >
+        <form
+          className="grid max-w-lg gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            updatePassword();
+          }}
+          noValidate
+        >
+          <PasswordField
+            id="current-password"
+            label="Current password"
+            autoComplete="current-password"
             value={passwordForm.currentPassword}
-            onChange={(event) =>
-              setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))
-            }
+            invalid={inlineError === "Current password is incorrect."}
+            onChange={(event) => setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))}
           />
-          <Input
-            type="password"
-            className="rounded-xl border border-border bg-background px-3 py-2.5"
-            placeholder="New password"
+          <PasswordField
+            id="new-password"
+            label="New password"
+            autoComplete="new-password"
             value={passwordForm.newPassword}
             onChange={(event) => setPasswordForm((prev) => ({ ...prev, newPassword: event.target.value }))}
           />
-          <Input
-            type="password"
-            className="rounded-xl border border-border bg-background px-3 py-2.5"
-            placeholder="Confirm new password"
+          <PasswordField
+            id="confirm-password"
+            label="Confirm new password"
+            autoComplete="new-password"
             value={passwordForm.confirmPassword}
+            invalid={Boolean(passwordForm.confirmPassword) && passwordForm.confirmPassword !== passwordForm.newPassword}
             onChange={(event) => setPasswordForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
           />
-          {inlineError ? <p className="text-sm text-danger">{inlineError}</p> : null}
-          <Button onClick={updatePassword} className="h-10 rounded-xl bg-primary px-4 text-sm font-semibold shadow-md shadow-primary/20 hover:bg-primary-dark">
-            {updatePasswordMutation.isPending ? "Updating..." : "Update Password"}
-          </Button>
-        </div>
 
-        <div className="mt-4 rounded-xl border border-primary/20 bg-primary/10 p-3 text-xs text-primary-dark">
-          <div className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-3.5" /> Security Notice</div>
-          <p className="mt-1 text-primary">Use at least 8 characters with one number and one special character.</p>
-        </div>
-      </article>
+          <ul className="grid gap-1.5 rounded-lg bg-muted/50 p-3" aria-label="Password requirements">
+            {requirements.map((item) => (
+              <Requirement key={item.label} met={item.met}>{item.label}</Requirement>
+            ))}
+          </ul>
 
-      <article className={`${ui.card} ${ui.cardPadding}`}>
-        <div className="mb-4 flex items-center gap-2">
-          <div className="grid size-9 place-items-center rounded-lg bg-violet-100 text-violet-600"><SlidersHorizontal className="size-4" /></div>
-          <h2 className="text-lg font-semibold text-text-primary">Theme</h2>
-        </div>
+          {inlineError ? (
+            <p role="alert" className="flex items-center gap-2 text-sm font-medium text-danger">
+              <ShieldAlert className="size-4 shrink-0" aria-hidden="true" />
+              {inlineError}
+            </p>
+          ) : null}
 
-        <div className="space-y-3 rounded-xl border border-border bg-background p-3">
-          <p className="text-sm text-text-secondary">Choose how the LMS should render colors for your workspace.</p>
-          <Select value={selectedTheme} onValueChange={(value) => dispatch(setTheme(value))}>
-            <SelectTrigger className="w-full bg-card">
-              <SelectValue placeholder="Select theme" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="light">Light</SelectItem>
-              <SelectItem value="dark">Dark</SelectItem>
-              <SelectItem value="system">System</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </article>
+          <div>
+            <Button type="submit" className={ui.btn} disabled={!canSubmitPassword}>
+              {updatePasswordMutation.isPending ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none" /> : null}
+              {updatePasswordMutation.isPending ? "Updating..." : "Update Password"}
+            </Button>
+          </div>
+        </form>
+      </SettingsSection>
 
-      <article className={`${ui.card} ${ui.cardPadding} xl:col-span-2`}>
-        <div className="mb-4 flex items-center gap-2">
-          <div className="grid size-9 place-items-center rounded-lg bg-primary/15 text-primary"><ShieldCheck className="size-4" /></div>
-          <h2 className="text-lg font-semibold text-text-primary">Feedback & Complaint</h2>
+      <SettingsSection icon={Palette} title="Appearance" description="Choose how the portal looks on this device.">
+        <div role="radiogroup" aria-label="Theme" className="grid max-w-lg grid-cols-3 gap-3">
+          {THEME_OPTIONS.map((option) => {
+            const active = selectedTheme === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => dispatch(setTheme(option.value))}
+                className={cn(
+                  "flex flex-col items-center gap-2 rounded-lg border px-3 py-4 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+                  active
+                    ? "border-primary bg-primary/5 text-primary ring-1 ring-primary"
+                    : "border-border text-text-secondary hover:border-primary/40 hover:text-text-primary"
+                )}
+              >
+                <option.icon className="size-5" aria-hidden="true" />
+                {option.label}
+              </button>
+            );
+          })}
         </div>
+      </SettingsSection>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="space-y-3 rounded-xl border border-border bg-background p-3">
-            <label htmlFor="student-feedback" className="text-sm font-semibold text-text-primary">Feedback</label>
+      <SettingsSection
+        icon={MessageSquareText}
+        title="Feedback & support"
+        description="Your message opens in your email app, pre-filled with your student details so the team can help faster."
+      >
+        <div className="grid gap-5 xl:grid-cols-2">
+          <div className="flex flex-col gap-3">
+            <FieldLabel htmlFor="student-feedback" hint={`${feedback.length} chars`}>Feedback</FieldLabel>
             <Textarea
               id="student-feedback"
               value={feedback}
               onChange={(event) => setFeedback(event.target.value)}
-              placeholder="Write your feedback here..."
-              className="min-h-32 bg-card"
+              placeholder="What's working well, or what could be better?"
+              className="-mt-1.5 min-h-32 rounded-lg bg-card"
             />
-            <Button type="button" onClick={() => openStudentMail("feedback")}>
-              Send Feedback
-            </Button>
+            <div>
+              <Button type="button" variant="outline" className={ui.btn} onClick={() => openStudentMail("feedback")}>
+                <Mail className="size-4" />
+                Send Feedback
+              </Button>
+            </div>
           </div>
 
-          <div className="space-y-3 rounded-xl border border-border bg-background p-3">
-            <label htmlFor="student-complaint" className="text-sm font-semibold text-text-primary">Raise Complaint</label>
+          <div className="flex flex-col gap-3">
+            <FieldLabel htmlFor="student-complaint" hint={`${complaint.length} chars`}>Raise a complaint</FieldLabel>
             <Textarea
               id="student-complaint"
               value={complaint}
               onChange={(event) => setComplaint(event.target.value)}
-              placeholder="Describe your complaint here..."
-              className="min-h-32 bg-card"
+              placeholder="Describe the issue, including the test or page if relevant."
+              className="-mt-1.5 min-h-32 rounded-lg bg-card"
             />
-            <Button type="button" onClick={() => openStudentMail("complaint")}>
-              Raise Complaint
-            </Button>
+            <div>
+              <Button type="button" variant="outline" className={ui.btn} onClick={() => openStudentMail("complaint")}>
+                <Mail className="size-4" />
+                Raise Complaint
+              </Button>
+            </div>
           </div>
         </div>
-      </article>
+      </SettingsSection>
     </section>
   );
 }

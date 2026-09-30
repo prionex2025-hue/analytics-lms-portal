@@ -15,7 +15,7 @@ export const scoreTier = (score) => {
   return "low";
 };
 
-const TIER_COLOR_CLASS = { high: "text-green-500", mid: "text-yellow-500", low: "text-red-500" };
+const TIER_COLOR_CLASS = { high: "text-success", mid: "text-warning", low: "text-danger" };
 const TIER_TONE = { high: "success", mid: "info", low: "warning" };
 
 export const scoreColorClass = (score) => TIER_COLOR_CLASS[scoreTier(score)];

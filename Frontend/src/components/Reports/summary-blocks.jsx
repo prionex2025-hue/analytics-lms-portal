@@ -15,14 +15,14 @@ const STRIP_COLUMNS = {
 
 const METRIC_TONE = {
   default: "text-text-primary",
-  danger: "text-red-500",
+  danger: "text-danger",
 };
 
 /** One card holding the headline numbers, separated by hairlines instead of separate cards. */
 export function MetricStrip({ items = [] }) {
   if (!items.length) return null;
   return (
-    <article className={`grid gap-px overflow-hidden rounded-2xl border border-border bg-border ${STRIP_COLUMNS[items.length] || STRIP_COLUMNS[4]}`}>
+    <article className={`grid gap-px overflow-hidden rounded-xl border border-border bg-border ${STRIP_COLUMNS[items.length] || STRIP_COLUMNS[4]}`}>
       {items.map((item) => (
         <div key={item.key || item.label} className="min-w-0 bg-card px-4 py-4 sm:px-5">
           <p className="text-xs font-medium text-text-secondary">{item.label}</p>

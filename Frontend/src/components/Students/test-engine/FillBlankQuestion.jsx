@@ -13,7 +13,8 @@ export function FillBlankQuestion({ answer, onChange, disabled }) {
         })
       }
       placeholder="Type your answer"
-      className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-text-primary outline-none ring-blue-400 focus:ring"
+      aria-label="Your answer"
+      className="h-12 w-full rounded-lg border border-input bg-card px-3.5 text-base text-text-primary outline-none transition-colors placeholder:text-text-secondary/70 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60"
     />
   );
 }

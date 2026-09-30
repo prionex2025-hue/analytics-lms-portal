@@ -44,7 +44,7 @@ export function ChartTooltip({ active, payload, label }) {
 
 export function ChartCard({ title, action, height = "h-[220px]", children, footer }) {
   return (
-    <article className="min-w-0 rounded-2xl border border-border bg-card p-5">
+    <article className="min-w-0 rounded-xl border border-border bg-card p-5">
       <div className="mb-4 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
         {action ? (
@@ -64,7 +64,7 @@ export function AbsentStudentsCard({ title, subtitle, students = [], count }) {
   const total = Number.isFinite(Number(count)) ? Number(count) : rows.length;
 
   return (
-    <article className="rounded-2xl border border-border bg-card p-5">
+    <article className="rounded-xl border border-border bg-card p-5">
       <div>
         <h3 className="text-sm font-semibold text-text-primary">
           {title} <span className="font-normal text-text-secondary">({total})</span>
@@ -122,7 +122,7 @@ export function Skeleton({ className = "" }) {
 
 export function ChartCardSkeleton({ height = "h-[240px]" }) {
   return (
-    <div className="rounded-2xl border border-border bg-card p-5">
+    <div className="rounded-xl border border-border bg-card p-5">
       <Skeleton className="h-4 w-40" />
       <div className={`mt-4 ${height}`}>
         <Skeleton className="h-full w-full" />
@@ -136,7 +136,7 @@ export function ChartCardSkeleton({ height = "h-[240px]" }) {
 export function AnalyticsSkeleton() {
   return (
     <section className="space-y-4" role="status" aria-label="Loading report analytics">
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
           <div key={index} className="bg-card p-4">
             <Skeleton className="h-3 w-24" />
@@ -158,9 +158,9 @@ export function ScoreBadge({ score }) {
 
 export function StatusBadge({ label, variant = "default" }) {
   const variants = {
-    success: "bg-green-500/10 text-green-500",
-    warning: "bg-yellow-500/10 text-yellow-500",
-    danger: "bg-red-500/10 text-red-500",
+    success: "bg-success/10 text-success",
+    warning: "bg-warning/10 text-warning",
+    danger: "bg-danger/10 text-danger",
     info: "bg-chart-1/10 text-chart-1",
     default: "bg-muted text-text-secondary",
   };
@@ -205,7 +205,7 @@ export function ScoreDistributionChart({ data, height = "h-[220px]" }) {
   return (
     <div className="flex h-full w-full flex-col">
       <div className={`${height} w-full`}>
-        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 320, height: 200 }}>
           <BarChart data={rows} margin={{ top: 8, right: 8, left: -20, bottom: 4 }} barCategoryGap="18%">
             <CartesianGrid {...gridProps} vertical={false} />
             <XAxis dataKey="range" axisLine={false} tickLine={false} tick={AXIS_TICK} />
@@ -242,13 +242,13 @@ export function ExportButton({ exportState, onExport, onDownload, disabled, disa
   if (status === "complete" && downloadUrl && !isExpired) {
     return (
       <div className="flex items-center gap-2">
-        {nearExpiry ? <span className="text-xs text-yellow-500">Link expires soon</span> : null}
+        {nearExpiry ? <span className="text-xs text-warning">Link expires soon</span> : null}
         <button
           type="button"
           onClick={onDownload}
           disabled={disabled}
           title={disabledReason || ""}
-          className="inline-flex items-center gap-2 rounded-xl border border-border bg-green-500/10 px-4 py-2 text-sm font-semibold text-green-500 transition-colors hover:bg-green-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-xl border border-border bg-success/10 px-4 py-2 text-sm font-semibold text-success transition-colors hover:bg-success/20 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Download
         </button>
@@ -274,7 +274,7 @@ export function ExportButton({ exportState, onExport, onDownload, disabled, disa
   return (
     <div className="flex flex-col items-end gap-1">
       {status === "failed" && errorMessage ? (
-        <span className="max-w-xs text-right text-xs font-medium text-red-500">{errorMessage}</span>
+        <span className="max-w-xs text-right text-xs font-medium text-danger">{errorMessage}</span>
       ) : null}
       <button
         type="button"
@@ -390,7 +390,7 @@ export function TrendPill({ value, dir }) {
   const up = direction === "up";
   const label = typeof value === "number" ? `${value > 0 ? "+" : ""}${value}%` : value;
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${up ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-500"}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${up ? "bg-success/10 text-success" : "bg-danger/10 text-danger"}`}>
       <span className="text-[9px]">{up ? "▲" : "▼"}</span>
       {label}
     </span>
@@ -399,22 +399,22 @@ export function TrendPill({ value, dir }) {
 
 const STAT_TONES = {
   navy: "bg-primary-dark text-white",
-  primary: "bg-primary text-white",
-  success: "bg-green-500 text-white",
-  danger: "bg-red-500/10 text-red-500",
-  warning: "bg-yellow-500/10 text-yellow-600",
+  primary: "bg-primary text-primary-foreground",
+  success: "bg-success text-white",
+  danger: "bg-danger/10 text-danger",
+  warning: "bg-warning/10 text-warning",
 };
 
 export function StatCard({ icon, iconName, label, value, sub, trend, trendDir, badge, badgeTone = "muted", iconTone = "navy", flag }) {
   const badgeClasses = {
-    success: "bg-green-500/10 text-green-600",
-    danger: "bg-red-500/10 text-red-500",
-    warning: "bg-yellow-500/10 text-yellow-600",
+    success: "bg-success/10 text-success",
+    danger: "bg-danger/10 text-danger",
+    warning: "bg-warning/10 text-warning",
     info: "bg-primary/10 text-primary",
     muted: "bg-muted text-text-secondary",
   };
   return (
-    <article className={`relative overflow-hidden rounded-2xl border bg-card p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition-shadow hover:shadow-[0_4px_16px_rgba(16,24,40,0.06)] ${flag ? "border-red-500/50" : "border-border"}`}>
+    <article className={`relative overflow-hidden rounded-xl border bg-card p-5 shadow-xs ${flag ? "border-danger/50" : "border-border"}`}>
       <div className="flex items-start justify-between gap-3">
         <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${STAT_TONES[iconTone] || STAT_TONES.navy}`}>
           {icon || <StatIcon name={iconName} />}
@@ -426,19 +426,19 @@ export function StatCard({ icon, iconName, label, value, sub, trend, trendDir, b
         ) : null}
       </div>
       <p className="mt-4 text-[11px] font-semibold uppercase tracking-widest text-text-secondary">{label}</p>
-      <p className={`mt-1 text-3xl leading-none font-bold tabular-nums ${flag ? "text-red-500" : "text-text-primary"}`}>{value ?? "-"}</p>
-      {sub ? <p className={`mt-1.5 text-xs ${flag ? "text-red-400" : "text-text-secondary"}`}>{sub}</p> : null}
+      <p className={`mt-1 text-3xl leading-none font-bold tabular-nums ${flag ? "text-danger" : "text-text-primary"}`}>{value ?? "-"}</p>
+      {sub ? <p className={`mt-1.5 text-xs ${flag ? "text-danger" : "text-text-secondary"}`}>{sub}</p> : null}
     </article>
   );
 }
 
 const AVATAR_TONES = [
-  "bg-blue-100 text-blue-700",
-  "bg-emerald-100 text-emerald-700",
-  "bg-violet-100 text-violet-700",
-  "bg-amber-100 text-amber-700",
-  "bg-rose-100 text-rose-700",
-  "bg-cyan-100 text-cyan-700",
+  "bg-blue-100 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300",
+  "bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300",
+  "bg-violet-100 text-violet-700 dark:bg-violet-400/15 dark:text-violet-300",
+  "bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300",
+  "bg-rose-100 text-rose-700 dark:bg-rose-400/15 dark:text-rose-300",
+  "bg-cyan-100 text-cyan-700 dark:bg-cyan-400/15 dark:text-cyan-300",
 ];
 
 export function Avatar({ name, seed, size = "h-9 w-9" }) {
@@ -459,10 +459,10 @@ export function Avatar({ name, seed, size = "h-9 w-9" }) {
 }
 
 const RESULT_META = {
-  pass: { label: "PASS", dot: "bg-green-500", text: "text-green-600" },
-  fail: { label: "FAIL", dot: "bg-red-500", text: "text-red-500" },
+  pass: { label: "PASS", dot: "bg-success", text: "text-success" },
+  fail: { label: "FAIL", dot: "bg-danger", text: "text-danger" },
   graded: { label: "GRADED", dot: "bg-primary", text: "text-primary" },
-  pending: { label: "PENDING", dot: "bg-yellow-500", text: "text-yellow-600" },
+  pending: { label: "PENDING", dot: "bg-warning", text: "text-warning" },
 };
 
 export function ResultBadge({ status, score, passMark = 40 }) {
@@ -482,7 +482,7 @@ export function ResultBadge({ status, score, passMark = 40 }) {
 
 export function SectionCard({ title, subtitle, icon, right, className = "", bodyClassName = "", children }) {
   return (
-    <article className={`rounded-2xl border border-border bg-card ${className}`}>
+    <article className={`rounded-xl border border-border bg-card ${className}`}>
       {title || right ? (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">
           <div className="flex items-center gap-3">
@@ -500,15 +500,16 @@ export function SectionCard({ title, subtitle, icon, right, className = "", body
   );
 }
 
-export function TabNav({ tabs = [], active, onChange }) {
+export function TabNav({ tabs = [], active, onChange, className = "" }) {
   return (
-    <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className={`flex items-center gap-1 overflow-x-auto overflow-y-hidden border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}>
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
           <button
             key={tab.key}
             type="button"
+            aria-pressed={isActive}
             onClick={() => onChange?.(tab.key)}
             className={`relative whitespace-nowrap px-4 py-2.5 text-sm font-semibold transition-colors ${isActive ? "text-primary" : "text-text-secondary hover:text-text-primary"}`}
           >
@@ -544,7 +545,7 @@ export function MultiSeriesTrendChart({ rows = [], seriesNames = [], xKey = "per
         ))}
       </div>
       <div className="min-h-0 flex-1">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 320, height: 200 }}>
           <LineChart data={rows} margin={{ top: 4, right: 12, left: -22, bottom: 4 }}>
             <CartesianGrid {...gridProps} vertical={false} />
             <XAxis dataKey={xKey} axisLine={false} tickLine={false} tick={AXIS_TICK} />
@@ -576,7 +577,7 @@ export function RecentExports({ reports, onDownload, subtitle = "Generated PDFs 
   const rows = Array.isArray(reports) ? reports.slice(0, 4) : [];
 
   return (
-    <article className="rounded-2xl border border-border bg-card p-5">
+    <article className="rounded-xl border border-border bg-card p-5">
       <div className="mb-4">
         <h3 className="text-sm font-semibold text-text-primary">Recent Exports</h3>
         <p className="text-xs text-text-secondary">{subtitle}</p>
@@ -623,7 +624,7 @@ export function StudentSummary({ student, metrics }) {
   };
 
   return (
-    <article className="rounded-2xl border border-border bg-card p-5">
+    <article className="rounded-xl border border-border bg-card p-5">
       <div className="flex flex-wrap items-center gap-5">
         <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-chart-1/10 text-xl font-bold text-chart-1">
           {String(student.name || "?")
@@ -654,7 +655,7 @@ export function StudentSummary({ student, metrics }) {
             <p className="text-[11px] text-text-secondary">attempts</p>
           </div>
           <div>
-            <p className={`text-2xl font-bold ${toCount(metrics?.violations) > 0 ? "text-red-500" : "text-green-500"}`}>
+            <p className={`text-2xl font-bold ${toCount(metrics?.violations) > 0 ? "text-danger" : "text-success"}`}>
               {toCount(metrics?.violations)}
             </p>
             <p className="text-[11px] text-text-secondary">violations</p>

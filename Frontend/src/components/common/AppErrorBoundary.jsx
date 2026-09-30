@@ -1,10 +1,5 @@
 import { Component } from "react";
-import { Button } from "@/components/ui/button";
-
-const isChunkLoadError = (message) =>
-  message.includes("Failed to fetch dynamically imported module") ||
-  message.includes("Importing a module script failed") ||
-  message.includes("error loading dynamically imported module");
+import ErrorScreen, { isChunkLoadError } from "@/components/common/ErrorScreen";
 
 class AppErrorBoundary extends Component {
   constructor(props) {
@@ -46,22 +41,11 @@ class AppErrorBoundary extends Component {
     }
 
     return (
-      <section className="grid min-h-screen place-items-center bg-muted p-6">
-        <article className="w-full max-w-lg rounded-2xl border border-border bg-card p-8 text-center shadow-sm">
-          <h1 className="text-2xl font-semibold text-text-primary">
-            {this.state.chunkLoadError ? "Update required" : "Unexpected error"}
-          </h1>
-          <p className="mt-3 text-sm text-text-secondary">
-            {this.state.chunkLoadError
-              ? "A newer version of the portal is available. Reload the page to continue with the latest files."
-              : this.state.errorMessage}
-          </p>
-          <div className="mt-5 flex justify-center gap-2">
-            <Button type="button" variant="outline" onClick={this.handleRetry}>Retry</Button>
-            <Button type="button" onClick={() => window.location.reload()}>Reload</Button>
-          </div>
-        </article>
-      </section>
+      <ErrorScreen
+        chunkLoadError={this.state.chunkLoadError}
+        message={this.state.errorMessage}
+        onRetry={this.handleRetry}
+      />
     );
   }
 }

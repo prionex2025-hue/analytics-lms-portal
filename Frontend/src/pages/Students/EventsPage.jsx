@@ -3,11 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { EventsSkeleton } from "@/components/common/page-skeletons";
 import LazyImage from "@/components/common/LazyImage";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
+import { CalendarDays, CalendarX2, Clock3, ExternalLink, Globe2, ImageOff, MapPin, Ticket, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { EmptyState, ErrorState, MetaItem, PageHeader, SegmentedControl, StatusBadge } from "@/components/Students/ui/StudentUI";
+import { cn } from "@/lib/utils";
 import { eventsQueryOptions } from "@/services/studentQueries";
 import { ui } from "@/styles/ui-tokens";
 import { sanitizeText } from "@/lib/security";
@@ -20,6 +20,22 @@ const CATEGORY_TABS = [
   { value: "CULTURAL", label: "Cultural", eventType: "Cultural" },
   { value: "OTHER", label: "Other", eventType: "Other" },
 ];
+
+const STATE_TONE = {
+  OPEN: "success",
+  REGISTERED: "info",
+  FULL: "warning",
+  CLOSED: "neutral",
+  CANCELLED: "danger",
+};
+
+const formatEventDate = (value, withTime = false) => {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime()) || date.getTime() === 0) return "TBA";
+  return date.toLocaleString([], withTime
+    ? { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }
+    : { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+};
 
 const toMs = (value) => {
   const ms = new Date(value || 0).getTime();
@@ -110,132 +126,196 @@ export default function EventsPage() {
     );
   }, [events, activeCategory]);
 
+  const header = (
+    <PageHeader
+      title="Events"
+      description="Hackathons, symposiums, cultural fests and more — curated for your campus."
+    />
+  );
+
   if (eventsQuery.isLoading) {
     return <EventsSkeleton />;
   }
 
   if (eventsQuery.isError) {
-    return <div className="py-10 text-center text-sm text-text-secondary">{eventsQuery.error?.message || "Unable to load events."}</div>;
+    return (
+      <section className={ui.pageSection}>
+        {header}
+        <ErrorState
+          title="Unable to load events"
+          description={eventsQuery.error?.message || "Please try again in a moment."}
+          onRetry={() => eventsQuery.refetch()}
+        />
+      </section>
+    );
   }
+
+  const categoryCounts = CATEGORY_TABS.reduce((acc, item) => {
+    acc[item.value] = item.eventType
+      ? events.filter((event) => String(event.eventType || "").toLowerCase() === item.eventType.toLowerCase()).length
+      : events.length;
+    return acc;
+  }, {});
+
+  const selectedState = selectedEvent ? getEventState(selectedEvent) : null;
 
   return (
     <section className={ui.pageSection}>
-      <article className="relative overflow-hidden rounded-3xl bg-linear-to-r from-primary via-primary-dark to-primary-dark p-7 text-primary-foreground shadow-[0_18px_35px_-18px_rgba(11,84,158,0.6)]">
-        <div className="max-w-md">
-          <p className="text-xs font-semibold tracking-[0.16em] text-primary-foreground/90 uppercase">Featured Event</p>
-          <h2 className="mt-2 text-5xl leading-[0.96] font-semibold tracking-tight">Discover Events</h2>
-          <p className="mt-3 text-lg text-primary-foreground/90">Join hackathons, workshops, symposiums and community events curated for your track.</p>
-          <Button className="mt-6 h-10 rounded-xl bg-card px-4 font-semibold text-primary">
-            Register Now
-          </Button>
-        </div>
-      </article>
+      {header}
 
-      <Tabs value={activeCategory} onValueChange={setActiveCategory}>
-        <TabsList>
-          {CATEGORY_TABS.map((item) => (
-            <TabsTrigger key={item.value} value={item.value} className="px-3 text-sm data-active:bg-primary data-active:text-primary-foreground">
-              {item.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {filteredEvents.map((event) => (
-          <Card key={event.id} className={`${ui.cardPadding} cursor-pointer`} onClick={() => openEventDetails(event)}>
-            {getEventImageUrl(event, { width: 960, height: 540, crop: "fill" }) ? (
-              <LazyImage
-                src={getEventImageUrl(event, { width: 960, height: 540, crop: "fill" })}
-                alt={sanitizeText(event.title || event.name || "Event")}
-                width="960"
-                height="540"
-                className="h-44 w-full rounded-xl object-cover"
-                fallback={<div className="h-44 rounded-xl bg-linear-to-br from-primary/15 via-background to-muted" />}
-              />
-            ) : (
-              <div className="h-44 rounded-xl bg-linear-to-br from-primary/15 via-background to-muted" />
-            )}
-
-            <div className="mt-3 rounded-xl bg-linear-to-r from-background to-muted p-3">
-              <Badge className="bg-primary/15 text-[11px] font-semibold text-primary uppercase" variant="secondary">
-                {sanitizeText(event.eventType || event.type || "Other")}
-              </Badge>
-              <h3 className="mt-3 text-lg leading-tight font-semibold text-text-primary">{sanitizeText(event.title || event.name)}</h3>
-              <p className="mt-2 text-sm text-text-secondary">{sanitizeText(event.description || "")}</p>
-            </div>
-
-            <div className="mt-3 grid gap-1 text-xs text-text-secondary">
-              <p>Date: {new Date(event.date || event.startsAt).toLocaleDateString()}</p>
-              <p>Venue: {sanitizeText(event.venue || "TBA")}</p>
-              <p>Registration Deadline: {new Date(event.registration_deadline || event.registrationDeadline || event.startsAt).toLocaleString()}</p>
-              <p>Available Spots: {Number(event.available_spots ?? event.availableSpots ?? event.spotsLeft ?? 0)}</p>
-            </div>
-
-            <Button
-              type="button"
-              className="mt-4 h-9 w-full rounded-lg bg-primary text-sm font-semibold shadow-md shadow-primary/20 hover:bg-primary-dark"
-              disabled={["REGISTERED", "FULL", "CLOSED", "CANCELLED"].includes(getEventState(event))}
-              variant={["REGISTERED", "FULL", "CLOSED", "CANCELLED"].includes(getEventState(event)) ? "outline" : "default"}
-              onClick={(clickEvent) => {
-                clickEvent.stopPropagation();
-                navigateToRegistrationLink(event);
-              }}
-            >
-              {getEventState(event) === "REGISTERED" ? "Registered" : "Register"}
-            </Button>
-          </Card>
-        ))}
-        {!eventsQuery.isLoading && filteredEvents.length === 0 ? (
-          <Card className={`${ui.cardPadding} col-span-full text-center text-sm text-text-secondary`}>
-            No events found for this category.
-          </Card>
-        ) : null}
+      <div className="relative -mx-4 overflow-x-auto overflow-y-hidden px-4 sm:mx-0 sm:px-0">
+        <SegmentedControl
+          label="Event category"
+          value={activeCategory}
+          onChange={setActiveCategory}
+          className="w-max flex-nowrap sm:w-auto"
+          options={CATEGORY_TABS.map((item) => ({
+            value: item.value,
+            label: `${item.label} (${categoryCounts[item.value] || 0})`,
+          }))}
+        />
       </div>
 
+      {filteredEvents.length === 0 ? (
+        <EmptyState
+          icon={CalendarDays}
+          title="No events found"
+          description={activeCategory === "ALL" ? "New events will show up here once they're published." : "There are no events in this category right now."}
+          action={
+            activeCategory !== "ALL" ? (
+              <Button variant="outline" className={ui.btn} onClick={() => setActiveCategory("ALL")}>
+                Show all events
+              </Button>
+            ) : null
+          }
+        />
+      ) : (
+        <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {filteredEvents.map((event) => {
+            const state = getEventState(event);
+            const imageUrl = getEventImageUrl(event, { width: 960, height: 540, crop: "fill" });
+            const spots = Number(event.available_spots ?? event.availableSpots ?? event.spotsLeft ?? 0);
+            const blocked = ["REGISTERED", "FULL", "CLOSED", "CANCELLED"].includes(state);
+
+            return (
+              <li key={event.id} className={cn(ui.cardInteractive, "group relative flex flex-col overflow-hidden")}>
+                <div className="relative aspect-video w-full overflow-hidden bg-muted">
+                  {imageUrl ? (
+                    <LazyImage
+                      src={imageUrl}
+                      alt=""
+                      width="960"
+                      height="540"
+                      className="size-full object-cover"
+                      fallback={<div className="grid size-full place-items-center text-text-secondary"><ImageOff className="size-6" /></div>}
+                    />
+                  ) : (
+                    <div className="grid size-full place-items-center bg-linear-to-br from-primary/10 to-muted text-primary/60">
+                      <CalendarDays className="size-8" aria-hidden="true" />
+                    </div>
+                  )}
+                  <div className="absolute top-3 left-3 flex flex-wrap gap-1.5">
+                    <span className="rounded-full bg-card/95 px-2.5 py-1 text-xs font-medium text-text-primary shadow-sm backdrop-blur">
+                      {sanitizeText(event.eventType || event.type || "Other")}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-1 flex-col p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="line-clamp-2 text-base font-semibold leading-snug text-text-primary">
+                      <button
+                        type="button"
+                        onClick={() => openEventDetails(event)}
+                        className="text-left outline-none after:absolute after:inset-0 after:content-[''] focus-visible:underline"
+                      >
+                        {sanitizeText(event.title || event.name)}
+                      </button>
+                    </h3>
+                    <StatusBadge tone={STATE_TONE[state]}>{renderEventStateLabel(event)}</StatusBadge>
+                  </div>
+                  {event.description ? (
+                    <p className="mt-1.5 line-clamp-2 text-sm text-text-secondary">{sanitizeText(event.description)}</p>
+                  ) : null}
+
+                  <div className="mt-3 grid gap-1.5">
+                    <MetaItem icon={CalendarDays}>{formatEventDate(event.date || event.startsAt)}</MetaItem>
+                    <MetaItem icon={MapPin}><span className="line-clamp-1">{sanitizeText(event.venue || "TBA")}</span></MetaItem>
+                    <MetaItem icon={Clock3}>Register by {formatEventDate(event.registration_deadline || event.registrationDeadline || event.startsAt, true)}</MetaItem>
+                  </div>
+
+                  <div className="mt-auto flex items-center justify-between gap-3 pt-4">
+                    <MetaItem icon={Users} className={spots <= 5 && spots > 0 ? "text-amber-700 dark:text-warning" : ""}>
+                      {spots} {spots === 1 ? "spot" : "spots"} left
+                    </MetaItem>
+                    <Button
+                      type="button"
+                      className={cn(ui.btn, "relative z-10")}
+                      disabled={blocked}
+                      variant={blocked ? "outline" : "default"}
+                      onClick={(clickEvent) => {
+                        clickEvent.stopPropagation();
+                        navigateToRegistrationLink(event);
+                      }}
+                    >
+                      {state === "REGISTERED" ? "Registered" : "Register"}
+                    </Button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{sanitizeText(selectedEvent?.title || "Event Details")}</DialogTitle>
-            <DialogDescription>
-              Review complete event information before registration.
-            </DialogDescription>
+            <DialogTitle className="pr-6 text-xl">{sanitizeText(selectedEvent?.title || "Event Details")}</DialogTitle>
+            <DialogDescription>Review complete event information before registration.</DialogDescription>
           </DialogHeader>
 
           {selectedEvent ? (
-            <div className="grid gap-3 text-sm">
+            <div className="grid gap-4 text-sm">
               {getEventImageUrl(selectedEvent, { width: 1280, height: 720, crop: "fill" }) ? (
                 <LazyImage
                   src={getEventImageUrl(selectedEvent, { width: 1280, height: 720, crop: "fill" })}
                   alt={sanitizeText(selectedEvent.title || "Event Details")}
                   width="1280"
                   height="720"
-                  className="h-56 w-full rounded-2xl object-cover"
+                  className="aspect-video w-full rounded-lg object-cover"
                 />
               ) : null}
 
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="bg-primary/15 text-primary">{sanitizeText(selectedEvent.eventType || selectedEvent.type || "Other")}</Badge>
-                <Badge variant="outline">{renderEventScope(selectedEvent)}</Badge>
-                <Badge variant="outline">{renderEventStateLabel(selectedEvent)}</Badge>
+                <StatusBadge tone="info">{sanitizeText(selectedEvent.eventType || selectedEvent.type || "Other")}</StatusBadge>
+                <StatusBadge tone="neutral" icon={Globe2}>{renderEventScope(selectedEvent)}</StatusBadge>
+                <StatusBadge tone={STATE_TONE[selectedState]}>{renderEventStateLabel(selectedEvent)}</StatusBadge>
               </div>
 
-              <p className="text-text-secondary">{sanitizeText(selectedEvent.description || "No description provided.")}</p>
+              <p className="leading-6 text-text-secondary">{sanitizeText(selectedEvent.description || "No description provided.")}</p>
 
-              <div className="grid gap-2 rounded-xl border border-border p-3 sm:grid-cols-2">
-                <p><span className="font-medium text-text-primary">Start:</span> {new Date(selectedEvent.startsAt || selectedEvent.date || 0).toLocaleString()}</p>
-                <p><span className="font-medium text-text-primary">End:</span> {selectedEvent.endsAt ? new Date(selectedEvent.endsAt).toLocaleString() : "Not specified"}</p>
-                <p><span className="font-medium text-text-primary">Event Date:</span> {new Date(selectedEvent.eventDate || selectedEvent.startsAt || 0).toLocaleDateString()}</p>
-                <p><span className="font-medium text-text-primary">Registration Deadline:</span> {new Date(selectedEvent.registrationDeadline || selectedEvent.registration_deadline || selectedEvent.startsAt || 0).toLocaleString()}</p>
-                <p><span className="font-medium text-text-primary">Venue:</span> {sanitizeText(selectedEvent.location || selectedEvent.venue || "TBA")}</p>
-                <p><span className="font-medium text-text-primary">Capacity:</span> {Number(selectedEvent.registrationLimit || 0)} total</p>
-                <p><span className="font-medium text-text-primary">Available Spots:</span> {Number(selectedEvent.available_spots ?? selectedEvent.availableSpots ?? selectedEvent.spotsLeft ?? 0)}</p>
-                <p><span className="font-medium text-text-primary">Registration Link:</span> {selectedEvent.registrationUrl || selectedEvent.registration_url ? "Available" : "Not available"}</p>
-              </div>
+              <dl className="grid gap-x-6 gap-y-3 rounded-lg border border-border p-4 sm:grid-cols-2">
+                {[
+                  ["Start", formatEventDate(selectedEvent.startsAt || selectedEvent.date, true)],
+                  ["End", selectedEvent.endsAt ? formatEventDate(selectedEvent.endsAt, true) : "Not specified"],
+                  ["Event date", formatEventDate(selectedEvent.eventDate || selectedEvent.startsAt)],
+                  ["Registration deadline", formatEventDate(selectedEvent.registrationDeadline || selectedEvent.registration_deadline || selectedEvent.startsAt, true)],
+                  ["Venue", sanitizeText(selectedEvent.location || selectedEvent.venue || "TBA")],
+                  ["Capacity", `${Number(selectedEvent.registrationLimit || 0)} total`],
+                  ["Available spots", Number(selectedEvent.available_spots ?? selectedEvent.availableSpots ?? selectedEvent.spotsLeft ?? 0)],
+                  ["Registration link", selectedEvent.registrationUrl || selectedEvent.registration_url ? "Available" : "Not available"],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-xs text-text-secondary">{label}</dt>
+                    <dd className="mt-0.5 font-medium text-text-primary">{value}</dd>
+                  </div>
+                ))}
+              </dl>
 
               {Array.isArray(selectedEvent.registrationFields) && selectedEvent.registrationFields.length > 0 ? (
-                <div className="rounded-xl border border-border p-3">
-                  <p className="mb-2 font-medium text-text-primary">Registration Fields</p>
+                <div>
+                  <p className="mb-2 text-sm font-medium text-text-primary">Registration asks for</p>
                   <div className="flex flex-wrap gap-2">
                     {selectedEvent.registrationFields.map((field, index) => (
                       <span key={`${field?.key || field?.label || "field"}-${index}`} className="rounded-full bg-muted px-3 py-1 text-xs text-text-secondary">
@@ -246,6 +326,20 @@ export default function EventsPage() {
                 </div>
               ) : null}
             </div>
+          ) : null}
+
+          {selectedEvent ? (
+            <DialogFooter>
+              <Button variant="outline" className={ui.btn} onClick={() => setDetailsOpen(false)}>Close</Button>
+              <Button
+                className={ui.btn}
+                disabled={["REGISTERED", "FULL", "CLOSED", "CANCELLED"].includes(selectedState)}
+                onClick={() => navigateToRegistrationLink(selectedEvent)}
+              >
+                {selectedState === "REGISTERED" ? <Ticket className="size-4" /> : selectedState === "CANCELLED" ? <CalendarX2 className="size-4" /> : <ExternalLink className="size-4" />}
+                {selectedState === "REGISTERED" ? "Registered" : "Register"}
+              </Button>
+            </DialogFooter>
           ) : null}
         </DialogContent>
       </Dialog>

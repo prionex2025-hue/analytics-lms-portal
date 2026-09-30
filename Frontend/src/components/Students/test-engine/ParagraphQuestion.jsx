@@ -27,9 +27,10 @@ export function ParagraphQuestion({ answer, onChange, disabled, wordLimit = 250 
         value={answer?.answer_text || ""}
         onChange={(event) => handleChange(event.target.value)}
         placeholder="Write your answer"
-        className="w-full resize-y rounded-xl border border-border bg-card px-3 py-2.5 text-text-primary outline-none ring-blue-400 focus:ring"
+        aria-label="Your answer"
+        className="min-h-44 resize-y py-3 leading-7 w-full rounded-lg border border-input bg-card px-3.5 text-base text-text-primary outline-none transition-colors placeholder:text-text-secondary/70 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60"
       />
-      <p className={`text-xs ${words >= wordLimit ? "text-danger" : "text-text-secondary"}`}>
+      <p aria-live="polite" className={`text-right text-xs tabular-nums ${words >= wordLimit ? "font-medium text-danger" : "text-text-secondary"}`}>
         {words}/{wordLimit} words
       </p>
     </div>

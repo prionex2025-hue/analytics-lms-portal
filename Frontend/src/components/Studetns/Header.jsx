@@ -1,54 +1,126 @@
 import { memo } from "react";
-import { PanelLeftClose, PanelLeftOpen, Menu } from "lucide-react";
-import { useSelector } from "react-redux";
+import { ChevronDown, LogOut, Menu, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Settings, Sun, User } from "lucide-react";
+import { useDispatch, useSelector } from "react-redux";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { logoutStudent } from "@/features/Students/authSlice";
+import { setTheme } from "@/features/Students/uiSlice";
 import { optimizeCloudinaryImage } from "@/lib/cloudinary";
+import { resolvePageTitle } from "@/components/Studetns/navigation";
+
+const THEME_CYCLE = { light: "dark", dark: "system", system: "light" };
+const THEME_META = {
+  light: { icon: Sun, label: "Light theme" },
+  dark: { icon: Moon, label: "Dark theme" },
+  system: { icon: Monitor, label: "System theme" },
+};
+
+const getInitials = (name) =>
+  (name || "Student")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
 
 function Header({ collapsed, onToggleSidebar, onOpenMobileSidebar }) {
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
   const user = useSelector((state) => state.auth.user);
+  const theme = useSelector((state) => state.ui.theme || "system");
+  const { title, section } = resolvePageTitle(pathname);
+  const ThemeIcon = (THEME_META[theme] || THEME_META.system).icon;
+  const nextTheme = THEME_CYCLE[theme] || "light";
 
   return (
-    <header className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-border bg-card/95 px-3 py-3 shadow-sm backdrop-blur sm:gap-3 sm:px-6">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon-sm" className="lg:hidden" onClick={onOpenMobileSidebar}>
-          <Menu className="size-4" />
-          <span className="sr-only">Open menu</span>
-        </Button>
+    <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-card/90 px-4 backdrop-blur supports-[backdrop-filter]:bg-card/75 sm:px-6">
+      <Button variant="ghost" size="icon-lg" className="size-10 -ml-1 lg:hidden" onClick={onOpenMobileSidebar}>
+        <Menu className="size-5" />
+        <span className="sr-only">Open navigation</span>
+      </Button>
 
-        <Button variant="ghost" size="icon-sm" className="hidden lg:inline-flex" onClick={onToggleSidebar}>
-          {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-          <span className="sr-only">Toggle sidebar</span>
-        </Button>
+      <Button
+        variant="ghost"
+        size="icon-lg"
+        className="size-10 -ml-2 hidden text-text-secondary lg:inline-flex"
+        onClick={onToggleSidebar}
+        aria-pressed={collapsed}
+      >
+        {collapsed ? <PanelLeftOpen className="size-5" /> : <PanelLeftClose className="size-5" />}
+        <span className="sr-only">{collapsed ? "Expand sidebar" : "Collapse sidebar"}</span>
+      </Button>
 
-        <div>
-          <p className="text-base leading-none font-semibold tracking-tight text-text-primary sm:text-xl">Hello, {user?.fullName?.split(" ")?.[0] || "Student"}</p>
-          <p className="mt-1 hidden text-xs text-text-secondary sm:block sm:text-sm">Focused mode for your tests and analytics</p>
-        </div>
+      <div className="min-w-0 flex-1">
+        {section ? <p className="hidden text-xs text-text-secondary sm:block">{section}</p> : null}
+        <p className="truncate text-base font-semibold leading-tight text-text-primary">{title}</p>
       </div>
 
-      <div className="ml-auto flex items-center gap-2 sm:gap-3">
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-1.5 py-1 sm:px-2 sm:py-1.5 shadow-sm">
-          <Avatar size="default" className="size-8 rounded-lg bg-primary/15 text-primary after:hidden">
-            <AvatarImage
-              src={optimizeCloudinaryImage(user?.avatarUrl, { width: 64, height: 64, gravity: "face" })}
-              alt={user?.fullName || "Student avatar"}
-              className="rounded-lg object-cover"
-            />
-            <AvatarFallback className="rounded-lg bg-primary/15 text-xs font-bold text-primary">
-              {(user?.fullName || "ST")
-                .split(" ")
-                .slice(0, 2)
-                .map((part) => part[0])
-                .join("")}
-            </AvatarFallback>
-          </Avatar>
-          <div className="hidden pr-1 sm:block">
-            <p className="text-sm font-semibold text-text-primary">{user?.fullName || "Student"}</p>
-            <p className="text-[11px] text-text-secondary">{user?.studentId || "---"}</p>
-          </div>
-        </div>
-      </div>
+      <Button
+        variant="ghost"
+        size="icon-lg"
+        className="size-10 text-text-secondary"
+        onClick={() => dispatch(setTheme(nextTheme))}
+        title={`${(THEME_META[theme] || THEME_META.system).label} — switch to ${nextTheme}`}
+      >
+        <ThemeIcon className="size-5" />
+        <span className="sr-only">Switch to {nextTheme} theme</span>
+      </Button>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="flex h-10 items-center gap-2.5 rounded-lg pr-1 pl-1 outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 sm:pr-2"
+          >
+            <Avatar className="size-8 rounded-full after:hidden">
+              <AvatarImage
+                src={optimizeCloudinaryImage(user?.avatarUrl, { width: 64, height: 64, gravity: "face" })}
+                alt=""
+                className="rounded-full object-cover"
+              />
+              <AvatarFallback className="rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                {getInitials(user?.fullName)}
+              </AvatarFallback>
+            </Avatar>
+            <span className="hidden max-w-40 text-left sm:block">
+              <span className="block truncate text-sm font-medium leading-tight text-text-primary">{user?.fullName || "Student"}</span>
+              <span className="block truncate text-xs leading-tight text-text-secondary">{user?.studentId || "—"}</span>
+            </span>
+            <ChevronDown className="hidden size-4 text-text-secondary sm:block" aria-hidden="true" />
+            <span className="sr-only">Open account menu</span>
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuLabel className="font-normal">
+            <p className="truncate text-sm font-medium text-text-primary">{user?.fullName || "Student"}</p>
+            <p className="truncate text-xs text-text-secondary">{user?.email || user?.studentId || ""}</p>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem className="h-9 gap-2 px-2" onSelect={() => navigate("/profile")}>
+              <User className="size-4" /> Profile
+            </DropdownMenuItem>
+            <DropdownMenuItem className="h-9 gap-2 px-2" onSelect={() => navigate("/settings")}>
+              <Settings className="size-4" /> Settings
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem className="h-9 gap-2 px-2" variant="destructive" onSelect={() => dispatch(logoutStudent())}>
+            <LogOut className="size-4" /> Log out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </header>
   );
 }

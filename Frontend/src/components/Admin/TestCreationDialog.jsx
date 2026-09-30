@@ -1085,7 +1085,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
           {/* --- RIGHT PREVIEW PANEL --- */}
           <aside className="order-3 border-t border-border bg-background/70 p-4 sm:p-6 lg:col-span-3 lg:order-3 lg:border-l lg:border-t-0 lg:p-6">
             <div className="lg:sticky lg:top-6">
-              <div className="rounded-2xl border border-border bg-card p-6 shadow-sm transition-all duration-200 hover:shadow-md">
+              <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-semibold text-text-primary">Live Preview</h2>
@@ -1162,7 +1162,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
 
               {/* Step 0: Basic Info */}
               {step === 0 && (
-                <section className="space-y-6 rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-200 animate-in slide-in-from-bottom-2 hover:shadow-md lg:p-6">
+                <section className="space-y-6 rounded-xl border border-border bg-card p-5 shadow-xs animate-in slide-in-from-bottom-2 motion-reduce:animate-none lg:p-6">
                   <header className="space-y-2">
                     <h1 className="text-lg font-semibold text-text-primary">Basic Information</h1>
                     <p className="text-sm text-text-secondary">Define the core identity of your test.</p>
@@ -1319,7 +1319,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
               )}
 
               {step === 1 && (
-                <section className="space-y-6 rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-200 animate-in slide-in-from-bottom-2 hover:shadow-md lg:p-6">
+                <section className="space-y-6 rounded-xl border border-border bg-card p-5 shadow-xs animate-in slide-in-from-bottom-2 motion-reduce:animate-none lg:p-6">
                   <header className="space-y-2">
                     <h1 className="flex items-center gap-2 text-lg font-semibold text-text-primary"><Clock className="h-5 w-5 text-primary" /> Timing & Attempts</h1>
                     <p className="text-sm text-text-secondary">Set schedule and attempt evaluation rules.</p>
@@ -1436,7 +1436,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
               )}
 
               {step === 2 && (
-                <section className="space-y-6 rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-200 animate-in slide-in-from-bottom-2 hover:shadow-md lg:p-6">
+                <section className="space-y-6 rounded-xl border border-border bg-card p-5 shadow-xs animate-in slide-in-from-bottom-2 motion-reduce:animate-none lg:p-6">
                   <header className="space-y-2">
                     <h1 className="flex items-center gap-2 text-lg font-semibold text-text-primary"><Users className="h-5 w-5 text-primary" /> Assignment</h1>
                     <p className="text-sm text-text-secondary">Choose one audience method: all students in your department or batch-wise assignment.</p>
@@ -1674,7 +1674,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
                               <span className="text-xs font-medium text-text-secondary">{form.batchIds.length} selected</span>
                             </div>
 
-                            <div className="max-h-72 space-y-3 overflow-y-auto rounded-2xl border border-border bg-card p-3">
+                            <div className="max-h-72 space-y-3 overflow-y-auto rounded-xl border border-border bg-card p-3">
                               {filteredBatches.length ? filteredBatches.map((batch) => (
                                 <label key={batch.id} className="flex cursor-pointer items-center justify-between rounded-xl border border-border bg-background px-4 py-3 transition-all hover:border-primary/40">
                                   <div>
@@ -1700,7 +1700,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
               )}
 
               {step === 3 && (
-                    <section className="space-y-6 rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-200 animate-in slide-in-from-bottom-2 hover:shadow-md lg:p-6">
+                    <section className="space-y-6 rounded-xl border border-border bg-card p-5 shadow-xs animate-in slide-in-from-bottom-2 motion-reduce:animate-none lg:p-6">
                       <header className="flex items-center justify-between">
                         <div>
                           <h1 className="text-lg font-semibold text-text-primary">Question Bank</h1>
@@ -1721,7 +1721,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
 
                         <TabsContent value="manual" className="mt-6 space-y-4">
                           {form.questions.slice(0, questionRenderLimit).map((q, idx) => (
-                            <div key={idx} className="group relative rounded-2xl border border-border bg-card p-6 transition-all hover:border-primary/30 hover:shadow-md">
+                            <div key={idx} className="group relative rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/30 sm:p-6">
                               <div className="mb-4 flex items-center justify-between">
                                 <span className="text-xs font-bold uppercase tracking-widest text-primary">Question {idx + 1}</span>
                                 <button onClick={() => dispatch(removeQuestionRow(idx))} className="text-text-secondary hover:text-danger">
@@ -2066,7 +2066,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
                   )}
 
               {step === 4 && (
-                <section className="space-y-6 rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-200 animate-in slide-in-from-bottom-2 hover:shadow-md lg:p-6">
+                <section className="space-y-6 rounded-xl border border-border bg-card p-5 shadow-xs animate-in slide-in-from-bottom-2 motion-reduce:animate-none lg:p-6">
                   <header className="space-y-2">
                     <h1 className="flex items-center gap-2 text-lg font-semibold text-text-primary"><Eye className="h-5 w-5 text-primary" /> Review & Validation</h1>
                     <p className="text-sm text-text-secondary">Audit distribution, detect blockers, and quick-edit question metadata before proctoring setup.</p>
@@ -2228,7 +2228,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
               )}
 
               {step === 5 && (
-                <section className="space-y-6 rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-200 animate-in slide-in-from-bottom-2 hover:shadow-md lg:p-6">
+                <section className="space-y-6 rounded-xl border border-border bg-card p-5 shadow-xs animate-in slide-in-from-bottom-2 motion-reduce:animate-none lg:p-6">
                   <header className="space-y-2">
                     <h1 className="flex items-center gap-2 text-lg font-semibold text-text-primary"><ShieldCheck className="h-5 w-5 text-primary" /> Proctoring Config</h1>
                     <p className="text-sm text-text-secondary">Choose a persisted test type and fine-tune the exact student runtime behavior.</p>
@@ -2376,7 +2376,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
               )}
 
               {step === 6 && (
-                <section className="space-y-6 rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-200 animate-in slide-in-from-bottom-2 hover:shadow-md lg:p-6">
+                <section className="space-y-6 rounded-xl border border-border bg-card p-5 shadow-xs animate-in slide-in-from-bottom-2 motion-reduce:animate-none lg:p-6">
                   <header className="space-y-2">
                     <h1 className="flex items-center gap-2 text-lg font-semibold text-text-primary"><Rocket className="h-5 w-5 text-primary" /> Publish Flow</h1>
                     <p className="text-sm text-text-secondary">Finalize status and verify readiness before publishing impact.</p>

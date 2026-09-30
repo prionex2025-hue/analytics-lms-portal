@@ -1,14 +1,15 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, FileText, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, Clock3, FileText, Loader2, PlayCircle, Repeat, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
 import { testAccessQueryOptions } from "@/services/studentQueries";
 import { studentApi } from "@/services/studentApi";
+import { Callout, LoadingState, StatusBadge } from "@/components/Students/ui/StudentUI";
+import { cn } from "@/lib/utils";
+import { ui } from "@/styles/ui-tokens";
 
 const formatDateTime = (value) => {
   if (!value) return "-";
@@ -73,24 +74,25 @@ export default function TestInstructionsPage() {
   });
 
   if (accessQuery.isLoading) {
-    return <div className="grid min-h-screen place-items-center text-text-secondary">Loading test instructions...</div>;
+    return <LoadingState fullScreen label="Loading test instructions..." />;
   }
 
   if (accessQuery.isError) {
     return (
-      <section className="grid min-h-screen place-items-center bg-muted p-4">
-        <Card className="w-full max-w-xl rounded-xl border border-border bg-card p-6">
-          <div className="flex items-center gap-2 text-danger">
-            <AlertTriangle className="size-5" />
-            <h1 className="text-lg font-semibold">Unable to open test link</h1>
-          </div>
-          <p className="mt-3 text-sm text-text-secondary">
+      <section className="grid min-h-screen place-items-center bg-background p-4">
+        <div role="alert" className={cn(ui.card, "w-full max-w-md p-6 text-center sm:p-8")}>
+          <span className="mx-auto grid size-12 place-items-center rounded-full bg-danger/10 text-danger">
+            <AlertTriangle className="size-5" aria-hidden="true" />
+          </span>
+          <h1 className="mt-4 text-lg font-semibold text-text-primary">Unable to open test link</h1>
+          <p className="mt-2 text-sm leading-6 text-text-secondary">
             {accessQuery.error?.message || "This link is invalid, expired, or not assigned to your account."}
           </p>
-          <Button className="mt-5" variant="outline" onClick={() => navigate("/tests/ongoing", { replace: true })}>
+          <Button className={cn(ui.btn, "mt-6")} variant="outline" onClick={() => navigate("/tests/ongoing", { replace: true })}>
+            <ArrowLeft className="size-4" />
             Back to Tests
           </Button>
-        </Card>
+        </div>
       </section>
     );
   }
@@ -99,89 +101,94 @@ export default function TestInstructionsPage() {
   const canStart = Boolean(test?.canStart);
   const hasActiveAttempt = Boolean(test?.hasActiveAttempt && test?.activeSubmissionId);
 
-  return (
-    <section className="min-h-screen bg-muted px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-5xl space-y-5">
-        <Card className="rounded-xl border border-border bg-card p-5 sm:p-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="bg-primary/10 text-primary-dark">
-                  {test?.subject || "Test"}
-                </Badge>
-                {hasActiveAttempt ? (
-                  <Badge variant="secondary" className="bg-success/10 text-success">Active attempt found</Badge>
-                ) : null}
-              </div>
-              <h1 className="mt-3 text-2xl font-semibold text-text-primary sm:text-3xl">{test?.title || "Test Instructions"}</h1>
-              {test?.description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-text-secondary">{test.description}</p> : null}
-            </div>
-            <Button variant="outline" onClick={() => navigate("/tests/ongoing")}>Back</Button>
-          </div>
-        </Card>
+  const facts = [
+    { icon: CalendarClock, label: "Window", value: formatDateTime(test?.startsAt), sub: `to ${formatDateTime(test?.endsAt)}` },
+    { icon: Clock3, label: "Duration", value: `${test?.durationMins || 0} minutes` },
+    { icon: FileText, label: "Questions / Marks", value: `${test?.questionCount || 0} / ${test?.totalMarks || 0}` },
+    { icon: Repeat, label: "Attempts", value: `${test?.attemptsUsed || 0}/${test?.attemptsAllowed || 1} used` },
+  ];
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="rounded-lg border border-border bg-card p-4">
-            <CalendarClock className="size-5 text-primary" />
-            <p className="mt-2 text-xs text-text-secondary">Window</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">{formatDateTime(test?.startsAt)}</p>
-            <p className="text-xs text-text-secondary">to {formatDateTime(test?.endsAt)}</p>
-          </Card>
-          <Card className="rounded-lg border border-border bg-card p-4">
-            <Clock3 className="size-5 text-primary" />
-            <p className="mt-2 text-xs text-text-secondary">Duration</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">{test?.durationMins || 0} minutes</p>
-          </Card>
-          <Card className="rounded-lg border border-border bg-card p-4">
-            <FileText className="size-5 text-primary" />
-            <p className="mt-2 text-xs text-text-secondary">Questions / Marks</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">{test?.questionCount || 0} / {test?.totalMarks || 0}</p>
-          </Card>
-          <Card className="rounded-lg border border-border bg-card p-4">
-            <ShieldCheck className="size-5 text-primary" />
-            <p className="mt-2 text-xs text-text-secondary">Attempts</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">
-              {test?.attemptsUsed || 0}/{test?.attemptsAllowed || 1} used
-            </p>
-          </Card>
+  return (
+    <section className="min-h-screen bg-background">
+      <header className="sticky top-0 z-10 border-b border-border bg-card/90 backdrop-blur supports-[backdrop-filter]:bg-card/75">
+        <div className="mx-auto flex h-14 max-w-4xl items-center gap-3 px-4 sm:px-6">
+          <Button variant="ghost" className="-ml-2 h-9 rounded-lg px-2.5 text-text-secondary" onClick={() => navigate("/tests/ongoing")}>
+            <ArrowLeft className="size-4" />
+            Back
+          </Button>
+          <span className="truncate text-sm font-medium text-text-primary">Test instructions</span>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 pb-40 sm:px-6 sm:py-8 sm:pb-40">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone="info">{test?.subject || "Test"}</StatusBadge>
+            {hasActiveAttempt ? <StatusBadge tone="success" icon={RotateCcw}>Active attempt found</StatusBadge> : null}
+          </div>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-text-primary sm:text-3xl">{test?.title || "Test Instructions"}</h1>
+          {test?.description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-text-secondary">{test.description}</p> : null}
         </div>
 
-        <Card className="rounded-xl border border-border bg-card p-5 sm:p-6">
-          <h2 className="text-lg font-semibold text-text-primary">Instructions</h2>
-          <div className="mt-4 space-y-3">
-            {instructions.map((item, index) => (
-              <div key={`${item}-${index}`} className="flex gap-3 rounded-lg bg-background px-3 py-3 text-sm text-text-secondary">
-                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
-                <p>{item}</p>
+        <dl className="grid gap-px overflow-hidden rounded-xl border border-border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-4">
+          {facts.map((fact) => (
+            <div key={fact.label} className="flex gap-3 bg-card p-4">
+              <fact.icon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+              <div className="min-w-0">
+                <dt className="text-xs text-text-secondary">{fact.label}</dt>
+                <dd className="mt-0.5 text-sm font-semibold text-text-primary">{fact.value}</dd>
+                {fact.sub ? <dd className="text-xs text-text-secondary">{fact.sub}</dd> : null}
               </div>
-            ))}
-          </div>
-        </Card>
+            </div>
+          ))}
+        </dl>
+
+        <div className={cn(ui.card, ui.cardPaddingLg)}>
+          <h2 className={ui.titleLg}>Instructions</h2>
+          {instructions.length === 0 ? (
+            <p className="mt-3 text-sm text-text-secondary">No special instructions for this test.</p>
+          ) : (
+            <ol className="mt-4 space-y-3">
+              {instructions.map((item, index) => (
+                <li key={`${item}-${index}`} className="flex gap-3 text-sm leading-6 text-text-primary">
+                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary">
+                    {index + 1}
+                  </span>
+                  <p className="pt-px">{item}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
 
         {blockedReason ? (
-          <Card className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
+          <Callout tone="warning" icon={AlertTriangle} title="You can't start this test right now">
             {blockedCopy[blockedReason] || "This test cannot be started right now."}
-          </Card>
+          </Callout>
         ) : null}
+      </div>
 
-        <Card className="rounded-xl border border-border bg-card p-5">
-          <label className="flex cursor-pointer items-start gap-3">
-            <Checkbox checked={agreed} onCheckedChange={(value) => setAgreed(Boolean(value))} disabled={!canStart} />
-            <span className="text-sm leading-6 text-text-secondary">
+      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85">
+        <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <label className={cn("flex items-start gap-3", canStart ? "cursor-pointer" : "cursor-not-allowed opacity-60")}>
+            <Checkbox className="mt-0.5 size-5" checked={agreed} onCheckedChange={(value) => setAgreed(Boolean(value))} disabled={!canStart} />
+            <span className="text-sm leading-6 text-text-primary">
               I have read the test details and instructions, and I agree to follow them before starting the exam.
             </span>
           </label>
-          <div className="mt-5 flex flex-wrap justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => navigate("/tests/ongoing")}>Not Now</Button>
+          <div className="flex shrink-0 gap-2">
+            <Button type="button" variant="outline" className={cn(ui.btn, "flex-1 sm:flex-none")} onClick={() => navigate("/tests/ongoing")}>Not Now</Button>
             <Button
               type="button"
+              className={cn(ui.btn, "flex-1 sm:flex-none")}
               disabled={!canStart || !agreed || startMutation.isPending}
               onClick={() => startMutation.mutate()}
             >
+              {startMutation.isPending ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none" /> : <PlayCircle className="size-4" />}
               {startMutation.isPending ? "Starting..." : hasActiveAttempt ? "Resume Exam" : "Agree and Start Exam"}
             </Button>
           </div>
-        </Card>
+        </div>
       </div>
     </section>
   );

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Clock3 } from "lucide-react";
+import { AlertTriangle, Bookmark, BookmarkCheck, Check, ChevronLeft, ChevronRight, Clock3, CloudOff, Eraser, Loader2, RefreshCw, Send, ShieldCheck } from "lucide-react";
+import { LoadingState } from "@/components/Students/ui/StudentUI";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -388,7 +390,12 @@ export default function TestEnvironmentPage() {
     !hasQuestionPayload &&
     (start_status === "ready" || load_status === "ready");
 
-  const remainingColorClass = remainingSeconds <= 10 ? "text-danger bg-danger/15" : "text-primary bg-primary/15";
+  const remainingColorClass =
+    remainingSeconds <= 60
+      ? "text-danger bg-danger/10 ring-danger/30"
+      : remainingSeconds <= 300
+        ? "text-amber-700 bg-warning/15 ring-warning/40 dark:text-warning"
+        : "text-text-primary bg-muted ring-border";
 
   const title = useMemo(() => {
     if (start_status === "failed" || load_status === "failed") {
@@ -399,142 +406,216 @@ export default function TestEnvironmentPage() {
   }, [current_question_index, load_status, question_order.length, start_status]);
 
   if (awaitingInitialPayload) {
-    return <div className="grid min-h-screen place-items-center text-text-secondary">Loading secure test environment...</div>;
+    return <LoadingState fullScreen label="Loading secure test environment..." />;
   }
 
-  if (hasLoadFailure) {
-    return (
-      <section className="grid min-h-screen place-items-center bg-muted p-4">
-        <div className="w-full max-w-xl rounded-2xl border border-border bg-card p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-text-primary">Unable to Load Test Environment</h2>
-          <p className="mt-2 text-sm text-text-secondary">
-            {last_error || "We could not initialize your attempt. Please resume your active test session."}
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button type="button" onClick={() => navigate("/resume", { replace: true })}>Resume Active Attempt</Button>
-            <Button type="button" variant="outline" onClick={() => navigate("/tests/ongoing", { replace: true })}>Back to Ongoing Tests</Button>
-          </div>
+  const renderFailure = (heading, message) => (
+    <section className="grid min-h-screen place-items-center bg-background p-4">
+      <div role="alert" className="w-full max-w-md rounded-xl border border-border bg-card p-6 text-center shadow-sm sm:p-8">
+        <span className="mx-auto grid size-12 place-items-center rounded-full bg-danger/10 text-danger">
+          <AlertTriangle className="size-5" aria-hidden="true" />
+        </span>
+        <h2 className="mt-4 text-lg font-semibold text-text-primary">{heading}</h2>
+        <p className="mt-2 text-sm leading-6 text-text-secondary">{message}</p>
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center">
+          <Button type="button" className="h-10 rounded-lg px-4" onClick={() => navigate("/resume", { replace: true })}>
+            <RefreshCw className="size-4" />
+            Resume Active Attempt
+          </Button>
+          <Button type="button" variant="outline" className="h-10 rounded-lg px-4" onClick={() => navigate("/tests/ongoing", { replace: true })}>
+            Back to Ongoing Tests
+          </Button>
         </div>
-      </section>
+      </div>
+    </section>
+  );
+
+  if (hasLoadFailure) {
+    return renderFailure(
+      "Unable to Load Test Environment",
+      last_error || "We could not initialize your attempt. Please resume your active test session."
     );
   }
 
   if (hasMissingQuestionPayload) {
-    return (
-      <section className="grid min-h-screen place-items-center bg-muted p-4">
-        <div className="w-full max-w-xl rounded-2xl border border-border bg-card p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-text-primary">Session Found But Questions Missing</h2>
-          <p className="mt-2 text-sm text-text-secondary">
-            We found your session, but question data did not load correctly. Please resume again.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button type="button" onClick={() => navigate("/resume", { replace: true })}>Resume Active Attempt</Button>
-            <Button type="button" variant="outline" onClick={() => navigate("/tests/ongoing", { replace: true })}>Back to Ongoing Tests</Button>
-          </div>
-        </div>
-      </section>
+    return renderFailure(
+      "Session Found But Questions Missing",
+      "We found your session, but question data did not load correctly. Please resume again."
     );
   }
 
+  const isMarked = marked_for_review.includes(questionId);
+  const violationThreshold = Number(proctoring_config?.threshold || 3);
+  const submitLabel = isModuleTest
+    ? advance_status === "advancing"
+      ? "Submitting..."
+      : isLastModule
+        ? "Finish Test"
+        : "Submit Section & Continue"
+    : submit_status === "submitting"
+      ? "Submitting..."
+      : "Submit Test";
+  const isSubmitting = advance_status === "advancing" || submit_status === "submitting";
+
   return (
-    <section className="grid min-h-screen bg-muted lg:grid-cols-[1fr_340px]">
-      <div className="p-4 sm:p-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-          <div>
-            <p className="text-sm font-semibold text-text-secondary">{title}</p>
+    <section className="flex min-h-screen flex-col bg-background">
+      <header className="sticky top-0 z-20 border-b border-border bg-card">
+        <div className="flex h-16 items-center gap-3 px-4 sm:px-6">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-text-primary">{title}</p>
             {isModuleTest && current_module ? (
-              <p className="text-xs font-medium text-primary">Current section: {current_module.name}</p>
+              <p className="truncate text-xs font-medium text-primary">Current section: {current_module.name}</p>
             ) : (
-              <p className="text-xs text-text-secondary">Attempt: {attempt_id}</p>
+              <p className="truncate font-mono text-xs text-text-secondary">Attempt: {attempt_id}</p>
             )}
           </div>
 
-          <div className="flex flex-col items-end gap-1">
-            <div className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-lg font-bold ${remainingColorClass}`}>
-              <Clock3 className="size-5" />
+          <div className="hidden items-center gap-1.5 text-xs text-text-secondary md:flex" aria-live="polite">
+            {save_status === "saving" ? (
+              <><Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Saving…</>
+            ) : save_status === "error" ? (
+              <><CloudOff className="size-3.5 text-amber-600 dark:text-warning" aria-hidden="true" /> Saved locally</>
+            ) : save_status === "saved" ? (
+              <><Check className="size-3.5 text-success" aria-hidden="true" /> All changes saved</>
+            ) : null}
+          </div>
+
+          <div className="flex flex-col items-end">
+            <div
+              role="timer"
+              aria-label="Time remaining"
+              className={cn("inline-flex h-10 items-center gap-2 rounded-lg px-3 text-lg font-semibold tabular-nums ring-1 ring-inset", remainingColorClass)}
+            >
+              <Clock3 className="size-4" aria-hidden="true" />
               {formatDuration(remainingSeconds)}
             </div>
             {isModuleTest ? (
-              <span className="text-[11px] text-text-secondary">Timer for this section only</span>
+              <span className="mt-0.5 text-[11px] text-text-secondary">Timer for this section only</span>
             ) : null}
           </div>
+
+          <Button
+            type="button"
+            className="hidden h-10 rounded-lg px-4 sm:inline-flex"
+            disabled={inputDisabled}
+            onClick={() => (isModuleTest ? setModuleAdvanceOpen(true) : setSubmitWarningOpen(true))}
+          >
+            {isSubmitting ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none" /> : <Send className="size-4" />}
+            {submitLabel}
+          </Button>
         </div>
 
-        {isModuleTest && Array.isArray(modules) && modules.length > 0 ? (
-          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-            {modules.map((mod) => {
-              const done = ["MANUAL_SUBMIT", "AUTO_SUBMIT", "EXPIRED", "COMPLETED"].includes(String(mod.status || "").toUpperCase());
-              const isCurrent = mod.isCurrent || mod.key === current_module?.key;
-              const cls = isCurrent
-                ? "bg-primary text-white"
-                : done
-                  ? "bg-success/15 text-success"
-                  : "bg-background text-text-secondary";
-              return (
-                <span key={mod.key} className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${cls}`}>
-                  {mod.order}. {mod.name}{done && !isCurrent ? " ✓" : ""}
-                </span>
-              );
-            })}
+        {question_order.length > 0 ? (
+          <div className="h-1 bg-muted" aria-hidden="true">
+            <div
+              className="h-full bg-primary transition-[width] duration-300 motion-reduce:transition-none"
+              style={{ width: `${((current_question_index + 1) / question_order.length) * 100}%` }}
+            />
           </div>
         ) : null}
+      </header>
 
-        {save_status === "error" ? (
-          <div className="mb-4 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm font-medium text-warning">
-            Saving locally. Changes will sync automatically when connection recovers.
-          </div>
-        ) : null}
+      <div className="grid flex-1 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="mx-auto w-full max-w-3xl space-y-4 p-4 sm:p-6 lg:py-8">
+          {isModuleTest && Array.isArray(modules) && modules.length > 0 ? (
+            <ol className="flex flex-wrap items-center gap-2" aria-label="Test sections">
+              {modules.map((mod) => {
+                const done = ["MANUAL_SUBMIT", "AUTO_SUBMIT", "EXPIRED", "COMPLETED"].includes(String(mod.status || "").toUpperCase());
+                const isCurrent = mod.isCurrent || mod.key === current_module?.key;
+                return (
+                  <li
+                    key={mod.key}
+                    aria-current={isCurrent ? "step" : undefined}
+                    className={cn(
+                      "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium ring-1 ring-inset",
+                      isCurrent
+                        ? "bg-primary text-primary-foreground ring-primary"
+                        : done
+                          ? "bg-success/10 text-success ring-success/25"
+                          : "bg-card text-text-secondary ring-border"
+                    )}
+                  >
+                    {done && !isCurrent ? <Check className="size-3.5" aria-hidden="true" /> : <span className="tabular-nums">{mod.order}.</span>}
+                    {mod.name}
+                  </li>
+                );
+              })}
+            </ol>
+          ) : null}
 
-        <article className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
-            <h2 className="text-2xl font-semibold leading-tight text-text-primary">{currentQuestion?.prompt}</h2>
+          {save_status === "error" ? (
+            <div role="status" className="flex items-start gap-2.5 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-text-primary">
+              <CloudOff className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-warning" aria-hidden="true" />
+              Saving locally. Changes will sync automatically when connection recovers.
+            </div>
+          ) : null}
+
+          <article className="rounded-xl border border-border bg-card p-5 shadow-xs sm:p-7">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+                Question {current_question_index + 1}
+              </span>
+              <Button
+                type="button"
+                variant={isMarked ? "secondary" : "ghost"}
+                className={cn("h-9 rounded-lg px-3", isMarked ? "border-warning/40 bg-warning/10 text-amber-700 hover:bg-warning/15 dark:text-warning" : "text-text-secondary")}
+                disabled={inputDisabled}
+                aria-pressed={isMarked}
+                onClick={() => dispatch(toggleMarkedForReview(questionId))}
+              >
+                {isMarked ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
+                {isMarked ? "Unmark Review" : "Mark for Review"}
+              </Button>
+            </div>
+
+            <h2 className="mt-3 text-lg font-medium leading-relaxed text-text-primary sm:text-xl">{currentQuestion?.prompt}</h2>
+
+            <div className="mt-6">
+              <QuestionRenderer
+                question={currentQuestion}
+                answer={answers[questionId]}
+                disabled={inputDisabled}
+                paragraphWordLimit={Number(proctoring_config?.paragraph_word_limit || 250)}
+                onChange={onAnswerChange}
+              />
+            </div>
+
+            <div className="mt-8 flex flex-wrap items-center gap-2 border-t border-border pt-5">
+              <Button type="button" variant="ghost" className="h-10 rounded-lg px-3 text-text-secondary" onClick={() => dispatch(clearAnswer(questionId))} disabled={inputDisabled}>
+                <Eraser className="size-4" />
+                Clear
+              </Button>
+              <div className="ml-auto flex gap-2">
+                <Button type="button" variant="outline" className="h-10 rounded-lg px-4" onClick={goPrev} disabled={current_question_index <= 0}>
+                  <ChevronLeft className="size-4" />
+                  Prev
+                </Button>
+                <Button type="button" className="h-10 rounded-lg px-4" onClick={goNext} disabled={current_question_index >= question_order.length - 1}>
+                  Next
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            </div>
+          </article>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="inline-flex items-center gap-2 text-xs text-text-secondary">
+              <ShieldCheck className="size-4" aria-hidden="true" />
+              {proctoring_config?.enabled
+                ? `Violations: ${violations.total}/${violationThreshold}`
+                : "Proctoring is disabled for this test."}
+            </p>
             <Button
               type="button"
-              variant="outline"
-              disabled={inputDisabled}
-              onClick={() => dispatch(toggleMarkedForReview(questionId))}
-            >
-              {marked_for_review.includes(questionId) ? "Unmark Review" : "Mark for Review"}
-            </Button>
-          </div>
-
-          <QuestionRenderer
-            question={currentQuestion}
-            answer={answers[questionId]}
-            disabled={inputDisabled}
-            paragraphWordLimit={Number(proctoring_config?.paragraph_word_limit || 250)}
-            onChange={onAnswerChange}
-          />
-
-          <div className="mt-6 flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={() => dispatch(clearAnswer(questionId))} disabled={inputDisabled}>Clear</Button>
-            <Button type="button" variant="outline" onClick={goPrev} disabled={current_question_index <= 0}>Prev</Button>
-            <Button type="button" onClick={goNext} disabled={current_question_index >= question_order.length - 1}>Next</Button>
-            <Button
-              type="button"
-              className="ml-auto bg-primary-dark hover:bg-primary-dark"
+              className="h-11 w-full rounded-lg px-4 sm:hidden"
               disabled={inputDisabled}
               onClick={() => (isModuleTest ? setModuleAdvanceOpen(true) : setSubmitWarningOpen(true))}
             >
-              {isModuleTest
-                ? advance_status === "advancing"
-                  ? "Submitting..."
-                  : isLastModule
-                    ? "Finish Test"
-                    : "Submit Section & Continue"
-                : submit_status === "submitting"
-                  ? "Submitting..."
-                  : "Submit Test"}
+              {isSubmitting ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none" /> : <Send className="size-4" />}
+              {submitLabel}
             </Button>
           </div>
-
-          <div className="mt-4 rounded-xl bg-background p-3 text-xs text-text-secondary">
-            {proctoring_config?.enabled
-              ? `Violations: ${violations.total}/${Number(proctoring_config?.threshold || 3)}`
-              : "Proctoring is disabled for this test."}
-          </div>
-        </article>
-      </div>
+        </div>
 
       <TestNavigationPanel
         questionOrder={question_order}
@@ -546,6 +627,7 @@ export default function TestEnvironmentPage() {
         onNext={goNext}
         disableNext={current_question_index >= question_order.length - 1}
       />
+      </div>
 
       <Dialog open={Boolean(proctoring_config?.enabled && proctoring_config?.fullscreen_required && fullscreenBlocked)}>
         <DialogContent showCloseButton={false} className="max-w-md">

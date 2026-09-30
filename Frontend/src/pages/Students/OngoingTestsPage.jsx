@@ -1,14 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Clock3, PlayCircle, CheckCircle2, Rocket } from "lucide-react";
+import { BookOpen, CalendarClock, CheckCircle2, ClipboardCheck, Clock3, Eye, Lock, PlayCircle, Target, Timer, Users } from "lucide-react";
 import { activeAttemptsQueryOptions, reportsQueryOptions } from "@/services/studentQueries";
 import { studentApi } from "@/services/studentApi";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { TestListSkeleton } from "@/components/common/page-skeletons";
+import { EmptyState, MetaItem, PageHeader, SectionHeader, StatusBadge } from "@/components/Students/ui/StudentUI";
+import { cn } from "@/lib/utils";
+import { ui } from "@/styles/ui-tokens";
+
+const remainingTone = (ms) => {
+  if (ms <= 60 * 1000) return "danger";
+  if (ms <= 5 * 60 * 1000) return "warning";
+  return "info";
+};
+
+const formatShortDateTime = (value) =>
+  new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 const pickId = (item) => item?.id || item?.test_id || item?.testId;
 
@@ -171,103 +182,127 @@ export default function OngoingTestsPage() {
   }, [attempts, submitMutation]);
 
   if (!isFetched && isLoading) {
-    return <div className="py-8 text-center text-sm text-text-secondary">Loading ongoing tests...</div>;
+    return <TestListSkeleton />;
   }
 
+  const liveCount = attempts.filter((test) => !test.autoSubmitted && !test.isCompleted).length;
+
   return (
-    <section className="space-y-5">
-      <Card className="rounded-2xl border border-primary/25 bg-linear-to-br from-primary-dark via-primary to-primary-dark p-6 text-primary-foreground shadow-lg shadow-primary/30">
-              <div className="flex items-center gap-2 text-primary-foreground/90">
-                <Rocket className="size-4" />
-                <p className="text-xs font-semibold tracking-[0.12em] uppercase">Test Window</p>
-              </div>
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight">On-Going Tests</h1>
-              <p className="mt-2 text-sm text-primary-foreground/90">Start Your Attempt .  {"   "} Click on Attend Now.</p>
-            </Card>
+    <section className={ui.pageSection}>
+      <PageHeader
+        title="Ongoing tests"
+        description="Tests that are open right now. Your answers are saved automatically while you work."
+      />
 
-      {attempts.length === 0 ? (
-        <Card className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
-          <p className="text-lg font-semibold text-text-primary">No active tests right now</p>
-          <p className="mt-2 text-sm text-text-secondary">You are all clear. Come back when a test is active.</p>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          {attempts.map((test) => (
-            <Card key={test.id} className="rounded-xl border border-border bg-card p-5">
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0">
-                  <p className="truncate text-lg font-semibold text-text-primary">{test.title || test.name || "Untitled Test"}</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs text-text-secondary">
-                      <Clock3 className="size-3.5" />
-                      {formatRemaining(test.remainingMs)}
-                    </span>
-                    {test.autoSubmitted ? (
-                      <Badge variant="secondary" className="bg-warning/15 text-warning">Auto-submitted</Badge>
-                    ) : null}
-                    {test.isCompleted ? (
-                      <Badge variant="secondary" className="bg-success/15 text-success">Completed</Badge>
-                    ) : null}
-                    {test.canTryAgain ? (
-                      <Badge variant="secondary" className="bg-primary/15 text-primary-dark">
-                        Try Again ({test.attemptsUsed}/{test.attemptsAllowed})
-                      </Badge>
-                    ) : null}
-                    {getAssignedDepartments(test).length > 0 ? (
-                      <Badge variant="secondary" className="bg-primary/10 text-primary-dark">
-                        Dept Scope ({getAssignedDepartments(test).length})
-                      </Badge>
-                    ) : null}
+      <div className="space-y-3">
+        <SectionHeader title="Active now" count={liveCount} />
+
+        {attempts.length === 0 ? (
+          <EmptyState
+            icon={ClipboardCheck}
+            title="No active tests right now"
+            description="You're all clear. When a test opens, it will appear here."
+            action={
+              <Button variant="outline" className={ui.btn} onClick={() => navigate("/tests/upcoming")}>
+                <CalendarClock className="size-4" />
+                View upcoming tests
+              </Button>
+            }
+          />
+        ) : (
+          <ul className="space-y-3">
+            {attempts.map((test) => {
+              const departments = getAssignedDepartments(test).length;
+              const isOpen = !test.autoSubmitted && !test.isCompleted;
+
+              return (
+                <li key={test.id} className={cn(ui.card, "p-4 sm:p-5", isOpen ? "" : "bg-muted/30")}>
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isOpen ? (
+                          <StatusBadge tone="success">
+                            <span className="size-1.5 rounded-full bg-current motion-safe:animate-pulse" aria-hidden="true" />
+                            Live
+                          </StatusBadge>
+                        ) : null}
+                        {test.autoSubmitted ? <StatusBadge tone="warning">Auto-submitted</StatusBadge> : null}
+                        {test.isCompleted ? <StatusBadge tone="success" icon={CheckCircle2}>Completed</StatusBadge> : null}
+                        {test.canTryAgain ? (
+                          <StatusBadge tone="info">Try again ({test.attemptsUsed}/{test.attemptsAllowed})</StatusBadge>
+                        ) : null}
+                      </div>
+                      <h3 className="mt-2 truncate text-base font-semibold text-text-primary sm:text-lg">
+                        {test.title || test.name || "Untitled Test"}
+                      </h3>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                        {test.subject ? <MetaItem icon={BookOpen}>{test.subject}</MetaItem> : null}
+                        {departments > 0 ? <MetaItem icon={Users}>Dept scope ({departments})</MetaItem> : null}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 md:flex-col md:items-end">
+                      <StatusBadge tone={test.autoSubmitted ? "neutral" : remainingTone(test.remainingMs)} icon={Timer} className="h-8 px-3 text-sm tabular-nums">
+                        {test.autoSubmitted ? "Time over" : `${formatRemaining(test.remainingMs)} left`}
+                      </StatusBadge>
+                      {isOpen ? (
+                        <Button className={cn(ui.btn, "ml-auto md:ml-0")} onClick={() => setContinueTarget(test)}>
+                          <PlayCircle className="size-4" />
+                          {test.canTryAgain ? "Attend" : "Continue"}
+                        </Button>
+                      ) : (
+                        <StatusBadge tone="neutral" icon={CheckCircle2} className="ml-auto md:ml-0">
+                          {test.isCompleted ? "Completed" : "Closed"}
+                        </StatusBadge>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                {!test.autoSubmitted && !test.isCompleted ? (
-                  <Button className="h-10 rounded-lg bg-primary text-primary-foreground hover:bg-primary-dark" onClick={() => setContinueTarget(test)}>
-                    <PlayCircle className="mr-2 size-4" />
-                    {test.canTryAgain ? "Attend" : "Continue"}
-                  </Button>
-                ) : (
-                  <Badge variant="secondary" className="bg-muted text-text-secondary">
-                    <CheckCircle2 className="mr-1 size-3.5" />
-                    {test.isCompleted ? "Completed" : "Closed"}
-                  </Badge>
-                )}
-              </div>
-
-              <div className="mt-4">
-                <div className="mb-1.5 flex items-center justify-between text-xs text-text-secondary">
-                  <span>{test.answered}/{test.totalQuestions || "-"} answered</span>
-                  <span>{test.progress}%</span>
-                </div>
-                <Progress value={test.progress} className="h-2 bg-muted **:data-[slot=progress-indicator]:bg-primary-dark" />
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between gap-3 pt-2">
-        <h2 className="text-xl font-semibold text-text-primary">Completed Tests</h2>
-        <Badge variant="secondary" className="bg-success/10 text-success">{completedTests.length} Completed</Badge>
+                  <div className="mt-4">
+                    <div className="mb-1.5 flex items-center justify-between text-xs text-text-secondary">
+                      <span>
+                        <span className="font-medium text-text-primary tabular-nums">{test.answered}</span>/{test.totalQuestions || "-"} answered
+                      </span>
+                      <span className="tabular-nums">{test.progress}%</span>
+                    </div>
+                    <Progress
+                      value={test.progress}
+                      aria-label={`${test.progress}% answered`}
+                      className="h-1.5 bg-muted **:data-[slot=progress-indicator]:bg-primary"
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
 
-      {reportsQuery.isLoading ? (
-        <Card className="rounded-xl border border-border bg-card p-6 text-center text-sm text-text-secondary">
-          Loading completed tests...
-        </Card>
-      ) : null}
+      <div className="space-y-3 pt-2">
+        <SectionHeader
+          title="Completed tests"
+          description="Answer review unlocks once the test window closes."
+          count={completedTests.length}
+        />
 
-      {!reportsQuery.isLoading && completedTests.length === 0 ? (
-        <Card className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
-          <p className="text-lg font-semibold text-text-primary">No completed tests yet</p>
-          <p className="mt-2 text-sm text-text-secondary">Once you submit a test, it will appear here with marks and answer review.</p>
-        </Card>
-      ) : null}
+        {reportsQuery.isLoading ? (
+          <div className="space-y-3" aria-busy="true">
+            <div className="h-20 animate-pulse rounded-xl bg-muted motion-reduce:animate-none" />
+            <div className="h-20 animate-pulse rounded-xl bg-muted motion-reduce:animate-none" />
+          </div>
+        ) : null}
 
-      {!reportsQuery.isLoading && completedTests.length > 0 ? (
-        <div className="space-y-4">
-          {completedTests.map((test, index) => (
-            (() => {
+        {!reportsQuery.isLoading && completedTests.length === 0 ? (
+          <EmptyState
+            icon={CheckCircle2}
+            title="No completed tests yet"
+            description="Once you submit a test, it will appear here with marks and answer review."
+          />
+        ) : null}
+
+        {!reportsQuery.isLoading && completedTests.length > 0 ? (
+          <ul className={cn(ui.card, "divide-y divide-border overflow-hidden")}>
+            {completedTests.map((test, index) => {
               const endTime = test.endDate ? new Date(test.endDate).getTime() : Number.NaN;
               const testCompleted =
                 test.isTestCompleted || ["COMPLETED", "COMPLETE"].includes(String(test.testStatus || "").trim().toUpperCase());
@@ -275,38 +310,43 @@ export default function OngoingTestsPage() {
               const canViewResults = Boolean(test.submissionId) && (isClosed || testCompleted);
 
               return (
-            <Card key={test.submissionId || test.testId || `result-${index}`} className="rounded-xl border border-border bg-card p-5">
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0">
-                  <p className="truncate text-lg font-semibold text-text-primary">{test.title}</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
-                    <span className="rounded-md bg-muted px-2 py-1">Subject: {test.subject}</span>
-                    <span className="rounded-md bg-muted px-2 py-1">Marks: {test.score}</span>
-                    <span className="rounded-md bg-muted px-2 py-1">Accuracy: {Number.isFinite(test.accuracy) ? `${test.accuracy}%` : "-"}</span>
-                    <span className={`rounded-md px-2 py-1 ${isClosed || testCompleted ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}>
-                      {testCompleted ? "Test Completed" : isClosed ? "Test Closed" : "Test Not Closed"}
-                    </span>
-                    {test.endDate ? (
-                      <span className="rounded-md bg-muted px-2 py-1">Ends: {new Date(test.endDate).toLocaleString()}</span>
-                    ) : null}
-                  </div>
-                </div>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => navigate(`/results/${test.submissionId}`)}
-                  disabled={!canViewResults}
+                <li
+                  key={test.submissionId || test.testId || `result-${index}`}
+                  className="flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
                 >
-                  {canViewResults ? "View Answers" : "Available After Test Ends"}
-                </Button>
-              </div>
-            </Card>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="truncate text-base font-semibold text-text-primary">{test.title}</h3>
+                      <StatusBadge tone={isClosed || testCompleted ? "success" : "warning"}>
+                        {testCompleted ? "Test Completed" : isClosed ? "Test Closed" : "Test Not Closed"}
+                      </StatusBadge>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                      <MetaItem icon={BookOpen}>{test.subject}</MetaItem>
+                      <MetaItem icon={ClipboardCheck}>Marks: <span className="font-medium text-text-primary">{test.score}</span></MetaItem>
+                      <MetaItem icon={Target}>
+                        Accuracy: <span className="font-medium text-text-primary">{Number.isFinite(test.accuracy) ? `${test.accuracy}%` : "-"}</span>
+                      </MetaItem>
+                      {test.endDate ? <MetaItem icon={Clock3}>Ends {formatShortDateTime(test.endDate)}</MetaItem> : null}
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(ui.btn, "w-full md:w-auto")}
+                    onClick={() => navigate(`/results/${test.submissionId}`)}
+                    disabled={!canViewResults}
+                  >
+                    {canViewResults ? <Eye className="size-4" /> : <Lock className="size-4" />}
+                    {canViewResults ? "View Answers" : "Available After Test Ends"}
+                  </Button>
+                </li>
               );
-            })()
-          ))}
-        </div>
-      ) : null}
+            })}
+          </ul>
+        ) : null}
+      </div>
 
       <Dialog open={Boolean(continueTarget)} onOpenChange={(open) => !open && setContinueTarget(null)}>
         <DialogContent className="max-w-md" showCloseButton={false}>
@@ -319,8 +359,9 @@ export default function OngoingTestsPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setContinueTarget(null)}>Not now</Button>
+            <Button variant="outline" className={ui.btn} onClick={() => setContinueTarget(null)}>Not now</Button>
             <Button
+              className={ui.btn}
               onClick={() => {
                 const target = continueTarget;
                 setContinueTarget(null);

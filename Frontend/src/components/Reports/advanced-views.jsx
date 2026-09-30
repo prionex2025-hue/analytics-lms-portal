@@ -30,10 +30,10 @@ const QUESTION_FLAG_TEXT = {
 };
 
 const LoadingCard = ({ children }) => (
-  <div className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">{children}</div>
+  <div className="rounded-xl border border-border bg-card p-6 text-sm text-text-secondary">{children}</div>
 );
 const ErrorCard = ({ children }) => (
-  <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">{children}</div>
+  <div className="rounded-xl border border-danger/40 bg-danger/10 p-4 text-sm text-danger">{children}</div>
 );
 
 export function ItemAnalysisView({ query }) {
@@ -58,11 +58,11 @@ export function ItemAnalysisView({ query }) {
     setItemSort((prev) => (prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
 
   return (
-    <article className="rounded-2xl border border-border bg-card">
+    <article className="rounded-xl border border-border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 p-4">
         <p className="text-sm text-text-secondary">
           <strong className="text-text-primary">{summary.totalQuestions ?? items.length}</strong> questions ·{" "}
-          <strong className={flaggedCount ? "text-red-500" : "text-text-primary"}>{flaggedCount}</strong> need review · students answered{" "}
+          <strong className={flaggedCount ? "text-danger" : "text-text-primary"}>{flaggedCount}</strong> need review · students answered{" "}
           <strong className="text-text-primary">{Math.round((summary.averageDifficulty || 0) * 100)}%</strong> correctly on average
         </p>
         <div className="flex overflow-hidden rounded-lg border border-border text-xs font-medium">
@@ -74,7 +74,7 @@ export function ItemAnalysisView({ query }) {
               key={option.label}
               type="button"
               onClick={() => setOnlyFlagged(option.value)}
-              className={`px-3 py-1.5 ${onlyFlagged === option.value ? "bg-primary text-white" : "bg-background text-text-primary hover:bg-muted"}`}
+              className={`px-3 py-1.5 ${onlyFlagged === option.value ? "bg-primary text-primary-foreground" : "bg-background text-text-primary hover:bg-muted"}`}
             >
               {option.label}
             </button>
@@ -112,7 +112,7 @@ export function ItemAnalysisView({ query }) {
                   </td>
                   <td className="max-w-xs px-4 py-3">
                     {item.flagged ? (
-                      <ul className="space-y-0.5 text-xs text-red-500">
+                      <ul className="space-y-0.5 text-xs text-danger">
                         {(item.flagReasons || []).map((reason) => (
                           <li key={reason}>{QUESTION_FLAG_TEXT[reason] || formatViolationType(reason)}</li>
                         ))}
@@ -162,7 +162,7 @@ export function IntegrityView({ query }) {
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        <article className="rounded-2xl border border-border bg-card p-4">
+        <article className="rounded-xl border border-border bg-card p-4">
           <h3 className="mb-3 text-sm font-semibold text-text-primary">Violations by type</h3>
           {byType.length ? (
             <ul className="space-y-1.5">
@@ -178,7 +178,7 @@ export function IntegrityView({ query }) {
           )}
         </article>
 
-        <article className="rounded-2xl border border-border bg-card">
+        <article className="rounded-xl border border-border bg-card">
           <h3 className="border-b border-border/70 p-4 text-sm font-semibold text-text-primary">Repeat offenders</h3>
           {repeatOffenders.length === 0 ? (
             <EmptyState title="No repeat offenders" description="No student reached 3 violations in this test." />
@@ -220,8 +220,8 @@ export function IntegrityView({ query }) {
 const formatChange = (value) => {
   if (value == null || !Number.isFinite(value)) return { text: "—", tone: "text-text-secondary" };
   const rounded = Math.round(value * 10) / 10;
-  if (rounded > 0) return { text: `▲ ${rounded} pts`, tone: "text-green-600" };
-  if (rounded < 0) return { text: `▼ ${Math.abs(rounded)} pts`, tone: "text-red-500" };
+  if (rounded > 0) return { text: `▲ ${rounded} pts`, tone: "text-success" };
+  if (rounded < 0) return { text: `▼ ${Math.abs(rounded)} pts`, tone: "text-danger" };
   return { text: "No change", tone: "text-text-secondary" };
 };
 
@@ -256,11 +256,11 @@ export function TrendsView({ query, groupBy, onGroupByChange, showGroupBy = true
 
   return (
     <section className="space-y-4">
-      <article className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4">
+      <article className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
         <p className="text-sm text-text-secondary">
-          <strong className="text-green-600">{summary.improving ?? 0}</strong> improving ·{" "}
+          <strong className="text-success">{summary.improving ?? 0}</strong> improving ·{" "}
           <strong className="text-text-primary">{summary.stable ?? 0}</strong> stable ·{" "}
-          <strong className={(summary.declining ?? 0) > 0 ? "text-red-500" : "text-text-primary"}>{summary.declining ?? 0}</strong> declining
+          <strong className={(summary.declining ?? 0) > 0 ? "text-danger" : "text-text-primary"}>{summary.declining ?? 0}</strong> declining
           <span> across {summary.periods ?? periods.length} months</span>
         </p>
         {showGroupBy ? (
@@ -279,7 +279,7 @@ export function TrendsView({ query, groupBy, onGroupByChange, showGroupBy = true
       </article>
 
       {series.length === 0 ? (
-        <article className="rounded-2xl border border-border bg-card">
+        <article className="rounded-xl border border-border bg-card">
           <EmptyState title="No trend data yet" description="Trends appear once tests have been submitted across more than one month." />
         </article>
       ) : (
@@ -288,7 +288,7 @@ export function TrendsView({ query, groupBy, onGroupByChange, showGroupBy = true
             <MultiSeriesTrendChart rows={chartRows} seriesNames={series.map((entity) => entity.name)} xKey="period" />
           </ChartCard>
 
-          <article className="overflow-x-auto rounded-2xl border border-border bg-card">
+          <article className="overflow-x-auto rounded-xl border border-border bg-card">
             <table className="min-w-full text-sm">
               <thead>
                 <tr>
@@ -328,10 +328,10 @@ export function AtRiskView({ query, canViewStudent = false, onViewStudent }) {
   if (query?.isError) return <ErrorCard>Unable to load at-risk analysis.</ErrorCard>;
 
   return (
-    <article className="rounded-2xl border border-border bg-card">
+    <article className="rounded-xl border border-border bg-card">
       <div className="border-b border-border/70 p-4">
         <p className="text-sm text-text-secondary">
-          <strong className={(summary.atRisk ?? 0) > 0 ? "text-red-500" : "text-text-primary"}>{summary.atRisk ?? 0}</strong> of{" "}
+          <strong className={(summary.atRisk ?? 0) > 0 ? "text-danger" : "text-text-primary"}>{summary.atRisk ?? 0}</strong> of{" "}
           <strong className="text-text-primary">{summary.assessed ?? 0}</strong> students need attention
           {(summary.atRisk ?? 0) > 0 ? (
             <span> — {summary.critical ?? 0} critical, {summary.high ?? 0} high, {summary.moderate ?? 0} moderate</span>

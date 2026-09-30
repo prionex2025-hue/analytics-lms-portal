@@ -7,19 +7,15 @@ import {
   fetchSuperStudents,
 } from "@/features/SuperAdmin/superAdminPanelSlice";
 import { superAdminApi } from "@/services/api";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { X } from "lucide-react";
+import { AlertTriangle, FileUp, GraduationCap, KeyRound, Pencil, Search, Trash2, UserPlus, Users } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Callout, CredentialList, CredentialPanel, DataTable, EmptyState, FormField, MiniStat, Modal, PageHeader, PaginationBar, SearchInput, SectionCard, StatusBadge } from "@/components/common/page-kit";
+import { ui } from "@/styles/ui-tokens";
+
 import TypedConfirmDialog from "@/components/SuperAdmin/TypedConfirmDialog";
 import { parseSpreadsheetRows } from "@/lib/spreadsheet";
 
@@ -609,721 +605,548 @@ export default function StudentsPage() {
     );
   }, [editBatches, editFormData.departmentId]);
 
+  const bannerTone = banner.type === "error" ? "danger" : banner.type === "warning" ? "warning" : "success";
+  const activeColleges = colleges.filter((college) => college?.isActive !== false);
+  const yearSelect = (id, value, onChange) => (
+    <select id={id} className="ui-select w-full" value={value} onChange={onChange}>
+      <option value="">Select Year</option>
+      <option value="1">1 YEAR</option>
+      <option value="2">2 YEAR</option>
+      <option value="3">3 YEAR</option>
+      <option value="4">4 YEAR</option>
+    </select>
+  );
+
+  const studentColumns = [
+    {
+      key: "student",
+      header: "Student",
+      primary: true,
+      cell: (student) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-text-primary">{student.fullName}</p>
+          <p className="truncate text-xs text-text-secondary">{student.email}</p>
+        </div>
+      ),
+    },
+    { key: "studentId", header: "Student ID", className: "font-mono text-xs text-text-secondary", cell: (student) => student.studentId || "—" },
+    { key: "college", header: "College", className: "max-w-56 truncate text-text-secondary", cell: (student) => student.college?.name || "—" },
+    { key: "year", header: "Year", cell: (student) => (student.year ? <StatusBadge tone="neutral">Year {student.year}</StatusBadge> : "—") },
+    {
+      key: "actions",
+      actions: true,
+      align: "right",
+      cell: (student) => (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          <Button size="lg" variant="outline" className="rounded-lg" onClick={() => openEditForm(student)}>
+            <Pencil className="size-4" />
+            Edit
+          </Button>
+          <Button size="lg" variant="ghost" className="rounded-lg" onClick={() => openResetConfirm(student)} disabled={resetPasswordMutation.isPending}>
+            <KeyRound className="size-4" />
+            Reset Password
+          </Button>
+          <Button size="lg" variant="ghost" className="rounded-lg text-danger hover:bg-danger/10 hover:text-danger" onClick={() => setPendingDelete(student)}>
+            <Trash2 className="size-4" />
+            Delete
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
+      <PageHeader title="Students" description="Find, create, import, and promote student accounts across every college." />
+
       {banner.type ? (
-        <Alert
-          variant={banner.type === "error" ? "destructive" : "default"}
-          className={
-            banner.type === "warning"
-              ? "border-warning/30 bg-warning/10 text-warning"
-              : ""
-          }
-        >
-          <AlertTitle>{banner.title}</AlertTitle>
-          <AlertDescription>{banner.message}</AlertDescription>
-        </Alert>
+        <Callout tone={bannerTone} title={banner.title}>
+          {banner.message}
+        </Callout>
       ) : null}
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Global Students</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-4 grid gap-2 sm:grid-cols-6">
-            <Input
-              placeholder="Search"
-              value={filters.search}
-              onChange={(e) =>
-                setFilters((prev) => ({ ...prev, search: e.target.value }))
-              }
-            />
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={filters.collegeId}
-              onChange={(e) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  collegeId: e.target.value,
-                  departmentId: "",
-                  batchId: "",
-                }))
-              }
+      <Tabs defaultValue="directory" className="gap-5">
+        <div className="relative -mx-4 overflow-x-auto overflow-y-hidden px-4 sm:mx-0 sm:px-0">
+        <TabsList variant="line" className="h-auto! w-full min-w-max justify-start gap-6 rounded-none border-b border-border p-0">
+          <TabsTrigger value="directory" className="flex-none rounded-none px-0.5 pt-1 pb-3 text-text-secondary data-active:text-primary after:!bottom-[-1px] after:!bg-primary">
+            <Users className="size-4" />
+            Directory
+          </TabsTrigger>
+          <TabsTrigger value="create" className="flex-none rounded-none px-0.5 pt-1 pb-3 text-text-secondary data-active:text-primary after:!bottom-[-1px] after:!bg-primary">
+            <UserPlus className="size-4" />
+            Add student
+          </TabsTrigger>
+          <TabsTrigger value="import" className="flex-none rounded-none px-0.5 pt-1 pb-3 text-text-secondary data-active:text-primary after:!bottom-[-1px] after:!bg-primary">
+            <FileUp className="size-4" />
+            Bulk import
+          </TabsTrigger>
+          <TabsTrigger value="promote" className="flex-none rounded-none px-0.5 pt-1 pb-3 text-text-secondary data-active:text-primary after:!bottom-[-1px] after:!bg-primary">
+            <GraduationCap className="size-4" />
+            Year promotion
+          </TabsTrigger>
+        </TabsList>
+        </div>
+
+        <TabsContent value="directory">
+          <SectionCard
+            flush
+            title="Global students"
+            description="Students are listed per college."
+            footer={
+              (studentTotalPages || 1) > 1 ? (
+                <PaginationBar
+                  page={studentCurrentPage}
+                  pages={studentTotalPages || 1}
+                  onPageChange={(nextPage) => {
+                    setPage(nextPage);
+                    loadStudents(nextPage);
+                  }}
+                />
+              ) : null
+            }
+          >
+            <form
+              className="grid gap-3 border-b border-border px-4 py-3 sm:grid-cols-2 sm:px-5 lg:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))_auto]"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (filters.collegeId) runSearch();
+              }}
             >
-              <option value="">All colleges</option>
-              {colleges.map((college) => (
+              <SearchInput
+                className="sm:col-span-2 lg:col-span-1"
+                label="Search students"
+                placeholder="Search"
+                value={filters.search}
+                onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
+              />
+              <select
+                aria-label="College"
+                className="ui-select w-full"
+                value={filters.collegeId}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    collegeId: e.target.value,
+                    departmentId: "",
+                    batchId: "",
+                  }))
+                }
+              >
+                <option value="">All colleges</option>
+                {colleges.map((college) => (
+                  <option key={college.id} value={college.id}>
+                    {college.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Department"
+                className="ui-select w-full"
+                value={filters.departmentId}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    departmentId: e.target.value,
+                    batchId: "",
+                  }))
+                }
+                disabled={!filters.collegeId || filterDepartmentsQuery.isLoading}
+              >
+                <option value="">
+                  {filters.collegeId ? (filterDepartmentsQuery.isLoading ? "Loading departments..." : "All departments") : "Select college first"}
+                </option>
+                {filters.collegeId &&
+                  filterDepartments.map((department) => (
+                    <option key={department.id} value={department.id}>
+                      {department.name}
+                    </option>
+                  ))}
+              </select>
+              <select
+                aria-label="Batch"
+                className="ui-select w-full"
+                value={filters.batchId}
+                onChange={(e) => setFilters((prev) => ({ ...prev, batchId: e.target.value }))}
+                disabled={!filters.collegeId || filterBatchesQuery.isLoading}
+              >
+                <option value="">
+                  {filters.collegeId ? (filterBatchesQuery.isLoading ? "Loading batches..." : "All batches") : "Select college first"}
+                </option>
+                {filters.collegeId &&
+                  filteredFilterBatches.map((batch) => (
+                    <option key={batch.id} value={batch.id}>
+                      {batch.name}
+                    </option>
+                  ))}
+              </select>
+              <select aria-label="Year" className="ui-select w-full" value={filters.year} onChange={(e) => setFilters((prev) => ({ ...prev, year: e.target.value }))}>
+                <option value="">All years</option>
+                {YEAR_OPTIONS.map((year) => (
+                  <option key={year} value={year}>
+                    {year} YEAR
+                  </option>
+                ))}
+              </select>
+              <Button type="submit" variant="outline" className={ui.btn} disabled={!filters.collegeId}>
+                <Search className="size-4" />
+                Search
+              </Button>
+            </form>
+
+            {!filters.collegeId ? (
+              <EmptyState icon={Users} title="Select a college" description="Choose a college in the filters above to view its students." className="border-0" />
+            ) : (
+              <DataTable
+                columns={studentColumns}
+                rows={visibleStudents}
+                getRowKey={(student) => student.id}
+                minWidth={880}
+                caption="Students"
+                empty={<EmptyState icon={Users} title="No students found" description="Try adjusting the department, batch, year, or search." className="border-0" />}
+              />
+            )}
+          </SectionCard>
+        </TabsContent>
+
+        <TabsContent value="create">
+          <SectionCard title="Create student account" description="Super Admin can create student accounts manually across colleges.">
+            <form
+              className="space-y-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                createStudentMutation.mutate({
+                  fullName: studentForm.fullName,
+                  email: studentForm.email,
+                  enrollNumber: studentForm.enrollNumber,
+                  ...(studentForm.year ? { year: Number(studentForm.year) } : {}),
+                  collegeId: studentForm.collegeId,
+                  departmentId: studentForm.departmentId,
+                  ...(studentForm.batchId ? { batchId: studentForm.batchId } : {}),
+                });
+              }}
+            >
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <FormField label="Full name" htmlFor="student-create-name" required>
+                  <Input id="student-create-name" className={ui.field} value={studentForm.fullName} onChange={(event) => setStudentForm((prev) => ({ ...prev, fullName: event.target.value }))} />
+                </FormField>
+                <FormField label="Email" htmlFor="student-create-email" required>
+                  <Input id="student-create-email" type="email" autoComplete="off" className={ui.field} value={studentForm.email} onChange={(event) => setStudentForm((prev) => ({ ...prev, email: event.target.value }))} />
+                </FormField>
+                <FormField label="Enroll number" htmlFor="student-create-enroll" hint="Used exactly as the Student ID." required>
+                  <Input id="student-create-enroll" className={ui.field} value={studentForm.enrollNumber} onChange={(event) => setStudentForm((prev) => ({ ...prev, enrollNumber: event.target.value }))} />
+                </FormField>
+                <FormField label="Year" htmlFor="student-create-year" required>
+                  {yearSelect("student-create-year", studentForm.year, (event) => setStudentForm((prev) => ({ ...prev, year: event.target.value })))}
+                </FormField>
+                <FormField label="College" htmlFor="student-create-college" required>
+                  <select
+                    id="student-create-college"
+                    className="ui-select w-full"
+                    value={studentForm.collegeId}
+                    onChange={(event) => setStudentForm((prev) => ({ ...prev, collegeId: event.target.value, departmentId: "", batchId: "" }))}
+                  >
+                    <option value="">Select college</option>
+                    {activeColleges.map((college) => (
+                      <option key={college.id} value={college.id}>
+                        {college.name}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="Department" htmlFor="student-create-department" required>
+                  <select
+                    id="student-create-department"
+                    className="ui-select w-full"
+                    value={studentForm.departmentId}
+                    onChange={(event) => setStudentForm((prev) => ({ ...prev, departmentId: event.target.value, batchId: "" }))}
+                    disabled={!studentForm.collegeId || departmentsQuery.isLoading}
+                  >
+                    <option value="">
+                      {studentForm.collegeId ? (departmentsQuery.isLoading ? "Loading departments..." : "Select department") : "Select college first"}
+                    </option>
+                    {studentForm.collegeId &&
+                      departments.map((department) => (
+                        <option key={department.id} value={department.id}>
+                          {department.name}
+                        </option>
+                      ))}
+                  </select>
+                </FormField>
+                <FormField label="Batch" htmlFor="student-create-batch" hint="Optional">
+                  <select
+                    id="student-create-batch"
+                    className="ui-select w-full"
+                    value={studentForm.batchId}
+                    onChange={(event) => setStudentForm((prev) => ({ ...prev, batchId: event.target.value }))}
+                    disabled={!studentForm.collegeId || batchesQuery.isLoading}
+                  >
+                    <option value="">
+                      {studentForm.collegeId ? (batchesQuery.isLoading ? "Loading batches..." : "Select batch (optional)") : "Select college first"}
+                    </option>
+                    {studentForm.collegeId &&
+                      filteredBatches.map((batch) => (
+                        <option key={batch.id} value={batch.id}>
+                          {batch.name}
+                        </option>
+                      ))}
+                  </select>
+                </FormField>
+              </div>
+
+              <Callout tone="info" icon={KeyRound}>
+                Student ID uses the entered enroll number exactly. Password rule: first 3 letters of full name (first letter capitalized) + @ + last 3 digits of enroll number.
+              </Callout>
+
+              <Button
+                type="submit"
+                className={ui.btn}
+                disabled={
+                  createStudentMutation.isPending ||
+                  !studentForm.fullName.trim() ||
+                  !studentForm.email.trim() ||
+                  !studentForm.enrollNumber.trim() ||
+                  !studentForm.year ||
+                  !studentForm.collegeId ||
+                  !studentForm.departmentId
+                }
+              >
+                <UserPlus className="size-4" />
+                {createStudentMutation.isPending ? "Creating..." : "Create Student"}
+              </Button>
+            </form>
+
+            <CredentialPanel className="mt-5" title="Student created — share these credentials securely" credentials={createdCredentials} />
+          </SectionCard>
+        </TabsContent>
+
+        <TabsContent value="import">
+          <SectionCard title="Bulk import (Excel/CSV)" description="Upload .xlsx/.csv file or paste CSV for the selected college.">
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <FormField label="Target college" htmlFor="student-import-college" required>
+                  <select
+                    id="student-import-college"
+                    className="ui-select w-full"
+                    value={filters.collegeId}
+                    onChange={(event) => setFilters((prev) => ({ ...prev, collegeId: event.target.value }))}
+                  >
+                    <option value="">Select target college</option>
+                    {activeColleges.map((college) => (
+                      <option key={college.id} value={college.id}>
+                        {college.name}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="Spreadsheet file" htmlFor="student-import-file" hint={importFileName ? `Loaded: ${importFileName}` : ".xlsx or .csv"}>
+                  <Input id="student-import-file" type="file" accept=".xlsx,.csv" className="h-10 rounded-lg" onChange={handleImportFile} />
+                </FormField>
+              </div>
+
+              <FormField
+                label="CSV data"
+                htmlFor="student-import-csv"
+                hint="Required columns: fullName, email, enrollNumber, department, year. Student ID will use enrollNumber exactly. Optional: batch."
+              >
+                <Textarea id="student-import-csv" rows={8} className="rounded-lg font-mono text-xs" value={csvData} onChange={(event) => setCsvData(event.target.value)} />
+              </FormField>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  className={ui.btn}
+                  onClick={() => importMutation.mutate({ csvData, collegeId: filters.collegeId })}
+                  disabled={importMutation.isPending || !filters.collegeId || !csvData.trim()}
+                >
+                  <FileUp className="size-4" />
+                  {importMutation.isPending ? "Queueing..." : "Start Import"}
+                </Button>
+                {activeImportJobId ? <p className="font-mono text-xs text-text-secondary">Job: {activeImportJobId}</p> : null}
+              </div>
+
+              {importJobQuery.data ? (
+                <div className="space-y-3 rounded-lg border border-border p-4" role="status">
+                  <p className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                    Status
+                    <StatusBadge
+                      tone={
+                        String(importJobQuery.data.status || "").toLowerCase() === "completed"
+                          ? "success"
+                          : String(importJobQuery.data.status || "").toLowerCase() === "failed"
+                            ? "danger"
+                            : "info"
+                      }
+                    >
+                      {String(importJobQuery.data.status || "unknown").toUpperCase()}
+                    </StatusBadge>
+                  </p>
+                  {importJobQuery.data.result ? (
+                    <>
+                      <div className="grid grid-cols-3 gap-2">
+                        <MiniStat label="Created" value={importJobQuery.data.result.created || 0} tone="success" />
+                        <MiniStat label="Failed" value={importJobQuery.data.result.failed || 0} tone={importJobQuery.data.result.failed ? "danger" : undefined} />
+                        <MiniStat label="Duplicates" value={importJobQuery.data.result.duplicates || 0} />
+                      </div>
+                      {Array.isArray(importJobQuery.data.result.errors) && importJobQuery.data.result.errors.length > 0 ? (
+                        <Callout tone="warning" title="Rows with errors">
+                          <ul className="mt-1 max-h-40 space-y-0.5 overflow-auto text-xs">
+                            {importJobQuery.data.result.errors.slice(0, 10).map((item, index) => (
+                              <li key={`${item.row || "row"}-${index}`}>
+                                Row {item.row || "?"}: {item.reason || "Invalid data"}
+                              </li>
+                            ))}
+                          </ul>
+                        </Callout>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {importJobQuery.data.error ? <Callout tone="danger">Error: {importJobQuery.data.error}</Callout> : null}
+                  <CredentialList entries={importCredentials} />
+                </div>
+              ) : null}
+            </div>
+          </SectionCard>
+        </TabsContent>
+
+        <TabsContent value="promote">
+          <SectionCard title="Promote student years" description="Moves every student in the selected college up one year.">
+            <div className="max-w-2xl space-y-4">
+              <Callout tone="danger" icon={AlertTriangle} title="This affects every student in the college">
+                Prior 4th-year accounts will move to alumni status. Double-check the college before confirming.
+              </Callout>
+              <FormField label="College" htmlFor="promote-college" required>
+                <select id="promote-college" className="ui-select w-full" value={yearPromotionCollegeId} onChange={(event) => setYearPromotionCollegeId(event.target.value)}>
+                  <option value="">Select college</option>
+                  {activeColleges.map((college) => (
+                    <option key={college.id} value={college.id}>
+                      {college.name}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField
+                label="Confirmation phrase"
+                htmlFor="promote-confirmation"
+                hint={`Type ${YEAR_PROMOTION_CONFIRMATION} exactly.`}
+                required
+              >
+                <Input
+                  id="promote-confirmation"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={`${ui.field} font-mono`}
+                  placeholder="Type PROMOTE STUDENTS YEAR"
+                  value={yearPromotionConfirmation}
+                  onChange={(event) => setYearPromotionConfirmation(event.target.value)}
+                />
+              </FormField>
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3">
+                <Checkbox className="mt-0.5" checked={yearPromotionVerified} onCheckedChange={(checked) => setYearPromotionVerified(Boolean(checked))} />
+                <span className="text-sm text-text-primary">I understand prior 4th-year accounts will move to alumni status.</span>
+              </label>
+              <Button
+                variant="destructive"
+                className={ui.btn}
+                disabled={
+                  promoteStudentsYearMutation.isPending ||
+                  !yearPromotionCollegeId ||
+                  !yearPromotionVerified ||
+                  yearPromotionConfirmation.trim() !== YEAR_PROMOTION_CONFIRMATION
+                }
+                onClick={() =>
+                  promoteStudentsYearMutation.mutate({
+                    collegeId: yearPromotionCollegeId,
+                    confirmationText: yearPromotionConfirmation,
+                  })
+                }
+              >
+                <GraduationCap className="size-4" />
+                {promoteStudentsYearMutation.isPending ? "Updating..." : "Promote Years for Selected College"}
+              </Button>
+            </div>
+          </SectionCard>
+        </TabsContent>
+      </Tabs>
+
+      <Modal
+        open={Boolean(editingStudent)}
+        onOpenChange={(open) => {
+          if (!open) setEditingStudent(null);
+        }}
+        size="xl"
+        title={`Edit Student - ${editingStudent?.fullName || ""}`}
+        description="Update student information"
+        footer={
+          <>
+            <Button variant="outline" className={ui.btn} onClick={() => setEditingStudent(null)} disabled={updateStudentMutation.isPending}>
+              Cancel
+            </Button>
+            <Button className={ui.btn} onClick={handleEditSubmit} disabled={updateStudentMutation.isPending}>
+              {updateStudentMutation.isPending ? "Updating..." : "Save Changes"}
+            </Button>
+          </>
+        }
+      >
+        <form
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleEditSubmit();
+          }}
+        >
+          <FormField label="Full name" htmlFor="student-edit-name">
+            <Input id="student-edit-name" className={ui.field} value={editFormData.fullName} onChange={(event) => setEditFormData((prev) => ({ ...prev, fullName: event.target.value }))} />
+          </FormField>
+          <FormField label="Email" htmlFor="student-edit-email">
+            <Input id="student-edit-email" type="email" className={ui.field} value={editFormData.email} onChange={(event) => setEditFormData((prev) => ({ ...prev, email: event.target.value }))} />
+          </FormField>
+          <FormField label="Enroll number" htmlFor="student-edit-enroll">
+            <Input id="student-edit-enroll" className={ui.field} value={editFormData.enrollNumber} onChange={(event) => setEditFormData((prev) => ({ ...prev, enrollNumber: event.target.value }))} />
+          </FormField>
+          <FormField label="Year" htmlFor="student-edit-year">
+            {yearSelect("student-edit-year", editFormData.year, (event) => setEditFormData((prev) => ({ ...prev, year: event.target.value })))}
+          </FormField>
+          <FormField label="College" htmlFor="student-edit-college">
+            <select
+              id="student-edit-college"
+              className="ui-select w-full"
+              value={editFormData.collegeId}
+              onChange={(event) => setEditFormData((prev) => ({ ...prev, collegeId: event.target.value, departmentId: "", batchId: "" }))}
+            >
+              <option value="">Select college</option>
+              {activeColleges.map((college) => (
                 <option key={college.id} value={college.id}>
                   {college.name}
                 </option>
               ))}
             </select>
+          </FormField>
+          <FormField label="Department" htmlFor="student-edit-department">
             <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={filters.departmentId}
-              onChange={(e) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  departmentId: e.target.value,
-                  batchId: "",
-                }))
-              }
-              disabled={!filters.collegeId || filterDepartmentsQuery.isLoading}
+              id="student-edit-department"
+              className="ui-select w-full"
+              value={editFormData.departmentId}
+              onChange={(event) => setEditFormData((prev) => ({ ...prev, departmentId: event.target.value, batchId: "" }))}
             >
-              <option value="">
-                {filters.collegeId
-                  ? filterDepartmentsQuery.isLoading
-                    ? "Loading departments..."
-                    : "All departments"
-                  : "Select college first"}
-              </option>
-              {filters.collegeId &&
-                filterDepartments.map((department) => (
-                  <option key={department.id} value={department.id}>
-                    {department.name}
-                  </option>
-                ))}
-            </select>
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={filters.batchId}
-              onChange={(e) =>
-                setFilters((prev) => ({ ...prev, batchId: e.target.value }))
-              }
-              disabled={!filters.collegeId || filterBatchesQuery.isLoading}
-            >
-              <option value="">
-                {filters.collegeId
-                  ? filterBatchesQuery.isLoading
-                    ? "Loading batches..."
-                    : "All batches"
-                  : "Select college first"}
-              </option>
-              {filters.collegeId &&
-                filteredFilterBatches.map((batch) => (
-                  <option key={batch.id} value={batch.id}>
-                    {batch.name}
-                  </option>
-                ))}
-            </select>
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={filters.year}
-              onChange={(e) =>
-                setFilters((prev) => ({ ...prev, year: e.target.value }))
-              }
-            >
-              <option value="">All years</option>
-              {YEAR_OPTIONS.map((year) => (
-                <option key={year} value={year}>
-                  {year} YEAR
+              <option value="">Select department</option>
+              {editDepartments.map((department) => (
+                <option key={department.id} value={department.id}>
+                  {department.name}
                 </option>
               ))}
             </select>
-            <Button
-              variant="outline"
-              onClick={runSearch}
-              disabled={!filters.collegeId}
-            >
-              Search
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {!filters.collegeId ? (
-              <p className="text-sm text-text-secondary">
-                Select a college to view students.
-              </p>
-            ) : null}
-            {filters.collegeId && visibleStudents.length === 0 ? (
-              <p className="text-sm text-text-secondary">No students found.</p>
-            ) : null}
-            {visibleStudents.map((student) => (
-              <div
-                key={student.id}
-                className="flex flex-col gap-3 rounded-xl border border-border px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-text-primary">
-                    {student.fullName}
-                  </p>
-                  <p className="mt-1 break-words text-xs leading-5 text-text-secondary">
-                    {student.email} • {student.studentId} •{" "}
-                    {student.college?.name} • Year {student.year || "-"}
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 gap-2 sm:flex sm:shrink-0 sm:items-center sm:justify-end">
-                  <Button
-                    className="w-full sm:w-auto"
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => openResetConfirm(student)}
-                    disabled={resetPasswordMutation.isPending}
-                  >
-                    Reset Password
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 sm:w-auto"
-                    onClick={() => openEditForm(student)}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="w-full rounded-md bg-gray-600 px-4 py-2 text-white hover:bg-red-700 sm:w-auto"
-                    onClick={() => setPendingDelete(student)}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              </div>
-            ))}
-            {(studentTotalPages || 1) > 1 ? (
-              <div className="flex flex-col gap-3 border-t border-border pt-3 text-xs text-text-secondary sm:flex-row sm:items-center sm:justify-between">
-                <p>
-                  Page {studentCurrentPage} of {studentTotalPages || 1}
-                </p>
-                <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-                  <Button
-                    className="w-full sm:w-auto"
-                    variant="outline"
-                    size="sm"
-                    disabled={studentCurrentPage <= 1}
-                    onClick={() => {
-                      const nextPage = Math.max(studentCurrentPage - 1, 1);
-                      setPage(nextPage);
-                      loadStudents(nextPage);
-                    }}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    className="w-full sm:w-auto"
-                    variant="outline"
-                    size="sm"
-                    disabled={studentCurrentPage >= studentTotalPages}
-                    onClick={() => {
-                      const nextPage = studentCurrentPage + 1;
-                      setPage(nextPage);
-                      loadStudents(nextPage);
-                    }}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Create Student Account</CardTitle>
-          <CardDescription>
-            Super Admin can create student accounts manually across colleges.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-3">
-            <Input
-              placeholder="Full name"
-              value={studentForm.fullName}
-              onChange={(event) =>
-                setStudentForm((prev) => ({
-                  ...prev,
-                  fullName: event.target.value,
-                }))
-              }
-            />
-            <Input
-              type="email"
-              placeholder="Email"
-              value={studentForm.email}
-              onChange={(event) =>
-                setStudentForm((prev) => ({
-                  ...prev,
-                  email: event.target.value,
-                }))
-              }
-            />
-            <Input
-              placeholder="Enroll number"
-              value={studentForm.enrollNumber}
-              onChange={(event) =>
-                setStudentForm((prev) => ({
-                  ...prev,
-                  enrollNumber: event.target.value,
-                }))
-              }
-            />
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={studentForm.year}
-              onChange={(event) =>
-                setStudentForm((prev) => ({
-                  ...prev,
-                  year: event.target.value,
-                }))
-              }
-            >
-              <option value="">Select Year</option>
-              <option value="1">1 YEAR</option>
-              <option value="2">2 YEAR</option>
-              <option value="3">3 YEAR</option>
-              <option value="4">4 YEAR</option>
+          </FormField>
+          <FormField label="Batch" htmlFor="student-edit-batch" hint="Optional">
+            <select id="student-edit-batch" className="ui-select w-full" value={editFormData.batchId} onChange={(event) => setEditFormData((prev) => ({ ...prev, batchId: event.target.value }))}>
+              <option value="">Select batch (optional)</option>
+              {filteredEditBatches.map((batch) => (
+                <option key={batch.id} value={batch.id}>
+                  {batch.name}
+                </option>
+              ))}
             </select>
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={studentForm.collegeId}
-              onChange={(event) =>
-                setStudentForm((prev) => ({
-                  ...prev,
-                  collegeId: event.target.value,
-                  departmentId: "",
-                  batchId: "",
-                }))
-              }
-            >
-              <option value="">Select college</option>
-              {colleges
-                .filter((college) => college?.isActive !== false)
-                .map((college) => (
-                  <option key={college.id} value={college.id}>
-                    {college.name}
-                  </option>
-                ))}
-            </select>
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={studentForm.departmentId}
-              onChange={(event) =>
-                setStudentForm((prev) => ({
-                  ...prev,
-                  departmentId: event.target.value,
-                  batchId: "",
-                }))
-              }
-              disabled={!studentForm.collegeId || departmentsQuery.isLoading}
-            >
-              <option value="">
-                {studentForm.collegeId
-                  ? departmentsQuery.isLoading
-                    ? "Loading departments..."
-                    : "Select department"
-                  : "Select college first"}
-              </option>
-              {studentForm.collegeId &&
-                departments.map((department) => (
-                  <option key={department.id} value={department.id}>
-                    {department.name}
-                  </option>
-                ))}
-            </select>
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={studentForm.batchId}
-              onChange={(event) =>
-                setStudentForm((prev) => ({
-                  ...prev,
-                  batchId: event.target.value,
-                }))
-              }
-              disabled={!studentForm.collegeId || batchesQuery.isLoading}
-            >
-              <option value="">
-                {studentForm.collegeId
-                  ? batchesQuery.isLoading
-                    ? "Loading batches..."
-                    : "Select batch (optional)"
-                  : "Select college first"}
-              </option>
-              {studentForm.collegeId &&
-                filteredBatches.map((batch) => (
-                  <option key={batch.id} value={batch.id}>
-                    {batch.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-          <p className="text-xs text-text-secondary">
-            Student ID uses the entered enroll number exactly. Password rule:
-            first 3 letters of full name (first letter capitalized) + @ + last 3
-            digits of enroll number.
-          </p>
-          <Button
-            onClick={() =>
-              createStudentMutation.mutate({
-                fullName: studentForm.fullName,
-                email: studentForm.email,
-                enrollNumber: studentForm.enrollNumber,
-                ...(studentForm.year ? { year: Number(studentForm.year) } : {}),
-                collegeId: studentForm.collegeId,
-                departmentId: studentForm.departmentId,
-                ...(studentForm.batchId
-                  ? { batchId: studentForm.batchId }
-                  : {}),
-              })
-            }
-            disabled={
-              createStudentMutation.isPending ||
-              !studentForm.fullName.trim() ||
-              !studentForm.email.trim() ||
-              !studentForm.enrollNumber.trim() ||
-              !studentForm.year ||
-              !studentForm.collegeId ||
-              !studentForm.departmentId
-            }
-          >
-            {createStudentMutation.isPending ? "Creating..." : "Create Student"}
-          </Button>
-
-          {createdCredentials ? (
-            <div className="rounded-lg border border-success/30 bg-success/10 p-3 text-sm text-success">
-              <p className="font-semibold">Student credentials</p>
-              <p>Email: {createdCredentials.identifier}</p>
-              <p>Student ID: {createdCredentials.studentId}</p>
-              <p>Password: {createdCredentials.password}</p>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Bulk Import (Excel/CSV)</CardTitle>
-          <CardDescription>
-            Upload .xlsx/.csv file or paste CSV for the selected college.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2">
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={filters.collegeId}
-              onChange={(event) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  collegeId: event.target.value,
-                }))
-              }
-            >
-              <option value="">Select target college</option>
-              {colleges
-                .filter((college) => college?.isActive !== false)
-                .map((college) => (
-                  <option key={college.id} value={college.id}>
-                    {college.name}
-                  </option>
-                ))}
-            </select>
-            <Input
-              type="file"
-              accept=".xlsx,.csv"
-              onChange={handleImportFile}
-            />
-          </div>
-
-          {importFileName ? (
-            <p className="text-xs text-text-secondary">
-              Loaded: {importFileName}
-            </p>
-          ) : null}
-          <p className="text-xs text-text-secondary">
-            Required columns: fullName, email, enrollNumber, department, year.
-            Student ID will use enrollNumber exactly. Optional: batch.
-          </p>
-
-          <Textarea
-            rows={8}
-            value={csvData}
-            onChange={(event) => setCsvData(event.target.value)}
-          />
-
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={() =>
-                importMutation.mutate({ csvData, collegeId: filters.collegeId })
-              }
-              disabled={
-                importMutation.isPending ||
-                !filters.collegeId ||
-                !csvData.trim()
-              }
-            >
-              {importMutation.isPending ? "Queueing..." : "Start Import"}
-            </Button>
-            {activeImportJobId ? (
-              <p className="text-xs text-text-secondary">
-                Job: {activeImportJobId}
-              </p>
-            ) : null}
-          </div>
-
-          {importJobQuery.data ? (
-            <div className="rounded-lg border border-border p-3 text-sm">
-              <p className="font-medium text-text-primary">
-                Status:{" "}
-                {String(importJobQuery.data.status || "unknown").toUpperCase()}
-              </p>
-              {importJobQuery.data.result ? (
-                <>
-                  <p className="mt-1 text-text-secondary">
-                    Created: {importJobQuery.data.result.created || 0} • Failed:{" "}
-                    {importJobQuery.data.result.failed || 0} • Duplicates:{" "}
-                    {importJobQuery.data.result.duplicates || 0}
-                  </p>
-                  {Array.isArray(importJobQuery.data.result.errors) &&
-                  importJobQuery.data.result.errors.length > 0 ? (
-                    <div className="mt-2 max-h-40 overflow-auto rounded-md border border-border bg-background p-2 text-xs text-text-secondary">
-                      {importJobQuery.data.result.errors
-                        .slice(0, 10)
-                        .map((item, index) => (
-                          <p key={`${item.row || "row"}-${index}`}>
-                            Row {item.row || "?"}:{" "}
-                            {item.reason || "Invalid data"}
-                          </p>
-                        ))}
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-              {importJobQuery.data.error ? (
-                <p className="mt-1 text-danger">
-                  Error: {importJobQuery.data.error}
-                </p>
-              ) : null}
-              {importCredentials && importCredentials.length > 0 ? (
-                <div className="mt-3 max-h-60 overflow-auto rounded-lg border border-success/30 bg-success/10 p-3 text-xs text-success">
-                  <p className="font-semibold">Generated credentials (shown once)</p>
-                  <ul className="mt-1 space-y-1">
-                    {importCredentials.map((entry) => (
-                      <li key={`${entry.row}-${entry.studentId}`}>
-                        {entry.identifier} • {entry.studentId} • {entry.password}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Promote Student Years</CardTitle>
-          <CardDescription>
-            Select a college and confirm before applying the year update.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-3">
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={yearPromotionCollegeId}
-              onChange={(event) =>
-                setYearPromotionCollegeId(event.target.value)
-              }
-            >
-              <option value="">Select college</option>
-              {colleges
-                .filter((college) => college?.isActive !== false)
-                .map((college) => (
-                  <option key={college.id} value={college.id}>
-                    {college.name}
-                  </option>
-                ))}
-            </select>
-            <Input
-              placeholder="Type PROMOTE STUDENTS YEAR"
-              value={yearPromotionConfirmation}
-              onChange={(event) =>
-                setYearPromotionConfirmation(event.target.value)
-              }
-            />
-            <div className="flex items-center gap-2 rounded-md border border-border px-3 py-2">
-              <Checkbox
-                checked={yearPromotionVerified}
-                onCheckedChange={(checked) =>
-                  setYearPromotionVerified(Boolean(checked))
-                }
-              />
-              <span className="text-sm text-text-secondary">
-                I understand prior 4th-year accounts will move to alumni status.
-              </span>
-            </div>
-          </div>
-
-          <Button
-            className="bg-danger/90 hover:bg-danger"
-            disabled={
-              promoteStudentsYearMutation.isPending ||
-              !yearPromotionCollegeId ||
-              !yearPromotionVerified ||
-              yearPromotionConfirmation.trim() !== YEAR_PROMOTION_CONFIRMATION
-            }
-            onClick={() =>
-              promoteStudentsYearMutation.mutate({
-                collegeId: yearPromotionCollegeId,
-                confirmationText: yearPromotionConfirmation,
-              })
-            }
-          >
-            {promoteStudentsYearMutation.isPending
-              ? "Updating..."
-              : "Promote Years for Selected College"}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {editingStudent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
-          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-card border border-border shadow-lg">
-            <div className="sticky top-0 flex items-center justify-between border-b border-border bg-card p-6 z-10">
-              <div>
-                <h2 className="text-xl font-semibold text-text-primary">
-                  Edit Student - {editingStudent?.fullName}
-                </h2>
-                <p className="text-sm text-text-secondary mt-1">
-                  Update student information
-                </p>
-              </div>
-              <button
-                onClick={() => setEditingStudent(null)}
-                className="inline-flex items-center justify-center rounded-lg hover:bg-background p-2 transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                <Input
-                  placeholder="Full name"
-                  value={editFormData.fullName}
-                  onChange={(event) =>
-                    setEditFormData((prev) => ({
-                      ...prev,
-                      fullName: event.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  type="email"
-                  placeholder="Email"
-                  value={editFormData.email}
-                  onChange={(event) =>
-                    setEditFormData((prev) => ({
-                      ...prev,
-                      email: event.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  placeholder="Enroll number"
-                  value={editFormData.enrollNumber}
-                  onChange={(event) =>
-                    setEditFormData((prev) => ({
-                      ...prev,
-                      enrollNumber: event.target.value,
-                    }))
-                  }
-                />
-                <select
-                  className="h-10 rounded-md border border-border px-3 text-sm"
-                  value={editFormData.year}
-                  onChange={(event) =>
-                    setEditFormData((prev) => ({
-                      ...prev,
-                      year: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">Select Year</option>
-                  <option value="1">1 YEAR</option>
-                  <option value="2">2 YEAR</option>
-                  <option value="3">3 YEAR</option>
-                  <option value="4">4 YEAR</option>
-                </select>
-                <select
-                  className="h-10 rounded-md border border-border px-3 text-sm"
-                  value={editFormData.collegeId}
-                  onChange={(event) =>
-                    setEditFormData((prev) => ({
-                      ...prev,
-                      collegeId: event.target.value,
-                      departmentId: "",
-                      batchId: "",
-                    }))
-                  }
-                >
-                  <option value="">Select college</option>
-                  {colleges
-                    .filter((college) => college?.isActive !== false)
-                    .map((college) => (
-                      <option key={college.id} value={college.id}>
-                        {college.name}
-                      </option>
-                    ))}
-                </select>
-                <select
-                  className="h-10 rounded-md border border-border px-3 text-sm"
-                  value={editFormData.departmentId}
-                  onChange={(event) =>
-                    setEditFormData((prev) => ({
-                      ...prev,
-                      departmentId: event.target.value,
-                      batchId: "",
-                    }))
-                  }
-                >
-                  <option value="">Select department</option>
-                  {editDepartments.map((department) => (
-                    <option key={department.id} value={department.id}>
-                      {department.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="h-10 rounded-md border border-border px-3 text-sm"
-                  value={editFormData.batchId}
-                  onChange={(event) =>
-                    setEditFormData((prev) => ({
-                      ...prev,
-                      batchId: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">Select batch (optional)</option>
-                  {filteredEditBatches.map((batch) => (
-                    <option key={batch.id} value={batch.id}>
-                      {batch.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="sticky bottom-0 border-t border-border bg-background p-6 flex items-center justify-end gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setEditingStudent(null)}
-                disabled={updateStudentMutation.isPending}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleEditSubmit}
-                disabled={updateStudentMutation.isPending}
-              >
-                {updateStudentMutation.isPending
-                  ? "Updating..."
-                  : "Save Changes"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+          </FormField>
+        </form>
+      </Modal>
 
       <TypedConfirmDialog
         open={Boolean(pendingResetStudent)}

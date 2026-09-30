@@ -4,11 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { fetchDepartments } from "@/features/Admin/adminPanelSlice";
 import { adminApi } from "@/services/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import ConfirmActionDialog from "@/components/Admin/ConfirmActionDialog";
 import TypedConfirmDialog from "@/components/SuperAdmin/TypedConfirmDialog";
+import { KeyRound, Plus, RotateCcw, ShieldCheck, ShieldOff, ShieldUser } from "lucide-react";
+import { DataTable, EmptyState, FormField, PageHeader, SearchInput, SectionCard, StatusBadge } from "@/components/common/page-kit";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -131,97 +132,174 @@ export default function AdminManagementPage() {
     }
   };
 
+  const hasFilters = Boolean(filters.search || filters.status !== "all" || filters.departmentId);
+
+  const columns = [
+    {
+      key: "admin",
+      header: "Admin",
+      primary: true,
+      cell: (admin) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-text-primary">{admin.fullName}</p>
+          <p className="truncate text-xs text-text-secondary">{admin.email}</p>
+        </div>
+      ),
+    },
+    { key: "employeeId", header: "Employee ID", className: "font-mono text-xs text-text-secondary", cell: (admin) => admin.employeeId || "—" },
+    { key: "department", header: "Department", className: "text-text-secondary", cell: (admin) => admin.department?.name || "No department" },
+    {
+      key: "access",
+      header: "Access",
+      cell: (admin) => (
+        <select
+          aria-label={`Access profile for ${admin.fullName}`}
+          className="ui-select h-9"
+          value={admin.accessProfile || "EDITOR"}
+          onChange={(event) => handleProfileChange(admin.id, event.target.value)}
+        >
+          <option value="EDITOR">Can Edit</option>
+          <option value="VIEW_ONLY">View Only</option>
+        </select>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (admin) => <StatusBadge tone={admin.isActive ? "success" : "danger"}>{admin.isActive ? "Active" : "Inactive"}</StatusBadge>,
+    },
+    {
+      key: "actions",
+      actions: true,
+      align: "right",
+      cell: (admin) => (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          <Button size="lg" variant="outline" className="rounded-lg" onClick={() => setResetDialog({ open: true, admin, password: "" })}>
+            <KeyRound className="size-4" />
+            Reset Password
+          </Button>
+          {admin.isActive ? (
+            <Button size="lg" variant="ghost" className="rounded-lg text-danger hover:bg-danger/10 hover:text-danger" onClick={() => setPendingDeactivate(admin)}>
+              <ShieldOff className="size-4" />
+              Deactivate
+            </Button>
+          ) : (
+            <Button size="lg" variant="ghost" className="rounded-lg text-success hover:bg-success/10 hover:text-success" onClick={() => setPendingReactivate(admin)}>
+              <ShieldCheck className="size-4" />
+              Reactivate
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <Card className="rounded-2xl border-border">
-        <CardHeader><CardTitle>Create Department Admin</CardTitle></CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-3">
-          <Input placeholder="Full Name" value={form.fullName} onChange={(event) => setForm((prev) => ({ ...prev, fullName: event.target.value }))} />
-          <Input placeholder="Email" value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} />
-          <Input placeholder="Employee ID" value={form.employeeId} onChange={(event) => setForm((prev) => ({ ...prev, employeeId: event.target.value }))} />
-          <Input type="password" placeholder="Password" value={form.password} onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))} />
-          <select className="h-10 rounded-lg border border-border px-2" value={form.departmentId} onChange={(event) => setForm((prev) => ({ ...prev, departmentId: event.target.value }))}>
-            <option value="">Select department</option>
-            {departments.map((department) => (
-              <option key={department.id} value={department.id}>{department.name}</option>
-            ))}
-          </select>
-          <select className="h-10 rounded-lg border border-border px-2" value={form.accessProfile} onChange={(event) => setForm((prev) => ({ ...prev, accessProfile: event.target.value }))}>
-            <option value="EDITOR">Can Edit</option>
-            <option value="VIEW_ONLY">View Only</option>
-          </select>
-          <Button className="sm:col-span-3 bg-primary hover:bg-primary/90" disabled={loading} onClick={handleCreate}>
-            {loading ? "Creating..." : "Create Admin"}
-          </Button>
-        </CardContent>
-      </Card>
+      <PageHeader title="Admin management" description="Create department admins for your college and control their access." />
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader><CardTitle>Manage Admins</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Input
-              placeholder="Search by name, email, or employee id"
-              value={filters.search}
-              onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
-            />
-            <select className="h-10 rounded-lg border border-border px-2" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}>
-              <option value="all">All status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
-            <select className="h-10 rounded-lg border border-border px-2" value={filters.departmentId} onChange={(event) => setFilters((prev) => ({ ...prev, departmentId: event.target.value }))}>
-              <option value="">All departments</option>
+      <SectionCard title="Create department admin" description="Department admins manage students, batches, and tests for one department.">
+        <form
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleCreate();
+          }}
+        >
+          <FormField label="Full name" htmlFor="managed-admin-name" required>
+            <Input id="managed-admin-name" className="h-10 rounded-lg" value={form.fullName} onChange={(event) => setForm((prev) => ({ ...prev, fullName: event.target.value }))} />
+          </FormField>
+          <FormField label="Email" htmlFor="managed-admin-email" required>
+            <Input id="managed-admin-email" type="email" autoComplete="off" className="h-10 rounded-lg" value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} />
+          </FormField>
+          <FormField label="Employee ID" htmlFor="managed-admin-employee" required>
+            <Input id="managed-admin-employee" className="h-10 rounded-lg" value={form.employeeId} onChange={(event) => setForm((prev) => ({ ...prev, employeeId: event.target.value }))} />
+          </FormField>
+          <FormField label="Password" htmlFor="managed-admin-password" required>
+            <Input id="managed-admin-password" type="password" autoComplete="new-password" className="h-10 rounded-lg" value={form.password} onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))} />
+          </FormField>
+          <FormField label="Department" htmlFor="managed-admin-department" required>
+            <select id="managed-admin-department" className="ui-select w-full" value={form.departmentId} onChange={(event) => setForm((prev) => ({ ...prev, departmentId: event.target.value }))}>
+              <option value="">Select department</option>
               {departments.map((department) => (
                 <option key={department.id} value={department.id}>{department.name}</option>
               ))}
             </select>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={reload}>Apply Filters</Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setFilters({ search: "", status: "all", departmentId: "" });
-                setRefreshNonce((value) => value + 1);
-              }}
-            >
-              Reset
+          </FormField>
+          <FormField label="Access" htmlFor="managed-admin-access">
+            <select id="managed-admin-access" className="ui-select w-full" value={form.accessProfile} onChange={(event) => setForm((prev) => ({ ...prev, accessProfile: event.target.value }))}>
+              <option value="EDITOR">Can Edit</option>
+              <option value="VIEW_ONLY">View Only</option>
+            </select>
+          </FormField>
+          <div className="sm:col-span-2 lg:col-span-3">
+            <Button type="submit" className="h-10 rounded-lg px-4" disabled={loading}>
+              <Plus className="size-4" />
+              {loading ? "Creating..." : "Create Admin"}
             </Button>
           </div>
+        </form>
+      </SectionCard>
 
-          {adminsQuery.isLoading ? <p className="text-sm text-text-secondary">Loading admins...</p> : null}
-          {!adminsQuery.isLoading && admins.length === 0 ? <p className="text-sm text-text-secondary">No admins found.</p> : null}
+      <SectionCard flush title="Manage admins">
+        <form
+          className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 sm:px-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            reload();
+          }}
+        >
+          <SearchInput
+            className="min-w-0 flex-1 basis-60"
+            placeholder="Search by name, email, or employee id"
+            value={filters.search}
+            onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
+          />
+          <select aria-label="Status" className="ui-select" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}>
+            <option value="all">All status</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+          <select aria-label="Department" className="ui-select" value={filters.departmentId} onChange={(event) => setFilters((prev) => ({ ...prev, departmentId: event.target.value }))}>
+            <option value="">All departments</option>
+            {departments.map((department) => (
+              <option key={department.id} value={department.id}>{department.name}</option>
+            ))}
+          </select>
+          <Button type="submit" className="h-10 rounded-lg px-4">Apply Filters</Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-10 rounded-lg px-4"
+            disabled={!hasFilters}
+            onClick={() => {
+              setFilters({ search: "", status: "all", departmentId: "" });
+              setRefreshNonce((value) => value + 1);
+            }}
+          >
+            <RotateCcw className="size-4" />
+            Reset
+          </Button>
+        </form>
 
-          {admins.map((admin) => (
-            <div key={admin.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border px-3 py-2">
-              <div>
-                <p className="font-medium text-text-primary">{admin.fullName}</p>
-                <p className="text-xs text-text-secondary">{admin.email} • {admin.employeeId} • {admin.department?.name || "No department"}</p>
-                <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${admin.isActive ? "bg-green-500/10 text-green-700" : "bg-red-500/10 text-red-700"}`}>
-                  {admin.isActive ? "Active" : "Inactive"}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  className="h-8 rounded-lg border border-border px-2 text-xs"
-                  value={admin.accessProfile || "EDITOR"}
-                  onChange={(event) => handleProfileChange(admin.id, event.target.value)}
-                >
-                  <option value="EDITOR">Can Edit</option>
-                  <option value="VIEW_ONLY">View Only</option>
-                </select>
-                <Button size="sm" onClick={() => setResetDialog({ open: true, admin, password: "" })}>Reset Password</Button>
-                {admin.isActive ? (
-                  <Button size="sm" variant="destructive" onClick={() => setPendingDeactivate(admin)}>Deactivate</Button>
-                ) : (
-                  <Button size="sm" variant="outline" onClick={() => setPendingReactivate(admin)}>Reactivate</Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+        <DataTable
+          columns={columns}
+          rows={admins}
+          getRowKey={(admin) => admin.id}
+          loading={adminsQuery.isLoading}
+          minWidth={960}
+          caption="Admins"
+          rowClassName={(admin) => (admin.isActive ? "" : "bg-muted/30")}
+          empty={
+            <EmptyState
+              icon={ShieldUser}
+              title={hasFilters ? "No admins match these filters" : "No admins found"}
+              description={hasFilters ? "Try clearing the filters." : "Create your first department admin above."}
+              className="border-0"
+            />
+          }
+        />
+      </SectionCard>
 
       <AlertDialog open={resetDialog.open} onOpenChange={(open) => setResetDialog((prev) => ({ ...prev, open }))}>
         <AlertDialogContent>
@@ -231,12 +309,16 @@ export default function AdminManagementPage() {
               Enter a new password for {resetDialog.admin?.fullName || "this admin"}.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <Input
-            type="password"
-            value={resetDialog.password}
-            onChange={(event) => setResetDialog((prev) => ({ ...prev, password: event.target.value }))}
-            placeholder="Minimum 8 characters"
-          />
+          <FormField label="New password" htmlFor="managed-admin-reset" hint="Minimum 8 characters.">
+            <Input
+              id="managed-admin-reset"
+              type="password"
+              autoComplete="new-password"
+              className="h-10 rounded-lg"
+              value={resetDialog.password}
+              onChange={(event) => setResetDialog((prev) => ({ ...prev, password: event.target.value }))}
+            />
+          </FormField>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setResetDialog({ open: false, admin: null, password: "" })}>Cancel</AlertDialogCancel>
             <AlertDialogAction disabled={resetDialog.password.trim().length < 8} onClick={handleResetPassword}>Reset Password</AlertDialogAction>

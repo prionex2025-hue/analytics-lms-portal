@@ -28,6 +28,9 @@ import ReportBuilderDialog, { toReportTestFilters } from "@/components/Admin/Rep
 import ViolationReviewDialog from "@/components/Reports/ViolationReviewDialog";
 import { SUPER_REVIEW_ACTIONS } from "@/components/Reports/reviewActions";
 import { clampPercent, formatDateLabel, formatPercent, toExportErrorMessage, toQueryString } from "@/components/Reports/utils";
+import { ArrowLeft, FileBarChart2, Plus, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ErrorState, PageHeader, SearchInput } from "@/components/common/page-kit";
 
 const REPORT_MODES = [
   { key: "overview", label: "Overview" },
@@ -882,7 +885,7 @@ export default function ReportsPage() {
         subtitle={weakest ? `Weakest: ${weakest.name} (${formatPercent(weakest.averagePercentage)} average)` : "Average per module"}
         bodyClassName="p-0"
       >
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
               <tr>
@@ -917,7 +920,7 @@ export default function ReportsPage() {
   // Ranked students in scope; the Student tab uses it as the picker.
   const renderStudentRanking = (title) => (
     <SectionCard title={title} subtitle="Ranked by average score. Select a student to see their results." bodyClassName="p-0">
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead>
             <tr>
@@ -984,7 +987,7 @@ export default function ReportsPage() {
     const moduleStats = Array.isArray(scope?.modulePerformance?.moduleStats) ? scope.modulePerformance.moduleStats : [];
     return (
       <section className="space-y-4">
-        <article className="rounded-2xl border border-border bg-card p-4">
+        <article className="rounded-xl border border-border bg-card p-4 shadow-xs">
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
@@ -1009,9 +1012,9 @@ export default function ReportsPage() {
         {deepDiveView === "integrity" ? <IntegrityView query={integrityQuery} /> : null}
 
         {deepDiveView !== "performance" ? null : scopeQuery.isLoading ? (
-          <div className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">Loading test results…</div>
+          <div className="rounded-xl border border-border bg-card p-6 text-sm text-text-secondary" role="status">Loading test results…</div>
         ) : scopeQuery.isError ? (
-          <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load test results.</div>
+          <ErrorState title="Unable to load test results." />
         ) : (
           <>
             <MetricStrip items={deepDiveMetrics} />
@@ -1044,7 +1047,7 @@ export default function ReportsPage() {
                     value={deepDiveSort}
                     onChange={(event) => setDeepDiveSort(event.target.value)}
                     aria-label="Sort student results"
-                    className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-text-primary"
+                    className="ui-select"
                   >
                     <option value="score">Highest score</option>
                     <option value="studentName">Name (A–Z)</option>
@@ -1055,7 +1058,7 @@ export default function ReportsPage() {
                 </>
               }
             >
-              <div className="overflow-x-auto">
+              <div className="relative overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr>
@@ -1148,30 +1151,25 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-4 sm:px-6">
-      {error ? (
-        <section className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">{error}</section>
-      ) : null}
+    <div className="space-y-6">
+      {error ? <ErrorState title="Report error" description={error} /> : null}
 
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">Reporting Dashboard</p>
-            <h1 className="mt-1 text-2xl font-bold text-text-primary sm:text-3xl">Super Admin Reports</h1>
-            <p className="mt-1 text-sm text-text-secondary">
-              College, department, and student performance analytics with integrity tracking.
-            </p>
-          </div>
-          {exportState.status === "idle" ? (
-            <button
+      <PageHeader
+        eyebrow="Reporting dashboard"
+        title="Reports"
+        description="College, department, and student performance analytics with integrity tracking."
+        actions={
+          exportState.status === "idle" ? (
+            <Button
               type="button"
               onClick={() => setBuilderOpen(true)}
               disabled={!hasCollegeSelected || csvBusy}
               title={!hasCollegeSelected ? "Select a college before exporting reports." : ""}
-              className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-10 rounded-lg px-4"
             >
+              <FileBarChart2 className="size-4" />
               {csvBusy ? "Preparing…" : "Generate Report"}
-            </button>
+            </Button>
           ) : (
             <ExportButton
               exportState={exportState}
@@ -1180,25 +1178,26 @@ export default function ReportsPage() {
               disabled={!hasCollegeSelected}
               disabledReason={!hasCollegeSelected ? "Select a college before exporting reports." : ""}
             />
-          )}
-        </div>
-        <div className="mt-4">
+          )
+        }
+      />
+
+      <section className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
+        <div className="-mx-4 border-b border-border px-4 sm:-mx-5 sm:px-5">
           <TabNav
             tabs={REPORT_MODES.map((item) => ({ key: item.key, label: item.label }))}
             active={mode}
             onChange={handleModeSwitch}
+            className="border-b-0"
           />
         </div>
-      </section>
-
-      <section className="space-y-4 rounded-2xl border border-border bg-card p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        <div className="grid gap-3 md:grid-cols-5 xl:grid-cols-6">
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
           <label className="space-y-1 text-xs text-text-secondary">
             <span>College</span>
             <select
               value={collegeId}
               onChange={(event) => handleCollegeChange(event.target.value)}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
+              className="ui-select w-full"
             >
               <option value="">Select College</option>
               {colleges.map((college) => (
@@ -1213,7 +1212,7 @@ export default function ReportsPage() {
               value={departmentId}
               onChange={(event) => handleDepartmentChange(event.target.value)}
               disabled={!collegeId}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary disabled:opacity-60"
+              className="ui-select w-full"
             >
               <option value="">{collegeId ? "All Departments" : "Select a college first"}</option>
               {departments.map((department) => (
@@ -1228,7 +1227,7 @@ export default function ReportsPage() {
               value={testId}
               onChange={(event) => updateParams({ test: event.target.value })}
               disabled={!collegeId}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary disabled:opacity-60"
+              className="ui-select w-full"
             >
               <option value="all">{collegeId ? "All Tests" : "Select a college first"}</option>
               {tests.map((test) => (
@@ -1243,7 +1242,7 @@ export default function ReportsPage() {
               value={studentScope}
               onChange={(event) => handleStudentScopeChange(event.target.value)}
               disabled={!collegeId}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary disabled:opacity-60"
+              className="ui-select w-full"
             >
               {STUDENT_SCOPE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
@@ -1259,7 +1258,7 @@ export default function ReportsPage() {
                   value={passoutYear}
                   onChange={(event) => handlePassoutYearChange(event.target.value)}
                   disabled={!collegeId}
-                  className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary disabled:opacity-60"
+                  className="ui-select w-full"
                 >
                   <option value="">{collegeId ? "All passout years" : "Select a college first"}</option>
                   {passoutYearOptions.map((year) => (
@@ -1274,7 +1273,7 @@ export default function ReportsPage() {
                   value={passoutCohortId}
                   onChange={(event) => handlePassoutCohortChange(event.target.value)}
                   disabled={!collegeId}
-                  className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary disabled:opacity-60"
+                  className="ui-select w-full"
                 >
                   <option value="">{collegeId ? "All cohorts" : "Select a college first"}</option>
                   {visiblePassoutCohorts.map((cohort) => (
@@ -1293,7 +1292,7 @@ export default function ReportsPage() {
               value={studentYear}
               onChange={(event) => handleYearChange(event.target.value)}
               disabled={!collegeId}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary disabled:opacity-60"
+              className="ui-select w-full"
             >
               <option value="">{collegeId ? "All years" : "Select a college first"}</option>
               {YEAR_OPTIONS.map((year) => (
@@ -1305,15 +1304,15 @@ export default function ReportsPage() {
 
         {mode === "student" ? (
           <div className="relative max-w-xl">
-            <input
+            <SearchInput
+              label="Search students"
               value={studentSearch}
               onChange={(event) => setStudentSearch(event.target.value)}
               placeholder="Search student by name, email, or roll number"
               disabled={!collegeId}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm disabled:opacity-60"
             />
             {studentSearch.trim().length >= 2 ? (
-              <div className="absolute z-20 mt-2 max-h-64 w-full overflow-y-auto rounded-xl border border-border bg-card shadow-lg">
+              <div className="absolute z-20 mt-1.5 max-h-64 w-full overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-md">
                 {studentMatches.map((student) => (
                   <button
                     key={student.id}
@@ -1326,7 +1325,7 @@ export default function ReportsPage() {
                       });
                       setStudentSearch("");
                     }}
-                    className="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                    className="block w-full rounded-md px-3 py-2 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted"
                   >
                     <span className="font-medium text-text-primary">{student.fullName}</span>
                     <span className="block text-xs text-text-secondary">
@@ -1343,17 +1342,22 @@ export default function ReportsPage() {
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-          <span className="text-[11px] font-semibold uppercase tracking-widest text-text-secondary">Saved views</span>
+          <span className="text-xs font-medium text-text-secondary">Saved views</span>
           {savedViews.length === 0 ? (
             <span className="text-xs text-text-secondary">None yet — save the current filters to reuse them.</span>
           ) : (
             savedViews.map((view) => (
-              <span key={view.id} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-xs">
-                <button type="button" onClick={() => setSearchParams(new URLSearchParams(view.search))} className="font-medium text-text-primary hover:underline">
+              <span key={view.id} className="inline-flex h-8 items-center gap-1 rounded-full border border-border bg-background pr-1 pl-3 text-xs">
+                <button type="button" onClick={() => setSearchParams(new URLSearchParams(view.search))} className="rounded font-medium text-text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
                   {view.name}
                 </button>
-                <button type="button" onClick={() => removeView(view.id)} aria-label={`Remove saved view ${view.name}`} className="text-text-secondary hover:text-red-500">
-                  ×
+                <button
+                  type="button"
+                  onClick={() => removeView(view.id)}
+                  aria-label={`Remove saved view ${view.name}`}
+                  className="grid size-6 place-items-center rounded-full text-text-secondary outline-none hover:bg-danger/10 hover:text-danger focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  <X className="size-3.5" />
                 </button>
               </span>
             ))
@@ -1361,15 +1365,16 @@ export default function ReportsPage() {
           <button
             type="button"
             onClick={handleSaveView}
-            className="rounded-full border border-dashed border-border px-3 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+            className="inline-flex h-8 items-center gap-1 rounded-full border border-dashed border-border px-3 text-xs font-medium text-text-secondary outline-none hover:bg-muted hover:text-text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
           >
-            + Save current view
+            <Plus className="size-3.5" />
+            Save current view
           </button>
         </div>
       </section>
 
       {!hasCollegeSelected && !collegesQuery.isLoading ? (
-        <section className="rounded-2xl border border-border bg-card">
+        <section className="rounded-xl border border-dashed border-border bg-card">
           <EmptyState title="Select a college" description="Choose a college above to see its reports." />
         </section>
       ) : null}
@@ -1378,18 +1383,18 @@ export default function ReportsPage() {
 
       {hasCollegeSelected && !isTestDeepDive && (ANALYTICS_MODES.has(mode) || mode === "batch") && loading ? <AnalyticsSkeleton /> : null}
       {hasCollegeSelected && !isTestDeepDive && (ANALYTICS_MODES.has(mode) || mode === "batch") && scopeQuery.isError ? (
-        <section className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load report data.</section>
+        <ErrorState title="Unable to load report data." onRetry={() => scopeQuery.refetch()} />
       ) : null}
 
       {hasCollegeSelected && !isTestDeepDive && mode === "batch" ? (
         <section className="space-y-4">
-          <article className="rounded-2xl border border-border bg-card p-4">
+          <article className="rounded-xl border border-border bg-card p-4 shadow-xs">
             <label className="block max-w-sm space-y-1 text-xs text-text-secondary">
               <span>Batch</span>
               <select
                 value={batchId}
                 onChange={(event) => handleBatchChange(event.target.value)}
-                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
+                className="ui-select w-full"
               >
                 <option value="">All batches in this college</option>
                 {batches.map((batch) => (
@@ -1445,7 +1450,7 @@ export default function ReportsPage() {
 
       {analyticsReady && mode === "departments" ? (
         <SectionCard title="Departments" subtitle="Select a department to open its report" bodyClassName="p-0">
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr>
@@ -1493,16 +1498,13 @@ export default function ReportsPage() {
 
       {analyticsReady && mode === "student" && studentId ? (
         <section className="space-y-4">
-          <button
-            type="button"
-            onClick={() => updateParams({ student_id: "" })}
-            className="inline-flex h-9 items-center gap-1 rounded-xl border border-border bg-card px-3 text-sm font-medium text-text-primary transition-colors hover:bg-muted"
-          >
-            ← All students
-          </button>
+          <Button type="button" variant="outline" className="h-9 rounded-lg" onClick={() => updateParams({ student_id: "" })}>
+            <ArrowLeft className="size-4" />
+            All students
+          </Button>
 
           {studentDetailQuery.isLoading ? (
-            <section className="rounded-2xl border border-border bg-card p-4 text-sm text-text-secondary">Loading student results…</section>
+            <section className="rounded-xl border border-border bg-card p-4 text-sm text-text-secondary" role="status">Loading student results…</section>
           ) : (
             <>
               <StudentSummary student={selectedStudent} metrics={selectedStudentMetrics} />
@@ -1512,7 +1514,7 @@ export default function ReportsPage() {
               </SectionCard>
 
               <SectionCard title="Test attempts" subtitle={`${attemptRows.length} submitted`} bodyClassName="p-0">
-                <div className="overflow-x-auto">
+                <div className="relative overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr>

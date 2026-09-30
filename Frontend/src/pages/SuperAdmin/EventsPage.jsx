@@ -1,17 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Trash2, Upload, X } from "lucide-react";
+import { CalendarDays, Globe2, ImageOff, MapPin, Pencil, Plus, Save, Trash2, Upload, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { useDispatch, useSelector } from "react-redux";
 import { fetchSuperColleges } from "@/features/SuperAdmin/superAdminPanelSlice";
 import { superAdminApi } from "@/services/api";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import SkeletonBlock from "@/components/common/SkeletonBlock";
 import { validateImageFile } from "@/lib/image";
 import { optimizeCloudinaryImage } from "@/lib/cloudinary";
+import ConfirmActionDialog from "@/components/Admin/ConfirmActionDialog";
+import { Callout, EmptyState, FormField, PageHeader, PaginationBar, SearchInput, SectionCard, StatusBadge } from "@/components/common/page-kit";
+import { cn } from "@/lib/utils";
+import { ui } from "@/styles/ui-tokens";
+
+const EVENT_STATUS_TONE = { ACTIVE: "success", EXPIRED: "neutral", CANCELLED: "danger" };
+const EVENT_STATUS_LABEL = { ACTIVE: "Active", EXPIRED: "Expired", CANCELLED: "Cancelled" };
+
+const formatEventDateTime = (value) =>
+  value ? new Date(value).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+
+function FormGroup({ title, children }) {
+  return (
+    <fieldset className="min-w-0 border-t border-border pt-5 first:border-t-0 first:pt-0">
+      <legend className="sr-only">{title}</legend>
+      <p className="mb-4 text-sm font-semibold text-text-primary" aria-hidden="true">{title}</p>
+      <div className="space-y-4">{children}</div>
+    </fieldset>
+  );
+}
 
 const EVENT_TYPES = ["Workshop", "Hackathon", "Symposium", "Other"];
 const PAGE_SIZE = 8;
@@ -83,6 +101,7 @@ export default function EventsPage() {
   const [editingEventId, setEditingEventId] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [pendingDeleteEvent, setPendingDeleteEvent] = useState(null);
 
   useEffect(() => {
     return () => {
@@ -309,218 +328,286 @@ export default function EventsPage() {
 
   const canCreate = Boolean(form.title.trim() && form.description.trim() && form.startsAt && form.endsAt && Number(form.registrationLimit) > 0 && (editingEventId || form.allColleges || form.collegeIds.length > 0) && (form.feeType !== "paid" || Number(form.registrationFee || 0) > 0));
 
+  const bannerTone = banner.type === "error" ? "danger" : banner.type === "warning" ? "warning" : "success";
+
   return (
     <div className="space-y-6">
+      <PageHeader
+        title="Global events"
+        description="Create events once and target one, several, or all colleges."
+      />
+
       {banner.type ? (
-        <Alert variant={banner.type === "error" ? "destructive" : "default"} className={banner.type === "warning" ? "border-warning/30 bg-warning/10 text-warning" : ""}>
-          <AlertTitle>{banner.title}</AlertTitle>
-          <AlertDescription>{banner.message}</AlertDescription>
-        </Alert>
+        <Callout tone={bannerTone} title={banner.title}>
+          {banner.message}
+        </Callout>
       ) : null}
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>{editingEventId ? "Edit Global Event" : "Create Global Event"}</CardTitle>
-          <CardDescription>Admin-like event creation with super admin controls for multi-college targeting.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-1.5">
-            <label htmlFor="super-event-title" className="text-sm font-medium text-text-secondary">Title</label>
-            <Input id="super-event-title" placeholder="Title" value={form.title} onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))} />
-          </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor="super-event-description" className="text-sm font-medium text-text-secondary">Description</label>
-            <Textarea id="super-event-description" placeholder="Description" value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-text-secondary">Event photo</label>
-            <div className="flex flex-col gap-3 rounded-xl border border-dashed border-border bg-background/70 p-3 sm:flex-row sm:items-center">
-              <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-text-secondary">
-                <Upload className="size-4" />
-                {eventImageFile ? "Change Photo" : "Upload Photo"}
-                <input
-                  ref={eventImageInputRef}
-                  type="file"
-                  accept="image/png,image/jpeg"
-                  className="hidden"
-                  onChange={onEventImageSelected}
-                />
-              </label>
-              <p className="text-xs text-text-secondary">JPG/PNG only, max 2MB. The image will be uploaded once and reused for targeted colleges.</p>
-            </div>
-            {eventImagePreview ? (
-              <img
-                src={eventImagePreview}
-                alt="Global event preview"
-                width="640"
-                height="320"
-                decoding="async"
-                className="h-44 w-full rounded-xl border border-border object-cover sm:h-52"
-              />
-            ) : null}
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1.5">
-              <label htmlFor="super-event-type" className="text-sm font-medium text-text-secondary">Event type</label>
-              <select id="super-event-type" className="h-10 w-full rounded-md border border-border px-3 text-sm" value={form.eventType} onChange={(e) => setForm((prev) => ({ ...prev, eventType: e.target.value }))}>
-                {EVENT_TYPES.map((type) => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="super-event-location" className="text-sm font-medium text-text-secondary">Location</label>
-              <Input id="super-event-location" placeholder="Location" value={form.location} onChange={(e) => setForm((prev) => ({ ...prev, location: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="super-event-max-participants" className="text-sm font-medium text-text-secondary">Max participants</label>
-              <Input id="super-event-max-participants" type="number" min={1} placeholder="Max participants" value={form.registrationLimit} onChange={(e) => setForm((prev) => ({ ...prev, registrationLimit: Number(e.target.value) }))} />
-            </div>
-
-            <div className="space-y-1.5">
-              <label htmlFor="super-event-fee-type" className="text-sm font-medium text-text-secondary">Registration fees</label>
-              <select id="super-event-fee-type" className="h-10 w-full rounded-md border border-border px-3 text-sm" value={form.feeType} onChange={(e) => setForm((prev) => ({ ...prev, feeType: e.target.value, registrationFee: e.target.value === "free" ? "" : prev.registrationFee }))}>
-                <option value="free">Free</option>
-                <option value="paid">Paid</option>
-              </select>
-            </div>
-            {form.feeType === "paid" ? (
-              <div className="space-y-1.5">
-                <label htmlFor="super-event-fee-amount" className="text-sm font-medium text-text-secondary">Amount</label>
-                <Input id="super-event-fee-amount" type="number" min={0} step="0.01" placeholder="Amount" value={form.registrationFee} onChange={(e) => setForm((prev) => ({ ...prev, registrationFee: e.target.value }))} />
+      <SectionCard
+        title={editingEventId ? "Edit global event" : "Create global event"}
+        description={editingEventId ? "Update the event details below. College targeting can't be changed after creation." : "Fields marked * are required."}
+        className={editingEventId ? "ring-2 ring-primary/30" : ""}
+      >
+        <form
+          className="space-y-6"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canCreate && !submitting) save();
+          }}
+        >
+          <FormGroup title="Details">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="space-y-4">
+                <FormField label="Title" htmlFor="super-event-title" required>
+                  <Input id="super-event-title" className={ui.field} value={form.title} onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))} />
+                </FormField>
+                <FormField label="Description" htmlFor="super-event-description" required>
+                  <Textarea id="super-event-description" className="min-h-28 rounded-lg" value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} />
+                </FormField>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <FormField label="Event type" htmlFor="super-event-type">
+                    <select id="super-event-type" className="ui-select w-full" value={form.eventType} onChange={(e) => setForm((prev) => ({ ...prev, eventType: e.target.value }))}>
+                      {EVENT_TYPES.map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </FormField>
+                  <FormField label="Location" htmlFor="super-event-location">
+                    <Input id="super-event-location" className={ui.field} value={form.location} onChange={(e) => setForm((prev) => ({ ...prev, location: e.target.value }))} />
+                  </FormField>
+                </div>
               </div>
-            ) : null}
-            <div className="space-y-1.5">
-              <label htmlFor="super-event-starts-at" className="text-sm font-medium text-text-secondary">Starts at</label>
-              <Input id="super-event-starts-at" type="datetime-local" value={form.startsAt} onChange={(e) => setForm((prev) => ({ ...prev, startsAt: e.target.value }))} />
+
+              <FormField label="Event photo" hint="JPG/PNG only, max 2MB. Uploaded once and reused for targeted colleges.">
+                <label
+                  className={cn(
+                    "group relative flex aspect-video cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-lg border border-dashed border-border bg-muted/40 text-sm text-text-secondary transition-colors hover:border-primary/50 hover:bg-primary/5 focus-within:ring-3 focus-within:ring-ring/50"
+                  )}
+                >
+                  {eventImagePreview ? (
+                    <>
+                      <img src={eventImagePreview} alt="Global event preview" width="640" height="360" decoding="async" className="absolute inset-0 size-full object-cover" />
+                      <span className="relative inline-flex items-center gap-1.5 rounded-md bg-card/95 px-2.5 py-1 text-xs font-medium text-text-primary shadow-sm opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                        <Upload className="size-3.5" />
+                        Change photo
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="size-5" aria-hidden="true" />
+                      <span className="font-medium">{eventImageFile ? "Change Photo" : "Upload Photo"}</span>
+                    </>
+                  )}
+                  <input ref={eventImageInputRef} type="file" accept="image/png,image/jpeg" className="sr-only" onChange={onEventImageSelected} />
+                </label>
+              </FormField>
             </div>
-            <div className="space-y-1.5">
-              <label htmlFor="super-event-ends-at" className="text-sm font-medium text-text-secondary">Ends at</label>
-              <Input id="super-event-ends-at" type="datetime-local" value={form.endsAt} onChange={(e) => setForm((prev) => ({ ...prev, endsAt: e.target.value }))} />
+          </FormGroup>
+
+          <FormGroup title="Schedule">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <FormField label="Starts at" htmlFor="super-event-starts-at" required>
+                <Input id="super-event-starts-at" type="datetime-local" className={ui.field} value={form.startsAt} onChange={(e) => setForm((prev) => ({ ...prev, startsAt: e.target.value }))} />
+              </FormField>
+              <FormField label="Ends at" htmlFor="super-event-ends-at" required>
+                <Input id="super-event-ends-at" type="datetime-local" className={ui.field} value={form.endsAt} onChange={(e) => setForm((prev) => ({ ...prev, endsAt: e.target.value }))} />
+              </FormField>
+              <FormField label="Event date" htmlFor="super-event-date">
+                <Input id="super-event-date" type="date" className={ui.field} value={form.eventDate} onChange={(e) => setForm((prev) => ({ ...prev, eventDate: e.target.value }))} />
+              </FormField>
+              <FormField label="Registration deadline" htmlFor="super-event-deadline">
+                <Input id="super-event-deadline" type="date" className={ui.field} value={form.registrationDeadline} onChange={(e) => setForm((prev) => ({ ...prev, registrationDeadline: e.target.value }))} />
+              </FormField>
             </div>
-            <div className="space-y-1.5">
-              <label htmlFor="super-event-date" className="text-sm font-medium text-text-secondary">Event date</label>
-              <Input id="super-event-date" type="date" value={form.eventDate} onChange={(e) => setForm((prev) => ({ ...prev, eventDate: e.target.value }))} />
+          </FormGroup>
+
+          <FormGroup title="Registration">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <FormField label="Max participants" htmlFor="super-event-max-participants" required>
+                <Input id="super-event-max-participants" type="number" min={1} className={ui.field} value={form.registrationLimit} onChange={(e) => setForm((prev) => ({ ...prev, registrationLimit: Number(e.target.value) }))} />
+              </FormField>
+              <FormField label="Registration fees" htmlFor="super-event-fee-type">
+                <select id="super-event-fee-type" className="ui-select w-full" value={form.feeType} onChange={(e) => setForm((prev) => ({ ...prev, feeType: e.target.value, registrationFee: e.target.value === "free" ? "" : prev.registrationFee }))}>
+                  <option value="free">Free</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </FormField>
+              {form.feeType === "paid" ? (
+                <FormField label="Amount" htmlFor="super-event-fee-amount" required>
+                  <Input id="super-event-fee-amount" type="number" min={0} step="0.01" className={ui.field} value={form.registrationFee} onChange={(e) => setForm((prev) => ({ ...prev, registrationFee: e.target.value }))} />
+                </FormField>
+              ) : null}
+              <FormField label="Registration URL" htmlFor="super-event-registration-url" hint="Optional" className={form.feeType === "paid" ? "" : "lg:col-span-2"}>
+                <Input id="super-event-registration-url" type="url" placeholder="https://" className={ui.field} value={form.registrationUrl} onChange={(e) => setForm((prev) => ({ ...prev, registrationUrl: e.target.value }))} />
+              </FormField>
             </div>
-            <div className="space-y-1.5">
-              <label htmlFor="super-event-deadline" className="text-sm font-medium text-text-secondary">Registration deadline</label>
-              <Input id="super-event-deadline" type="date" value={form.registrationDeadline} onChange={(e) => setForm((prev) => ({ ...prev, registrationDeadline: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <label htmlFor="super-event-registration-url" className="text-sm font-medium text-text-secondary">Registration URL (optional)</label>
-              <Input id="super-event-registration-url" placeholder="Registration URL" value={form.registrationUrl} onChange={(e) => setForm((prev) => ({ ...prev, registrationUrl: e.target.value }))} />
-            </div>
-          </div>
+          </FormGroup>
 
           {!editingEventId ? (
-          <div className="space-y-1.5">
-            <label htmlFor="super-event-all-colleges" className="text-sm font-medium text-text-secondary">College assignment</label>
-            <label className="flex items-center gap-2 text-sm text-text-secondary">
-              <input id="super-event-all-colleges" type="checkbox" checked={form.allColleges} onChange={(e) => setForm((prev) => ({ ...prev, allColleges: e.target.checked }))} />
-              Assign to all colleges
-            </label>
-          </div>
+            <FormGroup title="Audience">
+              <label htmlFor="super-event-all-colleges" className="flex w-fit cursor-pointer items-center gap-2.5 text-sm text-text-primary">
+                <input className="ui-checkbox" id="super-event-all-colleges" type="checkbox" checked={form.allColleges} onChange={(e) => setForm((prev) => ({ ...prev, allColleges: e.target.checked }))} />
+                Assign to all colleges
+              </label>
+              {!form.allColleges ? (
+                <FormField label="Select colleges" htmlFor="super-event-colleges" hint={`Hold Ctrl/⌘ to select several · ${form.collegeIds.length} selected`} required>
+                  <select id="super-event-colleges" multiple className="ui-select w-full max-w-xl" value={form.collegeIds} onChange={(e) => setForm((prev) => ({ ...prev, collegeIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>
+                    {colleges.map((college) => (
+                      <option key={college.id} value={college.id}>{college.name}</option>
+                    ))}
+                  </select>
+                </FormField>
+              ) : null}
+            </FormGroup>
           ) : null}
 
-          {!editingEventId && !form.allColleges ? (
-            <div className="space-y-1.5">
-              <label htmlFor="super-event-colleges" className="text-sm font-medium text-text-secondary">Select colleges</label>
-              <select id="super-event-colleges" multiple className="min-h-24 w-full rounded-lg border border-border p-2" value={form.collegeIds} onChange={(e) => setForm((prev) => ({ ...prev, collegeIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>
-                {colleges.map((college) => (
-                  <option key={college.id} value={college.id}>{college.name}</option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button className="bg-primary/100 hover:bg-primary" onClick={save} disabled={!canCreate || submitting}>
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
+            <Button type="submit" className={ui.btn} disabled={!canCreate || submitting}>
+              {editingEventId ? <Save className="size-4" /> : <Plus className="size-4" />}
               {submitting ? "Saving..." : editingEventId ? "Save Global Event" : "Create Global Event"}
             </Button>
             {editingEventId ? (
-              <Button type="button" variant="outline" onClick={resetForm}>
+              <Button type="button" variant="outline" className={ui.btn} onClick={resetForm}>
                 <X className="size-4" />
                 Cancel Edit
               </Button>
             ) : null}
+            {!canCreate && !submitting ? <p className="text-xs text-text-secondary">Complete the required fields to continue.</p> : null}
           </div>
-        </CardContent>
-      </Card>
+        </form>
+      </SectionCard>
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Global Events</CardTitle>
-          <CardDescription>Admin-like event list with search and pagination for portfolio-wide visibility.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-1.5">
-            <label htmlFor="super-event-search" className="text-sm font-medium text-text-secondary">Search events</label>
-            <Input id="super-event-search" placeholder="Search by title, type, or college" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <SectionCard
+        title="All global events"
+        description={`${filteredEvents.length} event${filteredEvents.length === 1 ? "" : "s"}`}
+        actions={
+          <SearchInput
+            id="super-event-search"
+            className="w-full sm:w-72"
+            label="Search events"
+            placeholder="Search by title, type, or college"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        }
+        footer={
+          filteredEvents.length > PAGE_SIZE ? (
+            <PaginationBar page={page} pages={totalPages} total={filteredEvents.length} onPageChange={(next) => setPage(Math.min(Math.max(next, 1), totalPages))} />
+          ) : null
+        }
+      >
+        {loading ? (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-busy="true">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <SkeletonBlock key={index} className="h-72" />
+            ))}
           </div>
+        ) : pagedEvents.length === 0 ? (
+          <EmptyState
+            icon={CalendarDays}
+            title={search ? "No events match your search" : "No global events found"}
+            description={search ? "Try a different title, type, or college." : "Create the first global event using the form above."}
+            className="border-0 py-8"
+          />
+        ) : (
+          <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {pagedEvents.map((event) => {
+              const status = getEventStatus(event);
+              const isExpired = status === "EXPIRED";
+              const isEditing = editingEventId === event.id;
 
-          {loading ? (
-            <div className="space-y-2">
-              <SkeletonBlock className="h-16" />
-              <SkeletonBlock className="h-16" />
-              <SkeletonBlock className="h-16" />
-            </div>
-          ) : null}
-
-          {!loading && pagedEvents.length === 0 ? <p className="text-sm text-text-secondary">No global events found.</p> : null}
-
-          {!loading ? (
-            <div className="space-y-2">
-              {pagedEvents.map((event) => {
-                const status = getEventStatus(event);
-                const isExpired = status === "EXPIRED";
-
-                return (
-                <div key={event.id} className="rounded-xl border border-border px-3 py-2">
-                  {event.imageUrl ? (
-                    <img
-                      src={optimizeCloudinaryImage(event.imageUrl, { width: 640, height: 320, crop: "fill" })}
-                      alt={`${event.title} cover`}
-                      width="640"
-                      height="320"
-                      loading="lazy"
-                      decoding="async"
-                      className={`mb-3 h-28 w-full rounded-lg object-cover ${isExpired ? "grayscale opacity-65" : ""}`}
-                    />
-                  ) : null}
-                  <p className="font-medium text-text-primary">{event.title}</p>
-                  <p className="text-xs text-text-secondary">{event.eventType} | {event.college?.name || "All colleges"}</p>
-                  <p className="text-xs text-text-secondary">{event.startsAt ? new Date(event.startsAt).toLocaleString() : "-"} to {event.endsAt ? new Date(event.endsAt).toLocaleString() : "-"}</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {status !== "ACTIVE" ? <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-text-secondary">{status}</span> : null}
-                    <Button type="button" variant="outline" size="sm" onClick={() => startEdit(event)}>
-                      <Pencil className="size-4" />
-                      Edit
-                    </Button>
-                    <Button type="button" variant="destructive" size="sm" disabled={submitting} onClick={() => deleteEvent(event.id)}>
-                      <Trash2 className="size-4" />
-                      Delete
-                    </Button>
+              return (
+                <li
+                  key={event.id}
+                  className={cn(
+                    "flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors",
+                    isEditing ? "border-primary ring-2 ring-primary/25" : "border-border hover:border-primary/40"
+                  )}
+                >
+                  <div className="relative aspect-video bg-muted">
+                    {event.imageUrl ? (
+                      <img
+                        src={optimizeCloudinaryImage(event.imageUrl, { width: 640, height: 360, crop: "fill" })}
+                        alt={`${event.title} cover`}
+                        width="640"
+                        height="360"
+                        loading="lazy"
+                        decoding="async"
+                        className={cn("size-full object-cover", isExpired ? "opacity-65 grayscale" : "")}
+                      />
+                    ) : (
+                      <div className="grid size-full place-items-center text-text-secondary/60">
+                        <ImageOff className="size-6" aria-hidden="true" />
+                      </div>
+                    )}
+                    <div className="absolute top-2 left-2 flex gap-1.5">
+                      <span className="rounded-full bg-card/95 px-2 py-0.5 text-xs font-medium text-text-primary shadow-sm">{event.eventType}</span>
+                    </div>
                   </div>
-                </div>
-                );
-              })}
-            </div>
-          ) : null}
+                  <div className="flex flex-1 flex-col p-3.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="line-clamp-2 font-medium text-text-primary">{event.title}</p>
+                      <StatusBadge tone={EVENT_STATUS_TONE[status] || "neutral"}>{EVENT_STATUS_LABEL[status] || status}</StatusBadge>
+                    </div>
+                    <div className="mt-2 space-y-1 text-xs text-text-secondary">
+                      <p className="flex items-center gap-1.5">
+                        <Globe2 className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span className="truncate">{event.college?.name || "All colleges"}</span>
+                      </p>
+                      <p className="flex items-center gap-1.5">
+                        <CalendarDays className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span>{formatEventDateTime(event.startsAt)} – {formatEventDateTime(event.endsAt)}</span>
+                      </p>
+                      {event.location ? (
+                        <p className="flex items-center gap-1.5">
+                          <MapPin className="size-3.5 shrink-0" aria-hidden="true" />
+                          <span className="truncate">{event.location}</span>
+                        </p>
+                      ) : null}
+                      {event.registrationLimit ? (
+                        <p className="flex items-center gap-1.5">
+                          <Users className="size-3.5 shrink-0" aria-hidden="true" />
+                          <span>{event.registrationLimit} max participants</span>
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="mt-auto flex gap-2 pt-3">
+                      <Button type="button" variant="outline" className="h-9 flex-1 rounded-lg" onClick={() => startEdit(event)}>
+                        <Pencil className="size-4" />
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-9 flex-1 rounded-lg text-danger hover:bg-danger/10 hover:text-danger"
+                        disabled={submitting}
+                        onClick={() => setPendingDeleteEvent(event)}
+                      >
+                        <Trash2 className="size-4" />
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </SectionCard>
 
-          {filteredEvents.length > PAGE_SIZE ? (
-            <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-text-secondary">
-              <p>Page {page} of {totalPages}</p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((prev) => Math.max(prev - 1, 1))}>Previous</Button>
-                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}>Next</Button>
-              </div>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+      <ConfirmActionDialog
+        open={Boolean(pendingDeleteEvent)}
+        onOpenChange={(open) => !open && setPendingDeleteEvent(null)}
+        title="Delete global event"
+        description={`Delete “${pendingDeleteEvent?.title || "this event"}”? It will be removed from every targeted college. This cannot be undone.`}
+        confirmLabel="Delete Event"
+        confirmVariant="destructive"
+        onConfirm={async () => {
+          const target = pendingDeleteEvent;
+          setPendingDeleteEvent(null);
+          if (target?.id) await deleteEvent(target.id);
+        }}
+      />
     </div>
   );
 }

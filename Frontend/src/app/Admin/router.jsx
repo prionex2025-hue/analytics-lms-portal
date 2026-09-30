@@ -9,6 +9,7 @@ import { isCollegeAdminRole } from "@/features/Admin/adminRole";
 import HardRedirect from "@/components/common/HardRedirect";
 import IdleSessionTimeout from "@/components/common/IdleSessionTimeout";
 import RouteErrorElement from "@/components/common/RouteErrorElement";
+import { LoadingState } from "@/components/common/page-kit";
 import { useNoIndexRoute } from "@/hooks/useNoIndexRoute";
 
 const injectAdminReducers = async () => {
@@ -72,7 +73,7 @@ const AdminPasswordResetPage = lazy(async () => {
   };
 });
 
-function PageRoute({ Page, fallback = <div className="grid min-h-[40vh] place-items-center text-text-secondary">Loading...</div> }) {
+function PageRoute({ Page, fallback = <LoadingState /> }) {
   return (
     <Suspense fallback={fallback}>
       {createElement(Page)}
@@ -98,7 +99,7 @@ function AdminAuthBootstrap() {
   }, [dispatch]);
 
   if (!initialized) {
-    return <div className="grid min-h-screen place-items-center text-text-secondary">Initializing admin session...</div>;
+    return <LoadingState fullScreen label="Initializing admin session…" />;
   }
 
   return (
@@ -152,7 +153,7 @@ const router = createBrowserRouter([
         element: <AdminProtectedRoute />,
         children: [
           {
-            element: <PageRoute Page={AdminPortalLayout} fallback={<div className="grid min-h-screen place-items-center text-text-secondary">Loading admin workspace...</div>} />,
+            element: <PageRoute Page={AdminPortalLayout} fallback={<LoadingState fullScreen label="Loading admin workspace…" />} />,
             children: [
               { path: "/admin", element: <Navigate to="/admin/dashboard" replace /> },
               { path: "/admin/dashboard", element: <PageRoute Page={AdminDashboardPage} /> },

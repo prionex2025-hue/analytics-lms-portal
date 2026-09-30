@@ -3,18 +3,21 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAdminAuthState } from "@/hooks/useAdminAuthState";
 import { toast } from "sonner";
 import { adminApi } from "@/services/api";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import SkeletonBlock from "@/components/common/SkeletonBlock";
+import { Textarea } from "@/components/ui/textarea";
 import { SUPPORT_EMAIL, openSupportMail } from "@/lib/supportMail";
+import { Info, KeyRound, LifeBuoy, MessageSquareText, ShieldCheck, UserRound } from "lucide-react";
+import { Callout, DetailList, FormField, PageHeader, SettingsSection, StatusBadge } from "@/components/common/page-kit";
+import { ui } from "@/styles/ui-tokens";
+
+const FAQS = [
+  { q: "How to reset a student password?", a: "Navigate to Student Management → Select Student → Reset Password." },
+  { q: "How to publish exams?", a: "Create the exam, assign departments, then click publish in the exam panel." },
+  { q: "How are audit logs maintained?", a: "Every admin action is securely tracked with timestamps and role-based visibility." },
+];
+
 
 export default function AdminSettingsPage() {
   const authenticatedAdmin = useAdminAuthState()?.admin;
@@ -85,288 +88,165 @@ export default function AdminSettingsPage() {
     return "";
   })();
 
+  const bannerTone = banner.type === "error" ? "danger" : banner.type === "warning" ? "warning" : "success";
+
   return (
     <div className="space-y-6">
-      {banner.type ? (
-        <Alert variant={banner.type === "error" ? "destructive" : "default"}>
-          <AlertTitle>{banner.title}</AlertTitle>
-          <AlertDescription>{banner.message}</AlertDescription>
-        </Alert>
-      ) : null}
+      <PageHeader title="Settings" description="Your account, security, and support resources." />
 
-      {settingsQuery.isLoading ? (
-        <Card className="rounded-2xl border-border">
-          <CardContent className="space-y-3 p-6">
-            <SkeletonBlock className="h-8" />
-            <SkeletonBlock className="h-12" />
-            <SkeletonBlock className="h-12" />
-          </CardContent>
-        </Card>
+      {banner.type ? (
+        <Callout tone={bannerTone} title={banner.title}>
+          {banner.message}
+        </Callout>
       ) : null}
 
       {settingsQuery.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Profile fetch failed</AlertTitle>
-          <AlertDescription>
-            {settingsQuery.error?.message || "Could not load the latest admin profile. Showing saved session details where available."}
-          </AlertDescription>
-        </Alert>
+        <Callout tone="warning" title="Profile fetch failed">
+          {settingsQuery.error?.message || "Could not load the latest admin profile. Showing saved session details where available."}
+        </Callout>
       ) : null}
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Admin Profile</CardTitle>
-          <CardDescription>
-            Read-only identity context used for scoped access and audit trails.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-2 sm:grid-cols-2">
-          <p className="text-sm text-text-secondary">
-            <span className="font-semibold">Name:</span>{" "}
-            {profile?.fullName || "-"}
-          </p>
-          <p className="text-sm text-text-secondary">
-            <span className="font-semibold">Email:</span>{" "}
-            {profile?.email || "-"}
-          </p>
-          <p className="text-sm text-text-secondary">
-            <span className="font-semibold">Employee ID:</span>{" "}
-            {profile?.employeeId || "-"}
-          </p>
-          <p className="text-sm text-text-secondary">
-            <span className="font-semibold">Role:</span> {profile?.role || "-"}
-          </p>
-          <p className="text-sm text-text-secondary">
-            <span className="font-semibold">College:</span>{" "}
-            {profile?.college?.name || "-"}
-          </p>
-          <p className="text-sm text-text-secondary">
-            <span className="font-semibold">Department:</span>{" "}
-            {profile?.department?.name || "-"}
-          </p>
-        </CardContent>
-      </Card>
+      <SettingsSection icon={UserRound} title="Admin profile" description="Read-only identity context used for scoped access and audit trails.">
+        {settingsQuery.isLoading ? (
+          <div className="grid gap-3 sm:grid-cols-2" aria-busy="true">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <SkeletonBlock key={index} className="h-10 rounded-lg" />
+            ))}
+          </div>
+        ) : (
+          <DetailList
+            columns={3}
+            items={[
+              { label: "Name", value: profile?.fullName || "-" },
+              { label: "Email", value: profile?.email || "-" },
+              { label: "Employee ID", value: profile?.employeeId || "-" },
+              { label: "Role", value: profile?.role ? <StatusBadge tone="info">{profile.role}</StatusBadge> : "-" },
+              { label: "College", value: profile?.college?.name || "-" },
+              { label: "Department", value: profile?.department?.name || "-" },
+            ]}
+          />
+        )}
+      </SettingsSection>
 
-      
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* FAQ Card */}
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>Frequently Asked Questions</CardTitle>
-            <CardDescription>
-              Common platform usage questions and quick guidance for
-              administrators.
-            </CardDescription>
-          </CardHeader>
+      <SettingsSection icon={KeyRound} title="Change password" description="Password updates take effect immediately and are audited.">
+        <form
+          className="grid max-w-2xl gap-4 sm:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!passwordForm.currentPassword || !passwordForm.newPassword || passwordError || passwordMutation.isPending) return;
+            passwordMutation.mutate(passwordForm);
+          }}
+        >
+          <FormField label="Current password" htmlFor="admin-current-password">
+            <Input
+              id="admin-current-password"
+              type="password"
+              autoComplete="current-password"
+              className={ui.field}
+              value={passwordForm.currentPassword}
+              onChange={(event) => setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))}
+            />
+          </FormField>
+          <FormField label="New password" htmlFor="admin-new-password" error={passwordError || undefined}>
+            <Input
+              id="admin-new-password"
+              type="password"
+              autoComplete="new-password"
+              aria-invalid={passwordError ? true : undefined}
+              className={ui.field}
+              value={passwordForm.newPassword}
+              onChange={(event) => setPasswordForm((prev) => ({ ...prev, newPassword: event.target.value }))}
+            />
+          </FormField>
+          <div className="sm:col-span-2">
+            <Button
+              type="submit"
+              className={ui.btn}
+              disabled={!passwordForm.currentPassword || !passwordForm.newPassword || Boolean(passwordError) || passwordMutation.isPending}
+            >
+              {passwordMutation.isPending ? "Updating..." : "Update Password"}
+            </Button>
+          </div>
+        </form>
+      </SettingsSection>
 
-          <CardContent className="space-y-4">
-            <div className="border-b border-border pb-3">
-              <h4 className="text-sm font-semibold">
-                How to reset a student password?
-              </h4>
-              <p className="text-sm text-text-secondary mt-1">
-                Navigate to Student Management → Select Student → Reset
-                Password.
-              </p>
-            </div>
+      <SettingsSection icon={ShieldCheck} title="Security" description="Additional account protection options.">
+        <ul className="max-w-2xl divide-y divide-border rounded-lg border border-border">
+          {[
+            { title: "Two Factor Authentication", text: "Add extra protection to admin accounts." },
+            { title: "Login Alerts", text: "Receive alerts for suspicious logins." },
+          ].map((item) => (
+            <li key={item.title} className="flex items-center justify-between gap-3 p-3.5">
+              <div>
+                <p className="text-sm font-medium text-text-primary">{item.title}</p>
+                <p className="text-xs text-text-secondary">{item.text}</p>
+              </div>
+              <StatusBadge tone="neutral">Not yet available</StatusBadge>
+            </li>
+          ))}
+        </ul>
+      </SettingsSection>
 
-            <div className="border-b border-border pb-3">
-              <h4 className="text-sm font-semibold">How to publish exams?</h4>
-              <p className="text-sm text-text-secondary mt-1">
-                Create the exam, assign departments, then click publish in the
-                exam panel.
-              </p>
-            </div>
-
-            <div>
-              <h4 className="text-sm font-semibold">
-                How are audit logs maintained?
-              </h4>
-              <p className="text-sm text-text-secondary mt-1">
-                Every admin action is securely tracked with timestamps and
-                role-based visibility.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Feedback Card */}
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>Feedback & Suggestions</CardTitle>
-            <CardDescription>
-              Share platform issues, UI improvements, feature requests, and
-              suggestions.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="space-y-4">
-            <textarea
+      <SettingsSection icon={MessageSquareText} title="Feedback & suggestions" description="Share platform issues, UI improvements, feature requests, and suggestions.">
+        <form
+          className="max-w-2xl space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitFeedback();
+          }}
+        >
+          <FormField label="Your feedback" htmlFor="admin-feedback">
+            <Textarea
+              id="admin-feedback"
               placeholder="Write your feedback here..."
               value={feedback}
               onChange={(event) => setFeedback(event.target.value)}
-              className="min-h-[120px] w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary"
+              className="min-h-32 rounded-lg"
             />
+          </FormField>
+          <Button type="submit" variant="outline" className={ui.btn}>Submit Feedback</Button>
+        </form>
+      </SettingsSection>
 
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={submitFeedback}
-                className="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-              >
-                Submit Feedback
-              </button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Support & Contact */}
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>Support & Contact</CardTitle>
-            <CardDescription>
-              Technical support and escalation contacts for the LMS platform.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="grid gap-3">
-            <p className="text-sm text-text-secondary">
-              <span className="font-semibold">Support Email:</span>{" "}
-              {SUPPORT_EMAIL}
-            </p>
-
-            <p className="text-sm text-text-secondary">
-              <span className="font-semibold">Emergency Contact:</span> +91
-             9025895743
-            </p>
-
-            <p className="text-sm text-text-secondary">
-              <span className="font-semibold">Working Hours:</span> Mon - Sat |
-              9:00 AM - 5:00 PM
-            </p>
-
-            <p className="text-sm text-text-secondary">
-              <span className="font-semibold">Version:</span> LMS v2.4.1
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Security Settings */}
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>Security Settings</CardTitle>
-            <CardDescription>
-              Configure account protection and authentication preferences.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between rounded-xl border border-border p-3">
-              <div>
-                <h4 className="text-sm font-semibold">
-                  Two Factor Authentication
-                </h4>
-                <p className="text-xs text-text-secondary">
-                  Add extra protection to admin accounts.
-                </p>
-              </div>
-
-              <button className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white">
-                Enable
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between rounded-xl border border-border p-3">
-              <div>
-                <h4 className="text-sm font-semibold">Login Alerts</h4>
-                <p className="text-xs text-text-secondary">
-                  Receive alerts for suspicious logins.
-                </p>
-              </div>
-
-              <button className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium">
-                Enabled
-              </button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* About Platform */}
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>About Platform</CardTitle>
-            <CardDescription>
-              Platform credits, build details, and system information.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="space-y-3">
-            <p className="text-sm text-text-secondary">
-              AI-powered Learning Management System for colleges and
-              institutions.
-            </p>
-
-            <p className="text-sm text-text-secondary">
-              Built with scalable architecture, role-based access, audit
-              logging, secure examination workflows, and analytics dashboards.
-            </p>
-
-            <div className="rounded-xl border border-border p-3">
-              <p className="text-sm font-semibold">Built by Prionex</p>
-              <p className="text-xs text-text-secondary mt-1">
-                Empowering educational institutions with secure digital
-                infrastructure.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Change Password</CardTitle>
-          <CardDescription>
-            Password updates are immediately audited.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-3">
-          <Input
-            type="password"
-            placeholder="Current password"
-            value={passwordForm.currentPassword}
-            onChange={(event) =>
-              setPasswordForm((prev) => ({
-                ...prev,
-                currentPassword: event.target.value,
-              }))
-            }
+      <SettingsSection icon={LifeBuoy} title="Help & support" description="Technical support contacts and quick answers.">
+        <div className="max-w-2xl space-y-5">
+          <DetailList
+            items={[
+              { label: "Support email", value: <a className="text-primary hover:underline" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> },
+              { label: "Emergency contact", value: <a className="text-primary hover:underline" href="tel:+919025895743">+91 9025895743</a> },
+              { label: "Working hours", value: "Mon - Sat | 9:00 AM - 5:00 PM" },
+              { label: "Version", value: "LMS v2.4.1" },
+            ]}
           />
-          <Input
-            type="password"
-            placeholder="New password"
-            value={passwordForm.newPassword}
-            onChange={(event) =>
-              setPasswordForm((prev) => ({
-                ...prev,
-                newPassword: event.target.value,
-              }))
-            }
-          />
-          <Button
-            onClick={() => passwordMutation.mutate(passwordForm)}
-            disabled={
-              !passwordForm.currentPassword ||
-              !passwordForm.newPassword ||
-              Boolean(passwordError) ||
-              passwordMutation.isPending
-            }
-          >
-            {passwordMutation.isPending ? "Updating..." : "Update Password"}
-          </Button>
-          {passwordError ? (
-            <p className="sm:col-span-3 text-xs text-danger">{passwordError}</p>
-          ) : null}
-        </CardContent>
-      </Card>
-      </div>
+          <div>
+            <p className="mb-2 text-sm font-medium text-text-primary">Frequently asked questions</p>
+            <div className="divide-y divide-border rounded-lg border border-border">
+              {FAQS.map((item) => (
+                <details key={item.q} className="group px-3.5 py-3">
+                  <summary className="cursor-pointer list-none text-sm font-medium text-text-primary marker:hidden">
+                    <span className="flex items-center justify-between gap-3">
+                      {item.q}
+                      <span className="text-text-secondary transition-transform group-open:rotate-45" aria-hidden="true">+</span>
+                    </span>
+                  </summary>
+                  <p className="mt-2 text-sm text-text-secondary">{item.a}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection icon={Info} title="About platform" description="Platform credits, build details, and system information.">
+        <div className="max-w-2xl space-y-2 text-sm text-text-secondary">
+          <p>AI-powered Learning Management System for colleges and institutions.</p>
+          <p>Built with scalable architecture, role-based access, audit logging, secure examination workflows, and analytics dashboards.</p>
+          <p className="pt-2 text-text-primary">
+            <span className="font-semibold">Built by Prionex</span>
+            <span className="text-text-secondary"> · Empowering educational institutions with secure digital infrastructure.</span>
+          </p>
+        </div>
+      </SettingsSection>
     </div>
   );
 }

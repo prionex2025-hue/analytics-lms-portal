@@ -84,7 +84,7 @@ export default function ReportTestsTable({
       {query?.isLoading ? (
         <div className="p-6 text-sm text-text-secondary">Loading tests…</div>
       ) : query?.isError ? (
-        <div className="m-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load tests.</div>
+        <div className="m-4 rounded-xl border border-danger/40 bg-danger/10 p-4 text-sm text-danger">Unable to load tests.</div>
       ) : tests.length === 0 ? (
         <EmptyState title="No tests found" description="Adjust your search or filters to see test performance." />
       ) : (

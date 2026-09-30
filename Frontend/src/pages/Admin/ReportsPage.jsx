@@ -8,6 +8,9 @@ import PermissionDenied from "@/components/Admin/PermissionDenied";
 import { ADMIN_PERMISSIONS } from "@/features/Admin/adminPermissions";
 import { isCollegeAdminRole } from "@/features/Admin/adminRole";
 import { adminApi } from "@/services/api";
+import { Button } from "@/components/ui/button";
+import { ErrorState, LoadingState, PageHeader, SearchInput } from "@/components/common/page-kit";
+import { FileDown } from "lucide-react";
 import {
   AbsentStudentsCard,
   AnalyticsSkeleton,
@@ -827,7 +830,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
         subtitle={weakest ? `Weakest: ${weakest.name} (${formatPercent(weakest.averagePercentage)} average)` : "Average per module"}
         bodyClassName="p-0"
       >
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
               <tr>
@@ -865,7 +868,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
     const moduleStats = Array.isArray(analytics?.modulePerformance?.moduleStats) ? analytics.modulePerformance.moduleStats : [];
     return (
       <section className="space-y-4">
-        <article className="rounded-2xl border border-border bg-card p-4">
+        <article className="rounded-xl border border-border bg-card p-4 shadow-xs">
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
@@ -888,9 +891,9 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
         {deepDiveView === "integrity" ? <IntegrityView query={integrityQuery} /> : null}
 
         {deepDiveView !== "performance" ? null : analyticsQuery.isLoading ? (
-          <div className="rounded-2xl border border-border bg-card p-6 text-sm text-text-secondary">Loading test results…</div>
+          <LoadingState label="Loading test results…" />
         ) : analyticsQuery.isError ? (
-          <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load test results.</div>
+          <ErrorState title="Unable to load test results" onRetry={() => analyticsQuery.refetch()} />
         ) : (
           <>
             <MetricStrip items={deepDiveMetrics} />
@@ -923,7 +926,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
                     value={deepDiveSort}
                     onChange={(event) => setDeepDiveSort(event.target.value)}
                     aria-label="Sort student results"
-                    className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-text-primary"
+                    className="ui-select"
                   >
                     <option value="score">Highest score</option>
                     <option value="studentName">Name (A–Z)</option>
@@ -934,7 +937,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
                 </>
               }
             >
-              <div className="overflow-x-auto">
+              <div className="relative overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr>
@@ -1042,60 +1045,54 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
   const analyticsReady = !isTestDeepDive && ANALYTICS_MODES.has(mode) && !loading && !analyticsQuery.isError;
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-4 sm:px-6">
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">Reporting Dashboard</p>
-            <h1 className="mt-1 text-2xl font-bold text-text-primary sm:text-3xl">
-              {isCollegeScope ? "College Reports" : "Department Reports"}
-            </h1>
-            <p className="mt-1 text-sm text-text-secondary">
-              {isCollegeScope
-                ? "Department, batch, and student performance analytics with integrity tracking."
-                : "Batch and student performance analytics for your department, with integrity tracking."}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {exportState.status === "idle" ? (
-              <button
-                type="button"
-                onClick={() => setBuilderOpen(true)}
-                disabled={!canExportReports}
-                title={!canExportReports ? "Contact your administrator to request export access" : ""}
-                className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Generate Report
-              </button>
-            ) : (
-              <ExportButton
-                exportState={exportState}
-                onExport={() => setBuilderOpen(true)}
-                onDownload={handleDownload}
-                disabled={!canExportReports}
-                disabledReason={!canExportReports ? "Contact your administrator to request export access" : ""}
-              />
-            )}
-          </div>
-        </div>
-        <div className="mt-4">
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Reporting"
+        title={isCollegeScope ? "College Reports" : "Department Reports"}
+        description={
+          isCollegeScope
+            ? "Department, batch, and student performance analytics with integrity tracking."
+            : "Batch and student performance analytics for your department, with integrity tracking."
+        }
+        actions={
+          exportState.status === "idle" ? (
+            <Button
+              className="h-10 rounded-lg px-4"
+              onClick={() => setBuilderOpen(true)}
+              disabled={!canExportReports}
+              title={!canExportReports ? "Contact your administrator to request export access" : ""}
+            >
+              <FileDown className="size-4" />
+              Generate Report
+            </Button>
+          ) : (
+            <ExportButton
+              exportState={exportState}
+              onExport={() => setBuilderOpen(true)}
+              onDownload={handleDownload}
+              disabled={!canExportReports}
+              disabledReason={!canExportReports ? "Contact your administrator to request export access" : ""}
+            />
+          )
+        }
+      />
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-4 shadow-xs">
+        <div className="relative -mx-4 overflow-x-auto overflow-y-hidden px-4">
           <TabNav
             tabs={REPORT_MODES.map((item) => ({ key: item.key, label: item.label }))}
             active={mode}
             onChange={handleModeSwitch}
           />
         </div>
-      </section>
-
-      <section className="space-y-4 rounded-2xl border border-border bg-card p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-        <div className="grid gap-3 md:grid-cols-5 xl:grid-cols-6">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           {isCollegeScope ? (
             <label className="space-y-1 text-xs text-text-secondary">
               <span>Department</span>
               <select
                 value={departmentId}
                 onChange={(event) => handleDepartmentChange(event.target.value)}
-                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
+                className="ui-select w-full"
               >
                 <option value="">All Departments</option>
                 {departments.map((department) => (
@@ -1110,7 +1107,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
             <select
               value={testId}
               onChange={(event) => updateParams({ test: event.target.value })}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
+              className="ui-select w-full"
             >
               <option value="all">All Tests</option>
               {tests.map((test) => (
@@ -1124,7 +1121,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
             <select
               value={studentScope}
               onChange={(event) => handleStudentScopeChange(event.target.value)}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
+              className="ui-select w-full"
             >
               {STUDENT_SCOPE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
@@ -1139,7 +1136,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
                 <select
                   value={passoutYear}
                   onChange={(event) => handlePassoutYearChange(event.target.value)}
-                  className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
+                  className="ui-select w-full"
                 >
                   <option value="">All passout years</option>
                   {passoutYearOptions.map((year) => (
@@ -1153,7 +1150,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
                 <select
                   value={passoutCohortId}
                   onChange={(event) => handlePassoutCohortChange(event.target.value)}
-                  className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
+                  className="ui-select w-full"
                 >
                   <option value="">All cohorts</option>
                   {visiblePassoutCohorts.map((cohort) => (
@@ -1171,7 +1168,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
             <select
               value={studentYear}
               onChange={(event) => handleYearChange(event.target.value)}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
+              className="ui-select w-full"
             >
               <option value="">All years</option>
               {YEAR_OPTIONS.map((year) => (
@@ -1183,11 +1180,11 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
 
         {mode === "student" ? (
           <div className="relative max-w-xl">
-            <input
+            <SearchInput
               value={studentSearch}
               onChange={(event) => setStudentSearch(event.target.value)}
               placeholder="Search student by name, email, or roll number"
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm"
+              aria-label="Search students"
             />
             {studentSearchTerm.length >= 2 ? (
               <div className="absolute z-20 mt-2 max-h-64 w-full overflow-y-auto rounded-xl border border-border bg-card shadow-lg">
@@ -1222,7 +1219,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
                 <button type="button" onClick={() => navigate(`${basePath}/reports${view.search}`)} className="font-medium text-text-primary hover:underline">
                   {view.name}
                 </button>
-                <button type="button" onClick={() => removeView(view.id)} aria-label={`Remove saved view ${view.name}`} className="text-text-secondary hover:text-red-500">
+                <button type="button" onClick={() => removeView(view.id)} aria-label={`Remove saved view ${view.name}`} className="rounded-full px-1 text-text-secondary hover:text-danger focus-visible:outline-2 focus-visible:outline-ring">
                   ×
                 </button>
               </span>
@@ -1242,13 +1239,13 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
 
       {!isTestDeepDive && mode === "batch" ? (
         <section className="space-y-4">
-          <article className="rounded-2xl border border-border bg-card p-4">
+          <article className="rounded-xl border border-border bg-card p-4 shadow-xs">
             <label className="block max-w-sm space-y-1 text-xs text-text-secondary">
               <span>Batch</span>
               <select
                 value={batchId}
                 onChange={(event) => handleBatchChange(event.target.value)}
-                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary"
+                className="ui-select w-full"
               >
                 <option value="">{isCollegeScope ? "All batches in this college" : "All batches in your department"}</option>
                 {batches.map((batch) => (
@@ -1266,7 +1263,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
 
       {!isTestDeepDive && ANALYTICS_MODES.has(mode) && loading ? <AnalyticsSkeleton /> : null}
       {!isTestDeepDive && ANALYTICS_MODES.has(mode) && analyticsQuery.isError ? (
-        <section className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-500">Unable to load report analytics.</section>
+        <ErrorState title="Unable to load report analytics" onRetry={() => analyticsQuery.refetch()} />
       ) : null}
 
       {analyticsReady && mode === "overview" ? (
@@ -1301,7 +1298,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
 
       {analyticsReady && mode === "departments" && isCollegeScope ? (
         <SectionCard title="Departments" subtitle="Select a department to open its report" bodyClassName="p-0">
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr>
@@ -1364,7 +1361,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
           </SectionCard>
 
           <SectionCard title="Test attempts" subtitle={`${attemptRows.length} submitted`} bodyClassName="p-0">
-            <div className="overflow-x-auto">
+            <div className="relative overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr>
@@ -1416,7 +1413,7 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
           subtitle="Ranked by average score. Select a student, or search above, to see their results."
           bodyClassName="p-0"
         >
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr>

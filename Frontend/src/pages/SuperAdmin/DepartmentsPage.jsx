@@ -3,12 +3,25 @@ import { useDispatch, useSelector } from "react-redux";
 import { toast } from "sonner";
 import { fetchSuperColleges } from "@/features/SuperAdmin/superAdminPanelSlice";
 import { superAdminApi } from "@/services/api";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import TypedConfirmDialog from "@/components/SuperAdmin/TypedConfirmDialog";
 import { parseSpreadsheetRows } from "@/lib/spreadsheet";
+import { Building2, Check, FileUp, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import {
+  Callout,
+  DataTable,
+  DisclosureSection,
+  EmptyState,
+  FormField,
+  MiniStat,
+  PageHeader,
+  PaginationBar,
+  SearchInput,
+  SectionCard,
+} from "@/components/common/page-kit";
+import { ui } from "@/styles/ui-tokens";
 
 const normalizeColumnKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -210,199 +223,247 @@ export default function DepartmentsPage() {
 
   const departments = departmentsPayload?.data || [];
 
-  return (
-    <div className="space-y-6">
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Create Department</CardTitle>
-          <CardDescription>Create departments under specific colleges.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-3">
-          <Input
-            placeholder="Department Name"
-            value={form.name}
-            onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-          />
-          <select
-            className="h-10 rounded-md border border-border px-3 text-sm"
-            value={form.collegeId}
-            onChange={(event) => setForm((prev) => ({ ...prev, collegeId: event.target.value }))}
-          >
-            <option value="">Select college</option>
-            {activeColleges.map((college) => (
-              <option key={college.id} value={college.id}>{college.name}</option>
-            ))}
-          </select>
-          <Button onClick={createDepartment} disabled={saving} className="bg-primary/100 hover:bg-primary">
-            {saving ? "Saving..." : "Create Department"}
-          </Button>
-        </CardContent>
-      </Card>
+  const pagination = departmentsPayload?.pagination;
+  const currentPage = pagination?.page || page;
+  const totalPages = pagination?.pages || 1;
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Departments</CardTitle>
-          <CardDescription>Rename or delete departments for each college.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-2 sm:grid-cols-3">
+  const columns = [
+    {
+      key: "name",
+      header: "Department",
+      primary: true,
+      cell: (department) =>
+        renamingId === department.id ? (
+          <form
+            className="flex max-w-md items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveRename(department.id);
+            }}
+          >
             <Input
-              placeholder="Search by name"
-              value={filters.search}
-              onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
+              autoFocus
+              aria-label="New department name"
+              className="h-9 rounded-lg"
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setRenamingId("");
+                  setRenameValue("");
+                }
+              }}
             />
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={filters.collegeId}
-              onChange={(event) => setFilters((prev) => ({ ...prev, collegeId: event.target.value }))}
+          </form>
+        ) : (
+          <span className="font-medium text-text-primary">{department.name}</span>
+        ),
+    },
+    { key: "college", header: "College", className: "text-text-secondary", cell: (department) => department.college?.name || "-" },
+    { key: "batches", header: "Batches", align: "right", className: "tabular-nums", cell: (department) => department._count?.batches || 0 },
+    { key: "students", header: "Students", align: "right", className: "tabular-nums", cell: (department) => department._count?.students || 0 },
+    {
+      key: "actions",
+      actions: true,
+      align: "right",
+      cell: (department) =>
+        renamingId === department.id ? (
+          <div className="flex justify-end gap-1.5">
+            <Button size="lg" className="rounded-lg" onClick={() => saveRename(department.id)} disabled={saving}>
+              <Check className="size-4" />
+              Save
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="rounded-lg"
+              onClick={() => {
+                setRenamingId("");
+                setRenameValue("");
+              }}
             >
-              <option value="">All colleges</option>
-              {colleges.map((college) => (
-                <option key={college.id} value={college.id}>{college.name}</option>
-              ))}
-            </select>
-            <Button variant="outline" onClick={() => loadDepartments(1)} disabled={loading || !filters.collegeId}>
-              {loading ? "Loading..." : "Search"}
+              <X className="size-4" />
+              Cancel
             </Button>
           </div>
-
-          <div className="space-y-2">
-            {!filters.collegeId ? (
-              <p className="text-sm text-text-secondary">Select a college to view departments.</p>
-            ) : !loading && departments.length === 0 ? (
-              <p className="text-sm text-text-secondary">No departments found.</p>
-            ) : null}
-            {departments.map((department) => {
-              const isRenaming = renamingId === department.id;
-              return (
-                <div key={department.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border px-3 py-2">
-                  <div>
-                    {isRenaming ? (
-                      <Input
-                        className="h-8"
-                        value={renameValue}
-                        onChange={(event) => setRenameValue(event.target.value)}
-                      />
-                    ) : (
-                      <p className="font-medium text-text-primary">{department.name}</p>
-                    )}
-                    <p className="text-xs text-text-secondary">
-                      {department.college?.name || "-"} • Batches: {department._count?.batches || 0} • Students: {department._count?.students || 0}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {isRenaming ? (
-                      <>
-                        <Button size="sm" onClick={() => saveRename(department.id)} disabled={saving}>Save</Button>
-                        <Button size="sm" variant="outline" onClick={() => { setRenamingId(""); setRenameValue(""); }}>
-                          Cancel
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setRenamingId(department.id);
-                            setRenameValue(department.name || "");
-                          }}
-                        >
-                          Rename
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => setPendingDelete(department)}
-                          disabled={saving}
-                        >
-                          Delete
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            {(departmentsPayload?.pagination?.pages || 1) > 1 ? (
-              <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-text-secondary">
-                <p>Page {departmentsPayload?.pagination?.page || page} of {departmentsPayload?.pagination?.pages || 1}</p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={(departmentsPayload?.pagination?.page || page) <= 1 || loading}
-                    onClick={() => loadDepartments(Math.max((departmentsPayload?.pagination?.page || page) - 1, 1))}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={(departmentsPayload?.pagination?.page || page) >= (departmentsPayload?.pagination?.pages || 1) || loading}
-                    onClick={() => loadDepartments((departmentsPayload?.pagination?.page || page) + 1)}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Bulk Import Departments (Excel/CSV)</CardTitle>
-          <CardDescription>Upload an Excel/CSV file and create departments across colleges in one go.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <select
-              className="h-10 rounded-md border border-border px-3 text-sm"
-              value={importDefaultCollegeId}
-              onChange={(event) => setImportDefaultCollegeId(event.target.value)}
+        ) : (
+          <div className="flex justify-end gap-1.5">
+            <Button
+              size="lg"
+              variant="outline"
+              className="rounded-lg"
+              onClick={() => {
+                setRenamingId(department.id);
+                setRenameValue(department.name || "");
+              }}
             >
-              <option value="">Default college (optional)</option>
+              <Pencil className="size-4" />
+              Rename
+            </Button>
+            <Button
+              size="lg"
+              variant="ghost"
+              className="rounded-lg text-danger hover:bg-danger/10 hover:text-danger"
+              onClick={() => setPendingDelete(department)}
+              disabled={saving}
+            >
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
+          </div>
+        ),
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Departments" description="Create, rename, and remove departments for each college." />
+
+      <SectionCard title="Create department" description="Departments belong to exactly one college.">
+        <form
+          className="grid gap-4 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_auto] md:items-end"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createDepartment();
+          }}
+        >
+          <FormField label="Department name" htmlFor="department-create-name" required>
+            <Input
+              id="department-create-name"
+              className={ui.field}
+              value={form.name}
+              onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+            />
+          </FormField>
+          <FormField label="College" htmlFor="department-create-college" required>
+            <select
+              id="department-create-college"
+              className="ui-select w-full"
+              value={form.collegeId}
+              onChange={(event) => setForm((prev) => ({ ...prev, collegeId: event.target.value }))}
+            >
+              <option value="">Select college</option>
               {activeColleges.map((college) => (
                 <option key={college.id} value={college.id}>{college.name}</option>
               ))}
             </select>
-            <Input type="file" accept=".xlsx,.csv" onChange={handleImportFile} />
+          </FormField>
+          <Button type="submit" disabled={saving} className={ui.btn}>
+            <Plus className="size-4" />
+            {saving ? "Saving..." : "Create Department"}
+          </Button>
+        </form>
+      </SectionCard>
+
+      <SectionCard
+        flush
+        title="Departments by college"
+        description="Pick a college to list its departments."
+        footer={
+          filters.collegeId && totalPages > 1 ? (
+            <PaginationBar page={currentPage} pages={totalPages} disabled={loading} onPageChange={(next) => loadDepartments(next)} />
+          ) : null
+        }
+      >
+        <form
+          className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 sm:px-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            loadDepartments(1);
+          }}
+        >
+          <select
+            className="ui-select min-w-56 flex-1 sm:flex-none"
+            aria-label="College"
+            value={filters.collegeId}
+            onChange={(event) => setFilters((prev) => ({ ...prev, collegeId: event.target.value }))}
+          >
+            <option value="">Select a college…</option>
+            {colleges.map((college) => (
+              <option key={college.id} value={college.id}>{college.name}</option>
+            ))}
+          </select>
+          <SearchInput
+            className="min-w-0 flex-1 basis-52"
+            placeholder="Search by name"
+            value={filters.search}
+            onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
+          />
+          <Button type="submit" variant="outline" className={ui.btn} disabled={loading || !filters.collegeId}>
+            <Search className="size-4" />
+            {loading ? "Loading..." : "Search"}
+          </Button>
+        </form>
+
+        {!filters.collegeId ? (
+          <EmptyState icon={Building2} title="Select a college" description="Departments are listed per college. Choose one above to get started." className="border-0" />
+        ) : (
+          <DataTable
+            columns={columns}
+            rows={departments}
+            getRowKey={(department) => department.id}
+            loading={loading}
+            minWidth={760}
+            caption="Departments"
+            empty={<EmptyState icon={Building2} title="No departments found" description="Create one using the form above, or adjust your search." className="border-0" />}
+          />
+        )}
+      </SectionCard>
+
+      <DisclosureSection
+        icon={FileUp}
+        title="Bulk import departments"
+        description="Upload an Excel/CSV file and create departments across colleges in one go."
+      >
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Default college" htmlFor="department-import-college" hint="Only name is mandatory if a default college is selected.">
+              <select
+                id="department-import-college"
+                className="ui-select w-full"
+                value={importDefaultCollegeId}
+                onChange={(event) => setImportDefaultCollegeId(event.target.value)}
+              >
+                <option value="">Default college (optional)</option>
+                {activeColleges.map((college) => (
+                  <option key={college.id} value={college.id}>{college.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Spreadsheet file" htmlFor="department-import-file" hint={importFileName ? `Loaded: ${importFileName}` : ".xlsx or .csv"}>
+              <Input id="department-import-file" type="file" accept=".xlsx,.csv" className="h-10 rounded-lg" onChange={handleImportFile} />
+            </FormField>
           </div>
 
-          {importFileName ? <p className="text-xs text-text-secondary">Loaded: {importFileName}</p> : null}
+          <FormField label="CSV data" htmlFor="department-import-csv" hint="Accepted columns: name, collegeId, collegeCode, collegeName">
+            <Textarea id="department-import-csv" rows={8} className="rounded-lg font-mono text-xs" value={importCsv} onChange={(event) => setImportCsv(event.target.value)} />
+          </FormField>
 
-          <div className="rounded-lg border border-border bg-background p-3 text-xs text-text-secondary">
-            <p className="font-semibold text-text-secondary">Accepted columns:</p>
-            <p className="mt-1">name, collegeId, collegeCode, collegeName</p>
-            <p className="mt-1">Only name is mandatory if default college is selected.</p>
-          </div>
-
-          <Textarea rows={8} value={importCsv} onChange={(event) => setImportCsv(event.target.value)} />
-
-          <Button onClick={startBulkImport} disabled={importing}>
+          <Button className={ui.btn} onClick={startBulkImport} disabled={importing}>
+            <FileUp className="size-4" />
             {importing ? "Importing..." : "Start Department Import"}
           </Button>
 
           {importResult ? (
-            <div className="rounded-lg border border-border p-3 text-sm">
-              <p className="font-medium text-text-primary">
-                Created: {importResult.created || 0} • Failed: {importResult.failed || 0} • Duplicates: {importResult.duplicates || 0}
-              </p>
+            <div className="space-y-3" role="status">
+              <div className="grid grid-cols-3 gap-2">
+                <MiniStat label="Created" value={importResult.created || 0} tone="success" />
+                <MiniStat label="Failed" value={importResult.failed || 0} tone={importResult.failed ? "danger" : undefined} />
+                <MiniStat label="Duplicates" value={importResult.duplicates || 0} />
+              </div>
               {Array.isArray(importResult.errors) && importResult.errors.length > 0 ? (
-                <div className="mt-2 max-h-40 overflow-auto rounded-md border border-border bg-background p-2 text-xs text-text-secondary">
-                  {importResult.errors.slice(0, 15).map((item, index) => (
-                    <p key={`${item.row || "row"}-${index}`}>Row {item.row || "?"}: {item.reason || "Invalid data"}</p>
-                  ))}
-                </div>
+                <Callout tone="warning" title="Rows with errors">
+                  <ul className="mt-1 max-h-40 space-y-0.5 overflow-auto text-xs">
+                    {importResult.errors.slice(0, 15).map((item, index) => (
+                      <li key={`${item.row || "row"}-${index}`}>Row {item.row || "?"}: {item.reason || "Invalid data"}</li>
+                    ))}
+                  </ul>
+                </Callout>
               ) : null}
             </div>
           ) : null}
-        </CardContent>
-      </Card>
+        </div>
+      </DisclosureSection>
 
       <TypedConfirmDialog
         open={Boolean(pendingDelete)}

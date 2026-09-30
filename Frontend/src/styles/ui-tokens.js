@@ -15,4 +15,7 @@ export const ui = {
   btn: "h-10 rounded-lg px-4",
   btnIcon: "size-10 rounded-lg",
   field: "h-10 rounded-lg bg-card",
+  select: "[&_select]:h-10 [&_select]:bg-card [&_select]:pl-3",
+  // Raw <select> styling (see .ui-select in index.css).
+  nativeSelect: "ui-select",
 };

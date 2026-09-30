@@ -83,7 +83,9 @@ const login = asyncHandler(async (req, res) => {
     }
   } else {
     // Search by the entered enrollment number, with studentId fallback for older records.
-    user = await Student.findOne({ $or: [{ studentId: identifier }, { enrollNumber: identifier }, { enrollmentNumber: identifier }] }).lean();
+    // Use the ORM `OR` contract: raw `$`-operators are stripped by toMongoFilter, which would
+    // silently widen this lookup to "first student in the collection".
+    user = await Student.findOne({ OR: [{ studentId: identifier }, { enrollNumber: identifier }, { enrollmentNumber: identifier }] }).lean();
   }
 
   if (!user) {

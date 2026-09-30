@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { toast } from "sonner";
 import { fetchDepartments } from "@/features/Admin/adminPanelSlice";
 import { adminApi } from "@/services/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import TypedConfirmDialog from "@/components/SuperAdmin/TypedConfirmDialog";
+import { Building2, Check, Pencil, Plus, Power, Trash2, X } from "lucide-react";
+import { DataTable, EmptyState, FormField, PageHeader, SearchInput, SectionCard, StatusBadge } from "@/components/common/page-kit";
 
 export default function DepartmentsManagementPage() {
   const dispatch = useDispatch();
@@ -16,13 +17,15 @@ export default function DepartmentsManagementPage() {
   const [editingName, setEditingName] = useState("");
   const [pendingDelete, setPendingDelete] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
+  const [search, setSearch] = useState("");
 
   const reloadDepartments = useCallback(async () => {
     await dispatch(fetchDepartments());
   }, [dispatch]);
 
   useEffect(() => {
-    reloadDepartments();
+    Promise.resolve(reloadDepartments()).finally(() => setListLoading(false));
   }, [reloadDepartments]);
 
   const createDepartment = async () => {
@@ -71,73 +74,144 @@ export default function DepartmentsManagementPage() {
     }
   };
 
+  const filteredDepartments = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return query ? departments.filter((department) => String(department.name || "").toLowerCase().includes(query)) : departments;
+  }, [departments, search]);
+  const activeCount = departments.filter((department) => department.isActive !== false).length;
+  const cancelEdit = () => {
+    setEditingId("");
+    setEditingName("");
+  };
+
+  const columns = [
+    {
+      key: "name",
+      header: "Department",
+      primary: true,
+      cell: (department) =>
+        editingId === department.id ? (
+          <form
+            className="max-w-sm"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveDepartment(department.id);
+            }}
+          >
+            <Input
+              autoFocus
+              aria-label="Department name"
+              className="h-9 rounded-lg"
+              value={editingName}
+              onChange={(event) => setEditingName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") cancelEdit();
+              }}
+            />
+          </form>
+        ) : (
+          <span className="font-medium text-text-primary">{department.name}</span>
+        ),
+    },
+    { key: "students", header: "Students", align: "right", className: "tabular-nums", cell: (department) => department?._count?.students || 0 },
+    { key: "batches", header: "Batches", align: "right", className: "tabular-nums", cell: (department) => department?._count?.batches || 0 },
+    { key: "tests", header: "Tests", align: "right", className: "tabular-nums", cell: (department) => department?._count?.tests || 0 },
+    { key: "admins", header: "Admins", align: "right", className: "tabular-nums", cell: (department) => department?._count?.admins || 0 },
+    {
+      key: "status",
+      header: "Status",
+      cell: (department) => (
+        <StatusBadge tone={department.isActive !== false ? "success" : "danger"}>{department.isActive !== false ? "Active" : "Inactive"}</StatusBadge>
+      ),
+    },
+    {
+      key: "actions",
+      actions: true,
+      align: "right",
+      cell: (department) =>
+        editingId === department.id ? (
+          <div className="flex justify-end gap-1.5">
+            <Button size="lg" className="rounded-lg" onClick={() => saveDepartment(department.id)}>
+              <Check className="size-4" />
+              Save
+            </Button>
+            <Button size="lg" variant="outline" className="rounded-lg" onClick={cancelEdit}>
+              <X className="size-4" />
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap justify-end gap-1.5">
+            <Button
+              size="lg"
+              variant="outline"
+              className="rounded-lg"
+              onClick={() => {
+                setEditingId(department.id);
+                setEditingName(department.name);
+              }}
+            >
+              <Pencil className="size-4" />
+              Edit
+            </Button>
+            <Button size="lg" variant="ghost" className="rounded-lg" onClick={() => toggleDepartment(department)}>
+              <Power className="size-4" />
+              {department.isActive !== false ? "Deactivate" : "Activate"}
+            </Button>
+            <Button size="lg" variant="ghost" className="rounded-lg text-danger hover:bg-danger/10 hover:text-danger" onClick={() => setPendingDelete(department)}>
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
+          </div>
+        ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <Card className="rounded-2xl border-border">
-        <CardHeader><CardTitle>Create Department</CardTitle></CardHeader>
-        <CardContent className="flex flex-wrap gap-3">
-          <Input
-            className="max-w-md"
-            placeholder="Department name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-          <Button onClick={createDepartment} disabled={loading}>
+      <PageHeader title="Departments" description={`${departments.length} departments · ${activeCount} active`} />
+
+      <SectionCard title="Create department">
+        <form
+          className="flex flex-col gap-3 sm:flex-row sm:items-end"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createDepartment();
+          }}
+        >
+          <FormField label="Department name" htmlFor="new-department-name" className="flex-1 sm:max-w-md" required>
+            <Input id="new-department-name" className="h-10 rounded-lg" value={name} onChange={(event) => setName(event.target.value)} />
+          </FormField>
+          <Button type="submit" className="h-10 rounded-lg px-4" disabled={loading}>
+            <Plus className="size-4" />
             {loading ? "Creating..." : "Create"}
           </Button>
-        </CardContent>
-      </Card>
+        </form>
+      </SectionCard>
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader><CardTitle>Departments</CardTitle></CardHeader>
-        <CardContent className="space-y-2">
-          {departments.length === 0 ? <p className="text-sm text-text-secondary">No departments found.</p> : null}
-          {departments.map((department) => (
-            <div key={department.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border px-3 py-2">
-              <div className="flex-1">
-                {editingId === department.id ? (
-                  <Input
-                    value={editingName}
-                    onChange={(event) => setEditingName(event.target.value)}
-                    className="max-w-sm"
-                  />
-                ) : (
-                  <p className="font-medium text-text-primary">{department.name}</p>
-                )}
-                <p className="text-xs text-text-secondary">
-                  Students: {department?._count?.students || 0} | Batches: {department?._count?.batches || 0} | Tests: {department?._count?.tests || 0} | Admins: {department?._count?.admins || 0}
-                </p>
-                <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${department.isActive !== false ? "bg-green-500/10 text-green-700" : "bg-red-500/10 text-red-700"}`}>
-                  {department.isActive !== false ? "Active" : "Inactive"}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {editingId === department.id ? (
-                  <>
-                    <Button size="sm" onClick={() => saveDepartment(department.id)}>Save</Button>
-                    <Button size="sm" variant="outline" onClick={() => { setEditingId(""); setEditingName(""); }}>Cancel</Button>
-                  </>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setEditingId(department.id);
-                      setEditingName(department.name);
-                    }}
-                  >
-                    Edit
-                  </Button>
-                )}
-                <Button size="sm" variant="outline" onClick={() => toggleDepartment(department)}>
-                  {department.isActive !== false ? "Deactivate" : "Activate"}
-                </Button>
-                <Button size="sm" variant="destructive" onClick={() => setPendingDelete(department)}>Delete</Button>
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+      <SectionCard
+        flush
+        title="All departments"
+        actions={<SearchInput className="w-full sm:w-64" placeholder="Search departments" value={search} onChange={(event) => setSearch(event.target.value)} />}
+      >
+        <DataTable
+          columns={columns}
+          rows={filteredDepartments}
+          getRowKey={(department) => department.id}
+          loading={listLoading && departments.length === 0}
+          minWidth={860}
+          caption="Departments"
+          rowClassName={(department) => (department.isActive === false ? "bg-muted/30" : "")}
+          empty={
+            <EmptyState
+              icon={Building2}
+              title={search ? "No departments match your search" : "No departments found"}
+              description={search ? "Try a different name." : "Create your first department above."}
+              className="border-0"
+            />
+          }
+        />
+      </SectionCard>
 
       <TypedConfirmDialog
         open={Boolean(pendingDelete)}

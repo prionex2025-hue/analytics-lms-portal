@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Award,
-  CalendarDays,
+  CheckCircle2,
   Clock3,
   Download,
   Eye,
@@ -11,17 +11,12 @@ import {
   ListChecks,
   RotateCcw,
   Search,
-  Sparkles,
-  Target,
-  TrendingUp,
+  Trophy,
+  XCircle,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import {
@@ -32,10 +27,12 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { studentApi } from "@/services/studentApi";
 import { reportsQueryOptions } from "@/services/studentQueries";
+import { ReportsSkeleton } from "@/components/common/page-skeletons";
+import { EmptyState, ErrorState, PageHeader, Panel, SectionHeader, StatTile, StatusBadge } from "@/components/Students/ui/StudentUI";
+import { cn } from "@/lib/utils";
 import { ui } from "@/styles/ui-tokens";
 
 const ReportsLineChart = lazy(() =>
@@ -98,11 +95,18 @@ const normalizeStatus = (value, fallback = "Submitted") => {
   return text || fallback;
 };
 
-const getStatusVariant = (status) => {
+const getStatusTone = (status) => {
   const normalized = String(status || "").toUpperCase();
-  if (["SUBMITTED", "COMPLETED", "COMPLETE", "AUTO SUBMITTED", "AUTO_SUBMITTED"].includes(normalized)) return "active";
-  if (["FAILED", "FAIL", "ENDED", "EXPIRED"].includes(normalized)) return "destructive";
-  return "secondary";
+  if (["SUBMITTED", "COMPLETED", "COMPLETE", "AUTO SUBMITTED", "AUTO_SUBMITTED"].includes(normalized)) return "neutral";
+  if (["FAILED", "FAIL", "ENDED", "EXPIRED"].includes(normalized)) return "danger";
+  return "neutral";
+};
+
+const scoreBarClass = (value) => {
+  if (value >= 80) return "bg-success";
+  if (value >= 60) return "bg-primary";
+  if (value >= PASS_PERCENT) return "bg-warning";
+  return "bg-danger";
 };
 
 const getScoreFromRow = (row) => clampPercent(row?.scorePercent ?? row?.score_percent ?? row?.accuracy ?? row?.score ?? 0);
@@ -160,36 +164,23 @@ const getPageNumbers = (page, totalPages) => {
   return [...new Set(pages)];
 };
 
-function MetricCard({ icon: Icon, label, value, sub, tone = "primary" }) {
-  const toneClass = {
-    primary: "bg-primary/10 text-primary",
-    success: "bg-success/15 text-success",
-    warning: "bg-warning/15 text-warning",
-    danger: "bg-danger/15 text-danger",
-  }[tone];
-
-  return (
-    <Card className="rounded-2xl border-border bg-card p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold tracking-[0.12em] text-text-secondary uppercase">{label}</p>
-          <p className="mt-2 text-2xl font-bold tracking-tight text-text-primary">{value}</p>
-          {sub ? <p className="mt-1 text-xs text-text-secondary">{sub}</p> : null}
-        </div>
-        <div className={`grid size-10 shrink-0 place-items-center rounded-xl ${toneClass}`}>
-          <Icon className="size-4" />
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 function ResultBadge({ result }) {
   const isPass = result === "PASS";
   return (
-    <Badge variant={isPass ? "active" : "destructive"} className="font-semibold">
-      {result}
-    </Badge>
+    <StatusBadge tone={isPass ? "success" : "danger"} icon={isPass ? CheckCircle2 : XCircle}>
+      {isPass ? "Pass" : "Fail"}
+    </StatusBadge>
+  );
+}
+
+function ScoreCell({ value }) {
+  return (
+    <div className="flex items-center justify-end gap-2.5">
+      <div className="hidden h-1.5 w-16 overflow-hidden rounded-full bg-muted xl:block" aria-hidden="true">
+        <div className={cn("h-full rounded-full", scoreBarClass(value))} style={{ width: `${clampPercent(value)}%` }} />
+      </div>
+      <span className="w-14 text-right font-semibold tabular-nums text-text-primary">{formatPercent(value)}</span>
+    </div>
   );
 }
 
@@ -324,156 +315,175 @@ export default function ReportsPage() {
     exportMutation.mutate({ view: "by_test", test_id: row.testId });
   };
 
+  const hasActiveFilters =
+    Boolean(searchTerm) || categoryFilter !== ALL_CATEGORIES_VALUE || resultFilter !== ALL_RESULTS_VALUE || Boolean(dateFrom) || Boolean(dateTo);
+
+  const header = (
+    <PageHeader
+      title="Reports"
+      description="Track every submitted test, follow your score trend, and open detailed results."
+      actions={
+        <Button
+          className={ui.btn}
+          onClick={() => exportMutation.mutate({ view: "overall" })}
+          disabled={exportMutation.isPending || reportRows.length === 0 || reportsQuery.isLoading}
+        >
+          <Download className="size-4" />
+          {exportMutation.isPending ? "Generating..." : "Export All PDF"}
+        </Button>
+      }
+    />
+  );
+
+  if (reportsQuery.isLoading) {
+    return (
+      <section className={ui.pageSection}>
+        {header}
+        <ReportsSkeleton />
+      </section>
+    );
+  }
+
   return (
     <section className={ui.pageSection}>
-      <Card className="overflow-hidden rounded-3xl border border-primary/20 bg-linear-to-br from-primary-dark via-primary to-primary-dark text-primary-foreground shadow-[0_22px_50px_-24px_rgba(11,84,158,0.75)]">
-        <div className="grid gap-6 p-5 md:p-7 lg:grid-cols-[1.4fr_0.9fr] lg:items-end">
-          <div>
-            <div className="flex items-center gap-2 text-primary-foreground/90">
-              <Sparkles className="size-4" />
-              <p className="text-xs font-semibold tracking-[0.16em] uppercase">Reports Dashboard</p>
-            </div>
-            <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">Your performance command center</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-primary-foreground/85">
-              Track every submitted test, understand your score trend, and jump straight into detailed reports without selecting a test first.
-            </p>
-          </div>
-          <div className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-            <p className="text-xs font-semibold tracking-[0.12em] text-primary-foreground/75 uppercase">Best performance</p>
-            <div className="mt-3 flex items-end justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-lg font-semibold">{bestAttempt?.testName || "No tests yet"}</p>
-                <p className="mt-1 text-sm text-primary-foreground/75">{bestAttempt ? formatDate(bestAttempt.submittedAt) : "Complete a test to unlock insights"}</p>
-              </div>
-              <p className="text-3xl font-bold">{bestAttempt ? formatPercent(bestAttempt.scorePercent) : "--"}</p>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {reportsQuery.isLoading ? (
-        <div className="grid min-h-[40vh] place-items-center rounded-2xl border border-border bg-card text-text-secondary">Loading reports...</div>
-      ) : null}
+      {header}
 
       {reportsQuery.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Unable to load report</AlertTitle>
-          <AlertDescription>{reportsQuery.error?.message || "Please refresh and try again."}</AlertDescription>
-        </Alert>
+        <ErrorState
+          title="Unable to load report"
+          description={reportsQuery.error?.message || "Please refresh and try again."}
+          onRetry={() => reportsQuery.refetch()}
+        />
       ) : null}
 
-      {!reportsQuery.isLoading && !reportsQuery.isError ? (
+      {!reportsQuery.isError ? (
         <>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard icon={ListChecks} label="Tests Attempted" value={totalTests} sub="Submitted reports" />
-            <MetricCard icon={Gauge} label="Average Score" value={formatPercent(averageScore)} sub="Across completed tests" tone="success" />
-            <MetricCard icon={Award} label="Pass Rate" value={formatPercent(passRate)} sub={`${passCount}/${totalTests || 0} tests passed`} tone={passRate >= 70 ? "success" : "warning"} />
-            <MetricCard icon={Clock3} label="Total Test Time" value={formatDuration(totalTimeSeconds)} sub="Recorded attempt time" tone="primary" />
+            <StatTile icon={ListChecks} label="Tests Attempted" value={totalTests} hint="Submitted reports" />
+            <StatTile icon={Gauge} label="Average Score" value={formatPercent(averageScore)} hint="Across completed tests" tone="primary" />
+            <StatTile
+              icon={Award}
+              label="Pass Rate"
+              value={formatPercent(passRate)}
+              hint={`${passCount}/${totalTests || 0} tests passed`}
+              tone={passRate >= 70 ? "success" : "warning"}
+            />
+            <StatTile icon={Clock3} label="Total Test Time" value={formatDuration(totalTimeSeconds)} hint="Recorded attempt time" tone="neutral" />
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[1.35fr_0.85fr]">
-            <Suspense fallback={<div className="rounded-xl border border-border bg-card p-5 text-text-secondary">Loading chart...</div>}>
+          <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+            <Suspense fallback={<div className="h-80 animate-pulse rounded-xl bg-muted motion-reduce:animate-none" />}>
               <ReportsLineChart data={lineData} />
             </Suspense>
 
-            <Card className="rounded-2xl border-border bg-card p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-semibold text-text-primary">Score Distribution</h3>
-                  <p className="text-sm text-text-secondary">How your reports are spread across score bands.</p>
-                </div>
-                <Target className="size-5 text-primary" />
-              </div>
+            <Panel className="flex flex-col">
+              <SectionHeader as="h3" title="Score distribution" description="How your results spread across score bands." />
               <div className="mt-5 space-y-4">
                 {scoreBands.map((band) => (
                   <div key={band.label}>
-                    <div className="mb-1 flex items-center justify-between text-xs text-text-secondary">
-                      <span>{band.label}%</span>
-                      <span>{band.count} tests</span>
+                    <div className="mb-1.5 flex items-center justify-between text-sm">
+                      <span className="text-text-secondary">{band.label}%</span>
+                      <span className="font-medium tabular-nums text-text-primary">
+                        {band.count} {band.count === 1 ? "test" : "tests"}
+                      </span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-muted">
-                      <div className={`h-full rounded-full ${band.tone}`} style={{ width: `${Math.max(4, (band.count / maxBandCount) * 100)}%` }} />
+                      <div
+                        className={cn("h-full rounded-full", band.tone)}
+                        style={{ width: band.count ? `${Math.max(4, (band.count / maxBandCount) * 100)}%` : "0%" }}
+                      />
                     </div>
                   </div>
                 ))}
               </div>
-            </Card>
+              <div className="mt-auto pt-5">
+                <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-warning/15 text-amber-600 dark:text-warning">
+                    <Trophy className="size-4" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-text-secondary">Best performance</p>
+                    <p className="truncate text-sm font-medium text-text-primary">{bestAttempt?.testName || "No tests yet"}</p>
+                  </div>
+                  <p className="text-lg font-semibold tabular-nums text-text-primary">{bestAttempt ? formatPercent(bestAttempt.scorePercent) : "--"}</p>
+                </div>
+              </div>
+            </Panel>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-            <Suspense fallback={<div className="rounded-xl border border-border bg-card p-5 text-text-secondary">Loading chart...</div>}>
+          <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+            <Suspense fallback={<div className="h-80 animate-pulse rounded-xl bg-muted motion-reduce:animate-none" />}>
               {showBarFallback ? <ReportsBarChart data={topicData} /> : <ReportsRadarChart data={topicData} />}
             </Suspense>
 
-            <Card className="rounded-2xl border-border bg-card p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-semibold text-text-primary">Recent Momentum</h3>
-                  <p className="text-sm text-text-secondary">Your latest submitted reports at a glance.</p>
-                </div>
-                <TrendingUp className="size-5 text-primary" />
-              </div>
-              <div className="mt-5 space-y-3">
-                {reportRows.slice(0, 4).map((row) => (
-                  <div key={row.serialKey} className="rounded-xl border border-border bg-background p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-text-primary">{row.testName}</p>
-                        <p className="mt-1 text-xs text-text-secondary">{formatDate(row.submittedAt)}</p>
-                      </div>
-                      <ResultBadge result={row.result} />
-                    </div>
-                    <div className="mt-3 flex items-center gap-3">
-                      <Progress value={row.scorePercent} className="h-2 bg-muted **:data-[slot=progress-indicator]:bg-primary-dark" />
-                      <span className="w-12 text-right text-xs font-semibold text-text-primary">{formatPercent(row.scorePercent)}</span>
-                    </div>
-                  </div>
-                ))}
-                {reportRows.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-border p-5 text-sm text-text-secondary">No submitted reports yet.</p>
-                ) : null}
-              </div>
-            </Card>
+            <Panel>
+              <SectionHeader as="h3" title="Recent results" description="Your latest submissions at a glance." />
+              {reportRows.length === 0 ? (
+                <p className="mt-5 rounded-lg border border-dashed border-border p-5 text-center text-sm text-text-secondary">No submitted reports yet.</p>
+              ) : (
+                <ul className="mt-4 divide-y divide-border">
+                  {reportRows.slice(0, 5).map((row) => (
+                    <li key={row.serialKey}>
+                      <button
+                        type="button"
+                        onClick={() => openReport(row)}
+                        disabled={!row.attemptId}
+                        className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default disabled:hover:bg-transparent"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-text-primary">{row.testName}</p>
+                          <p className="mt-0.5 text-xs text-text-secondary">{formatDate(row.submittedAt)} · {row.category}</p>
+                        </div>
+                        <span className="text-sm font-semibold tabular-nums text-text-primary">{formatPercent(row.scorePercent)}</span>
+                        <ResultBadge result={row.result} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
           </div>
 
-          <Card className="overflow-hidden rounded-2xl border-border bg-card shadow-sm">
-            <div className="border-b border-border bg-background/60 p-4 md:p-5">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold tracking-tight text-text-primary">All Test Reports</h2>
-                  <p className="mt-1 text-sm text-text-secondary">Every submitted assessment is listed below with pagination and quick actions.</p>
-                </div>
-                <Button onClick={() => exportMutation.mutate({ view: "overall" })} disabled={exportMutation.isPending || reportRows.length === 0}>
-                  <Download className="mr-2 size-4" />
-                  {exportMutation.isPending ? "Generating..." : "Export All PDF"}
-                </Button>
-              </div>
+          <div className={cn(ui.card, "overflow-hidden")}>
+            <div className="border-b border-border p-4 sm:p-5">
+              <SectionHeader
+                title="All test reports"
+                description="Search, filter, and open any submitted assessment."
+                count={filteredRows.length}
+              />
 
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[1.25fr_0.8fr_0.7fr_0.65fr_0.65fr_auto]">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-text-secondary" />
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.6fr)_repeat(4,minmax(0,1fr))_auto]">
+                <div className="relative sm:col-span-2 lg:col-span-1">
+                  <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-text-secondary" aria-hidden="true" />
                   <Input
                     value={searchTerm}
                     onChange={(event) => setSearchTerm(event.target.value)}
-                    placeholder="Search assessment name or code"
-                    className="pl-9"
+                    placeholder="Search by name or code"
+                    aria-label="Search reports"
+                    className={cn(ui.field, "pl-9")}
                   />
                 </div>
-                <NativeSelect value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="w-full">
+                <NativeSelect value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className={cn("w-full", ui.select)} aria-label="Category">
                   <option value={ALL_CATEGORIES_VALUE}>All categories</option>
                   {categories.map((category) => (
                     <option key={category} value={category}>{category}</option>
                   ))}
                 </NativeSelect>
-                <NativeSelect value={resultFilter} onChange={(event) => setResultFilter(event.target.value)} className="w-full">
+                <NativeSelect value={resultFilter} onChange={(event) => setResultFilter(event.target.value)} className={cn("w-full", ui.select)} aria-label="Result">
                   <option value={ALL_RESULTS_VALUE}>All results</option>
                   <option value="PASS">Pass</option>
                   <option value="FAIL">Fail</option>
                 </NativeSelect>
-                <Input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} aria-label="Date from" />
-                <Input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} aria-label="Date to" />
-                <Button type="button" variant="outline" onClick={clearFilters}>
-                  <RotateCcw className="mr-2 size-4" />
+                <div className="relative">
+                  <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-xs font-medium text-text-secondary" aria-hidden="true">From</span>
+                  <Input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} aria-label="Submitted from" className={cn(ui.field, "pl-12")} />
+                </div>
+                <div className="relative">
+                  <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-xs font-medium text-text-secondary" aria-hidden="true">To</span>
+                  <Input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} aria-label="Submitted to" className={cn(ui.field, "pl-10")} />
+                </div>
+                <Button type="button" variant="ghost" className={cn(ui.btn, "justify-self-start text-text-secondary lg:justify-self-auto")} onClick={clearFilters} disabled={!hasActiveFilters}>
+                  <RotateCcw className="size-4" />
                   Reset
                 </Button>
               </div>
@@ -484,51 +494,44 @@ export default function ReportsPage() {
                 <div className="hidden overflow-x-auto lg:block">
                   <Table>
                     <TableHeader>
-                      <TableRow className="bg-primary/10 hover:bg-primary/10">
-                        <TableHead className="w-16 text-center font-semibold text-text-primary">S.No</TableHead>
-                        <TableHead className="min-w-72 font-semibold text-text-primary">Assessment Name</TableHead>
-                        <TableHead className="min-w-40 font-semibold text-text-primary">Assessment Code</TableHead>
-                        <TableHead className="min-w-36 font-semibold text-text-primary">Category</TableHead>
-                        <TableHead className="min-w-36 font-semibold text-text-primary">Submitted Date</TableHead>
-                        <TableHead className="text-right font-semibold text-text-primary">Score</TableHead>
-                        <TableHead className="text-right font-semibold text-text-primary">Marks</TableHead>
-                        <TableHead className="text-right font-semibold text-text-primary">Time Taken</TableHead>
-                        <TableHead className="text-center font-semibold text-text-primary">Result</TableHead>
-                        <TableHead className="text-center font-semibold text-text-primary">Status</TableHead>
-                        <TableHead className="text-center font-semibold text-text-primary">Actions</TableHead>
+                      <TableRow className="bg-muted/50 hover:bg-muted/50">
+                        <TableHead className="w-12 pl-5 text-xs font-medium uppercase tracking-wide">#</TableHead>
+                        <TableHead className="min-w-64 text-xs font-medium uppercase tracking-wide">Assessment</TableHead>
+                        <TableHead className="text-xs font-medium uppercase tracking-wide">Code</TableHead>
+                        <TableHead className="text-xs font-medium uppercase tracking-wide">Submitted</TableHead>
+                        <TableHead className="text-right text-xs font-medium uppercase tracking-wide">Score</TableHead>
+                        <TableHead className="text-right text-xs font-medium uppercase tracking-wide">Marks</TableHead>
+                        <TableHead className="text-right text-xs font-medium uppercase tracking-wide">Time</TableHead>
+                        <TableHead className="text-xs font-medium uppercase tracking-wide">Result</TableHead>
+                        <TableHead className="text-xs font-medium uppercase tracking-wide">Status</TableHead>
+                        <TableHead className="pr-5 text-right text-xs font-medium uppercase tracking-wide">
+                          <span className="sr-only">Actions</span>
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {paginatedRows.map((row, index) => (
-                        <TableRow key={row.serialKey} className="odd:bg-background/60">
-                          <TableCell className="text-center text-text-secondary">{pageStart + index}</TableCell>
+                        <TableRow key={row.serialKey} className="h-14">
+                          <TableCell className="pl-5 tabular-nums text-text-secondary">{pageStart + index}</TableCell>
                           <TableCell>
-                            <div className="min-w-0">
-                              <p className="font-medium text-text-primary">{row.testName}</p>
-                              <p className="text-xs text-text-secondary">{row.category}</p>
-                            </div>
+                            <p className="font-medium text-text-primary">{row.testName}</p>
+                            <p className="text-xs text-text-secondary">{row.category}</p>
                           </TableCell>
                           <TableCell className="font-mono text-xs text-text-secondary">{row.testCode}</TableCell>
-                          <TableCell>{row.category}</TableCell>
+                          <TableCell className="text-text-secondary">{formatDate(row.submittedAt)}</TableCell>
+                          <TableCell><ScoreCell value={row.scorePercent} /></TableCell>
+                          <TableCell className="text-right tabular-nums text-text-secondary">{formatMarksPair(row.obtainedMarks, row.totalMarks)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-text-secondary">{formatDuration(row.timeSpentSeconds)}</TableCell>
+                          <TableCell><ResultBadge result={row.result} /></TableCell>
                           <TableCell>
-                            <div className="flex items-center gap-2 text-sm text-text-secondary">
-                              <CalendarDays className="size-3.5" />
-                              {formatDate(row.submittedAt)}
-                            </div>
+                            <StatusBadge tone={getStatusTone(row.status)} className="capitalize">{row.status.toLowerCase()}</StatusBadge>
                           </TableCell>
-                          <TableCell className="text-right font-semibold text-text-primary">{formatPercent(row.scorePercent)}</TableCell>
-                          <TableCell className="text-right text-text-secondary">{formatMarksPair(row.obtainedMarks, row.totalMarks)}</TableCell>
-                          <TableCell className="text-right text-text-secondary">{formatDuration(row.timeSpentSeconds)}</TableCell>
-                          <TableCell className="text-center"><ResultBadge result={row.result} /></TableCell>
-                          <TableCell className="text-center">
-                            <Badge variant={getStatusVariant(row.status)}>{row.status}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex justify-center gap-2">
-                              <Button type="button" variant="outline" size="icon" title="View detailed report" onClick={() => openReport(row)} disabled={!row.attemptId}>
+                          <TableCell className="pr-5">
+                            <div className="flex justify-end gap-1">
+                              <Button type="button" variant="ghost" size="icon-lg" title="View detailed report" aria-label={`View report for ${row.testName}`} onClick={() => openReport(row)} disabled={!row.attemptId}>
                                 <Eye className="size-4" />
                               </Button>
-                              <Button type="button" variant="outline" size="icon" title="Download this test report" onClick={() => exportSingleTest(row)} disabled={exportMutation.isPending || !row.testId}>
+                              <Button type="button" variant="ghost" size="icon-lg" title="Download this test report" aria-label={`Download PDF for ${row.testName}`} onClick={() => exportSingleTest(row)} disabled={exportMutation.isPending || !row.testId}>
                                 <Download className="size-4" />
                               </Button>
                             </div>
@@ -539,40 +542,40 @@ export default function ReportsPage() {
                   </Table>
                 </div>
 
-                <div className="space-y-3 p-4 lg:hidden">
+                <ul className="divide-y divide-border lg:hidden">
                   {paginatedRows.map((row, index) => (
-                    <Card key={row.serialKey} className="rounded-xl border-border bg-background p-4 shadow-none">
+                    <li key={row.serialKey} className="p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-xs font-semibold text-text-secondary">#{pageStart + index} · {row.testCode}</p>
-                          <h3 className="mt-1 line-clamp-2 font-semibold text-text-primary">{row.testName}</h3>
-                          <p className="mt-1 text-xs text-text-secondary">{row.category} · {formatDate(row.submittedAt)}</p>
+                          <p className="text-xs text-text-secondary">#{pageStart + index} · <span className="font-mono">{row.testCode}</span></p>
+                          <h3 className="mt-0.5 line-clamp-2 font-semibold text-text-primary">{row.testName}</h3>
+                          <p className="mt-0.5 text-xs text-text-secondary">{row.category} · {formatDate(row.submittedAt)}</p>
                         </div>
                         <ResultBadge result={row.result} />
                       </div>
-                      <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-                        <div className="rounded-lg bg-card p-2"><p className="text-text-secondary">Score</p><p className="font-semibold text-text-primary">{formatPercent(row.scorePercent)}</p></div>
-                        <div className="rounded-lg bg-card p-2"><p className="text-text-secondary">Marks</p><p className="font-semibold text-text-primary">{formatMarksPair(row.obtainedMarks, row.totalMarks)}</p></div>
-                        <div className="rounded-lg bg-card p-2"><p className="text-text-secondary">Time</p><p className="font-semibold text-text-primary">{formatDuration(row.timeSpentSeconds)}</p></div>
-                      </div>
-                      <div className="mt-4 flex gap-2">
-                        <Button className="flex-1" variant="outline" onClick={() => openReport(row)} disabled={!row.attemptId}>
-                          <Eye className="mr-2 size-4" />
+                      <dl className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                        <div className="rounded-lg bg-muted/60 p-2"><dt className="text-text-secondary">Score</dt><dd className="mt-0.5 font-semibold tabular-nums text-text-primary">{formatPercent(row.scorePercent)}</dd></div>
+                        <div className="rounded-lg bg-muted/60 p-2"><dt className="text-text-secondary">Marks</dt><dd className="mt-0.5 font-semibold tabular-nums text-text-primary">{formatMarksPair(row.obtainedMarks, row.totalMarks)}</dd></div>
+                        <div className="rounded-lg bg-muted/60 p-2"><dt className="text-text-secondary">Time</dt><dd className="mt-0.5 font-semibold tabular-nums text-text-primary">{formatDuration(row.timeSpentSeconds)}</dd></div>
+                      </dl>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <Button variant="outline" className={ui.btn} onClick={() => openReport(row)} disabled={!row.attemptId}>
+                          <Eye className="size-4" />
                           View
                         </Button>
-                        <Button className="flex-1" variant="outline" onClick={() => exportSingleTest(row)} disabled={exportMutation.isPending || !row.testId}>
-                          <Download className="mr-2 size-4" />
+                        <Button variant="outline" className={ui.btn} onClick={() => exportSingleTest(row)} disabled={exportMutation.isPending || !row.testId}>
+                          <Download className="size-4" />
                           PDF
                         </Button>
                       </div>
-                    </Card>
+                    </li>
                   ))}
-                </div>
+                </ul>
 
-                <div className="flex flex-col gap-4 border-t border-border p-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-col gap-3 border-t border-border px-4 py-3 sm:px-5 md:flex-row md:items-center md:justify-between">
                   <div className="flex flex-wrap items-center gap-3 text-sm text-text-secondary">
-                    <span>Showing {pageStart}-{pageEnd} of {filteredRows.length} reports</span>
-                    <NativeSelect value={String(pageSize)} onChange={(event) => setPageSize(Number(event.target.value))}>
+                    <span className="tabular-nums">Showing {pageStart}–{pageEnd} of {filteredRows.length}</span>
+                    <NativeSelect value={String(pageSize)} onChange={(event) => setPageSize(Number(event.target.value))} aria-label="Rows per page">
                       {PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} / page</option>)}
                     </NativeSelect>
                   </div>
@@ -586,6 +589,7 @@ export default function ReportsPage() {
                             event.preventDefault();
                             setPage((current) => Math.max(1, current - 1));
                           }}
+                          aria-disabled={safePage === 1}
                           className={safePage === 1 ? "pointer-events-none opacity-50" : ""}
                         />
                       </PaginationItem>
@@ -610,6 +614,7 @@ export default function ReportsPage() {
                             event.preventDefault();
                             setPage((current) => Math.min(totalPages, current + 1));
                           }}
+                          aria-disabled={safePage === totalPages}
                           className={safePage === totalPages ? "pointer-events-none opacity-50" : ""}
                         />
                       </PaginationItem>
@@ -618,19 +623,24 @@ export default function ReportsPage() {
                 </div>
               </>
             ) : (
-              <div className="p-6">
-                <Empty className="border border-border">
-                  <EmptyMedia variant="icon">
-                    <FileX className="size-4" />
-                  </EmptyMedia>
-                  <EmptyHeader>
-                    <EmptyTitle>No test reports found</EmptyTitle>
-                    <EmptyDescription>Try clearing filters, or submit a test to see your analytics here.</EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
+              <div className="p-4 sm:p-5">
+                <EmptyState
+                  icon={FileX}
+                  title={hasActiveFilters ? "No reports match your filters" : "No test reports yet"}
+                  description={hasActiveFilters ? "Try adjusting or clearing the filters." : "Submit a test to see your analytics here."}
+                  action={
+                    hasActiveFilters ? (
+                      <Button variant="outline" className={ui.btn} onClick={clearFilters}>
+                        <RotateCcw className="size-4" />
+                        Clear filters
+                      </Button>
+                    ) : null
+                  }
+                  className="border-0"
+                />
               </div>
             )}
-          </Card>
+          </div>
         </>
       ) : null}
     </section>

@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function ViolationFeed({ items }) {
   return (
-    <Card className="rounded-2xl border-border">
+    <Card className="rounded-xl border-border shadow-xs">
       <CardHeader>
         <CardTitle className="text-base">Violation Feed</CardTitle>
       </CardHeader>

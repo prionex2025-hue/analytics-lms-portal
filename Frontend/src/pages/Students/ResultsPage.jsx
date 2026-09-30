@@ -2,27 +2,67 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AlertCircle,
+  ArrowLeft,
   CheckCircle2,
-  ListFilter,
+  CircleDashed,
+  Clock3,
+  Gauge,
+  Lightbulb,
+  ListChecks,
+  Lock,
   PlayCircle,
   Search,
+  SearchX,
   ShieldAlert,
-  Sparkles,
+  Target,
   Timer,
+  TrendingDown,
+  TrendingUp,
   XCircle,
 } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { attemptResultQueryOptions } from "@/services/studentQueries";
+import { Callout, EmptyState, ErrorState, LoadingState, Panel, SectionHeader, StatTile, StatusBadge } from "@/components/Students/ui/StudentUI";
+import { cn } from "@/lib/utils";
+import { ui } from "@/styles/ui-tokens";
+
+function MetricBar({ label, value }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-text-secondary">{label}</span>
+        <span className="font-semibold tabular-nums text-text-primary">{formatPercent(value)}</span>
+      </div>
+      <Progress value={clampPercent(value)} aria-label={label} className="mt-2 h-1.5 bg-muted **:data-[slot=progress-indicator]:bg-primary" />
+    </div>
+  );
+}
+
+function LockedReview({ endDate }) {
+  return (
+    <Panel className="flex items-start gap-4">
+      <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-text-secondary">
+        <Lock className="size-5" aria-hidden="true" />
+      </span>
+      <div>
+        <h2 className="text-base font-semibold text-text-primary">Result Summary</h2>
+        <p className="mt-1 text-sm text-text-secondary">
+          Answers are hidden until the test is marked completed or the review window opens.
+        </p>
+        {endDate ? (
+          <p className="mt-1 text-sm text-text-secondary">
+            Available after: <span className="font-medium text-text-primary">{new Date(endDate).toLocaleString()}</span>
+          </p>
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
 
 const toNumber = (value, fallback = 0) => {
   const num = Number(value);
@@ -366,29 +406,33 @@ export default function ResultsPage() {
   }, [breakdown, searchTerm, sortKey, statusFilter, topicFilter]);
 
   if (resultQuery.isLoading) {
-    return <div className="grid min-h-[60vh] place-items-center text-text-secondary">Loading result...</div>;
+    return <LoadingState label="Loading result…" />;
   }
 
   if (resultQuery.error?.status === 403) {
     return (
-      <section className="space-y-5">
-        <Alert variant="destructive" className="border-danger/30 bg-danger/10 text-danger">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Access denied</AlertTitle>
-          <AlertDescription>You do not have access</AlertDescription>
-        </Alert>
+      <section className={ui.pageSection}>
+        <ErrorState
+          title="Access denied"
+          description="You do not have access"
+          action={
+            <Button variant="outline" className="h-9 rounded-lg" onClick={() => navigate("/reports")}>
+              Back to reports
+            </Button>
+          }
+        />
       </section>
     );
   }
 
   if (resultQuery.isError) {
     return (
-      <section className="space-y-5">
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Failed to load results</AlertTitle>
-          <AlertDescription>{resultQuery.error?.message || "Please try again in a moment."}</AlertDescription>
-        </Alert>
+      <section className={ui.pageSection}>
+        <ErrorState
+          title="Failed to load results"
+          description={resultQuery.error?.message || "Please try again in a moment."}
+          onRetry={() => resultQuery.refetch()}
+        />
       </section>
     );
   }
@@ -404,334 +448,243 @@ export default function ResultsPage() {
     return `${mins}m ${String(secs).padStart(2, "0")}s`;
   };
 
+  const scoreTone = metrics.scorePercent >= 60 ? "text-success" : metrics.scorePercent >= 40 ? "text-amber-600 dark:text-warning" : "text-danger";
+
   return (
-    <div className="space-y-6">
-      <Card
-        className="relative overflow-hidden border border-primary/10 bg-[linear-gradient(135deg,var(--results-hero-from),var(--results-hero-via),var(--results-hero-to))] p-6 text-primary-foreground shadow-[0_24px_60px_rgba(15,23,42,0.35)]"
-        style={{
-          "--results-hero-from": "#0f172a",
-          "--results-hero-via": "#1e293b",
-          "--results-hero-to": "#1e40af",
-          "--results-hero-glow": "rgba(59,130,246,0.35)",
-          "--results-hero-glow-2": "rgba(56,189,248,0.35)",
-        }}>
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,var(--results-hero-glow),transparent_60%)]" />
-        <div className="pointer-events-none absolute -right-16 top-6 h-48 w-48 rounded-full bg-[radial-gradient(circle,var(--results-hero-glow-2),transparent_60%)] opacity-80 blur-2xl" />
-        <div className="relative z-10 grid gap-6 md:grid-cols-[1.35fr_0.65fr]">
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-xs font-semibold tracking-[0.3em] uppercase text-primary-foreground/70">
-              <Sparkles className="size-4" />
-              Performance Studio
-            </div>
+    <div className={ui.pageSection}>
+      <div>
+        <Button variant="ghost" className="-ml-3 h-9 rounded-lg px-3 text-text-secondary" onClick={() => navigate(-1)}>
+          <ArrowLeft className="size-4" />
+          Back
+        </Button>
+      </div>
+
+      <div className={cn(ui.card, "grid overflow-hidden md:grid-cols-[1fr_320px]")}>
+        <div className="p-5 sm:p-6">
+          <p className="text-xs font-semibold uppercase tracking-wider text-primary">Test result</p>
+          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-text-primary sm:text-[28px]">{testTitle}</h1>
+          <p className="mt-1.5 text-sm text-text-secondary">Review your accuracy, pace, and topic strengths in one focused view.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <StatusBadge tone={testCompleted ? "success" : "warning"} icon={testCompleted ? CheckCircle2 : CircleDashed}>
+              {testCompleted ? "Completed" : "In progress"}
+            </StatusBadge>
+            <StatusBadge tone={showFullDetails ? "info" : "neutral"} icon={showFullDetails ? ListChecks : Lock}>
+              {showFullDetails ? "Review unlocked" : "Review locked"}
+            </StatusBadge>
+            {endDate && !showFullDetails ? (
+              <StatusBadge tone="neutral" icon={Clock3}>Unlocks {new Date(endDate).toLocaleString()}</StatusBadge>
+            ) : null}
+          </div>
+          {attemptId ? <p className="mt-4 font-mono text-xs text-text-secondary">Attempt {attemptId}</p> : null}
+        </div>
+
+        <div className="border-t border-border bg-muted/40 p-5 sm:p-6 md:border-t-0 md:border-l">
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{testTitle}</h1>
-              <p className="mt-2 text-sm text-primary-foreground/80">
-                Review your accuracy, pace, and topic strengths in one focused view.
+              <p className="text-sm text-text-secondary">Total score</p>
+              <p className="mt-1 text-4xl font-semibold tabular-nums tracking-tight text-text-primary">{score}</p>
+              <p className="mt-0.5 text-xs text-text-secondary">
+                {metrics.totalMarks ? `${metrics.marksEarned} of ${metrics.totalMarks} marks` : "Points"}
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="outline" className="border-primary-foreground/30 text-primary-foreground">
-                {testCompleted ? "Completed" : "In progress"}
-              </Badge>
-              <Badge variant="outline" className="border-primary-foreground/30 text-primary-foreground">
-                {showFullDetails ? "Review unlocked" : "Review locked"}
-              </Badge>
-              {attemptId ? (
-                <Badge variant="outline" className="border-primary-foreground/30 text-primary-foreground">
-                  Attempt {attemptId}
-                </Badge>
-              ) : null}
-              {endDate && !showFullDetails ? (
-                <Badge variant="outline" className="border-primary-foreground/30 text-primary-foreground">
-                  Unlocks {new Date(endDate).toLocaleString()}
-                </Badge>
-              ) : null}
+            <div className="text-right">
+              <p className="text-sm text-text-secondary">Percentage</p>
+              <p className={cn("mt-1 text-2xl font-semibold tabular-nums", scoreTone)}>{formatPercent(metrics.scorePercent)}</p>
             </div>
           </div>
-
-          <div className="rounded-2xl border border-primary-foreground/15 bg-white/10 p-4 backdrop-blur">
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.2em] text-primary-foreground/70">
-              <span>Score</span>
-              <span>{metrics.totalMarks ? `${metrics.marksEarned} / ${metrics.totalMarks}` : "Points"}</span>
-            </div>
-            <div className="mt-3 flex items-end justify-between">
-              <div>
-                <p className="text-4xl font-semibold">{score}</p>
-                <p className="text-xs text-primary-foreground/60">Total score</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs uppercase tracking-[0.2em] text-primary-foreground/60">Percentage</p>
-                <p className="text-2xl font-semibold">{formatPercent(metrics.scorePercent)}</p>
-              </div>
-            </div>
-            <div className="mt-4">
-              <div className="flex items-center justify-between text-xs text-primary-foreground/70">
-                <span>Score rate</span>
-                <span>{formatPercent(metrics.scorePercent)}</span>
-              </div>
-              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/20">
-                <div className="h-full bg-white" style={{ width: `${clampPercent(metrics.scorePercent)}%` }} />
-              </div>
-            </div>
-          </div>
+          <Progress
+            value={clampPercent(metrics.scorePercent)}
+            aria-label="Score rate"
+            className="mt-5 h-2 bg-border/70 **:data-[slot=progress-indicator]:bg-primary"
+          />
         </div>
-      </Card>
+      </div>
 
       {violationSubmitted ? (
-        <Alert className="border-warning/30 bg-warning/10 text-warning">
-          <ShieldAlert className="h-4 w-4" />
-          <AlertTitle>Submitted due to proctoring violation</AlertTitle>
-          <AlertDescription>Your attempt was auto-submitted after crossing the allowed violation threshold.</AlertDescription>
-        </Alert>
+        <Callout tone="warning" icon={ShieldAlert} title="Submitted due to proctoring violation">
+          Your attempt was auto-submitted after crossing the allowed violation threshold.
+        </Callout>
       ) : null}
 
       {isModuleResult ? (
-        <Card className="border border-border p-5">
-          <h2 className="text-lg font-semibold text-text-primary">Section Performance</h2>
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-secondary">
-                  <th className="py-2 pr-3">Module</th>
-                  <th className="py-2 px-3">Score</th>
-                  <th className="py-2 px-3">Max</th>
-                  <th className="py-2 px-3">Percentage</th>
-                  <th className="py-2 px-3">Duration</th>
-                  <th className="py-2 pl-3">Time Taken</th>
-                </tr>
-              </thead>
-              <tbody>
-                {moduleSections.map((section) => (
-                  <tr key={section.key} className="border-b border-border/60">
-                    <td className="py-2 pr-3 font-medium text-text-primary">{section.order}. {section.name}</td>
-                    <td className="py-2 px-3">{toNumber(section.score, 0)}</td>
-                    <td className="py-2 px-3">{toNumber(section.max_score, 0)}</td>
-                    <td className="py-2 px-3">{formatPercent(toNumber(section.percentage, 0))}</td>
-                    <td className="py-2 px-3">{section.configured_duration_mins != null ? `${section.configured_duration_mins} min` : "—"}</td>
-                    <td className="py-2 pl-3">{formatSeconds(section.actual_time_seconds)}</td>
-                  </tr>
-                ))}
-                <tr className="font-semibold text-text-primary">
-                  <td className="py-2 pr-3">Overall</td>
-                  <td className="py-2 px-3">{toNumber(result?.score, 0)}</td>
-                  <td className="py-2 px-3">{toNumber(result?.overall_max_score, 0)}</td>
-                  <td className="py-2 px-3">{formatPercent(toNumber(result?.overall_percentage, 0))}</td>
-                  <td className="py-2 px-3">{result?.total_configured_duration_mins ? `${result.total_configured_duration_mins} min` : "—"}</td>
-                  <td className="py-2 pl-3">{formatSeconds(result?.total_actual_time_seconds)}</td>
-                </tr>
-              </tbody>
-            </table>
+        <div className={cn(ui.card, "overflow-hidden")}>
+          <div className="p-4 sm:p-5">
+            <SectionHeader title="Section performance" description="How you scored in each timed section." />
           </div>
-        </Card>
+          <div className="overflow-x-auto border-t border-border">
+            <Table className="min-w-[600px]">
+              <TableHeader>
+                <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  <TableHead className="pl-5 text-xs font-medium uppercase tracking-wide">Module</TableHead>
+                  <TableHead className="text-right text-xs font-medium uppercase tracking-wide">Score</TableHead>
+                  <TableHead className="text-right text-xs font-medium uppercase tracking-wide">Max</TableHead>
+                  <TableHead className="text-right text-xs font-medium uppercase tracking-wide">Percentage</TableHead>
+                  <TableHead className="text-right text-xs font-medium uppercase tracking-wide">Duration</TableHead>
+                  <TableHead className="pr-5 text-right text-xs font-medium uppercase tracking-wide">Time taken</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {moduleSections.map((section) => (
+                  <TableRow key={section.key}>
+                    <TableCell className="pl-5 font-medium text-text-primary">{section.order}. {section.name}</TableCell>
+                    <TableCell className="text-right tabular-nums">{toNumber(section.score, 0)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-text-secondary">{toNumber(section.max_score, 0)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPercent(toNumber(section.percentage, 0))}</TableCell>
+                    <TableCell className="text-right tabular-nums text-text-secondary">{section.configured_duration_mins != null ? `${section.configured_duration_mins} min` : "—"}</TableCell>
+                    <TableCell className="pr-5 text-right tabular-nums text-text-secondary">{formatSeconds(section.actual_time_seconds)}</TableCell>
+                  </TableRow>
+                ))}
+                <TableRow className="bg-muted/30 font-semibold text-text-primary hover:bg-muted/30">
+                  <TableCell className="pl-5">Overall</TableCell>
+                  <TableCell className="text-right tabular-nums">{toNumber(result?.score, 0)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{toNumber(result?.overall_max_score, 0)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{formatPercent(toNumber(result?.overall_percentage, 0))}</TableCell>
+                  <TableCell className="text-right tabular-nums">{result?.total_configured_duration_mins ? `${result.total_configured_duration_mins} min` : "—"}</TableCell>
+                  <TableCell className="pr-5 text-right tabular-nums">{formatSeconds(result?.total_actual_time_seconds)}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+        </div>
       ) : null}
 
-      <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList variant="line">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="review" disabled={!showFullDetails}>
+      <Tabs defaultValue="overview" className="gap-5">
+        <TabsList className="h-10! w-full sm:w-fit">
+          <TabsTrigger value="overview" className="px-4">Overview</TabsTrigger>
+          <TabsTrigger value="review" className="px-4" disabled={!showFullDetails}>
+            {!showFullDetails ? <Lock className="size-3.5" /> : null}
             Question Review
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
-          <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <Card className="p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Accuracy</p>
-                <p className="mt-2 text-2xl font-semibold text-text-primary">{formatPercent(metrics.accuracyPercent)}</p>
-                <p className="mt-1 text-xs text-text-secondary">
-                  {metrics.correct} correct out of {metrics.totalQuestions || 0}
-                </p>
-              </Card>
-              <Card className="p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Attempted</p>
-                <p className="mt-2 text-2xl font-semibold text-text-primary">
-                  {metrics.attempted}/{metrics.totalQuestions || 0}
-                </p>
-                <p className="mt-1 text-xs text-text-secondary">{formatPercent(metrics.attemptRate)} attempt rate</p>
-              </Card>
-              <Card className="p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Avg time / question</p>
-                <p className="mt-2 text-2xl font-semibold text-text-primary">
-                  {metrics.totalQuestions ? formatDuration(metrics.avgTimePerQuestion) : "-"}
-                </p>
-                <p className="mt-1 text-xs text-text-secondary">Pace per question</p>
-              </Card>
-              <Card className="p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Time taken</p>
-                <p className="mt-2 text-2xl font-semibold text-text-primary">
-                  {timeTakenRaw == null ? "-" : formatDuration(timeTaken)}
-                </p>
-                <p className="mt-1 text-xs text-text-secondary">Total duration</p>
-              </Card>
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatTile icon={Target} label="Accuracy" value={formatPercent(metrics.accuracyPercent)} hint={`${metrics.correct} correct out of ${metrics.totalQuestions || 0}`} tone="success" />
+              <StatTile icon={ListChecks} label="Attempted" value={`${metrics.attempted}/${metrics.totalQuestions || 0}`} hint={`${formatPercent(metrics.attemptRate)} attempt rate`} />
+              <StatTile icon={Gauge} label="Avg time / question" value={metrics.totalQuestions ? formatDuration(metrics.avgTimePerQuestion) : "-"} hint="Pace per question" tone="neutral" />
+              <StatTile icon={Clock3} label="Time taken" value={timeTakenRaw == null ? "-" : formatDuration(timeTaken)} hint="Total duration" tone="neutral" />
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-              <Card className="p-5">
-                <h2 className="text-lg font-semibold text-text-primary">Performance signals</h2>
-                <p className="mt-1 text-sm text-text-secondary">Keep track of score rate, accuracy, and completion.</p>
-
-                <div className="mt-4 space-y-4">
-                  <div>
-                    <div className="flex items-center justify-between text-xs text-text-secondary">
-                      <span>Score rate</span>
-                      <span className="font-semibold text-text-primary">{formatPercent(metrics.scorePercent)}</span>
-                    </div>
-                    <Progress value={clampPercent(metrics.scorePercent)} className="mt-2 h-2" />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between text-xs text-text-secondary">
-                      <span>Accuracy</span>
-                      <span className="font-semibold text-text-primary">{formatPercent(metrics.accuracyPercent)}</span>
-                    </div>
-                    <Progress value={clampPercent(metrics.accuracyPercent)} className="mt-2 h-2" />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between text-xs text-text-secondary">
-                      <span>Attempt rate</span>
-                      <span className="font-semibold text-text-primary">{formatPercent(metrics.attemptRate)}</span>
-                    </div>
-                    <Progress value={clampPercent(metrics.attemptRate)} className="mt-2 h-2" />
-                  </div>
-                  <div className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-2 text-xs text-text-secondary">
-                    <span className="flex items-center gap-2">
-                      <Timer className="size-4 text-primary" />
-                      Avg time per question
-                    </span>
-                    <span className="font-semibold text-text-primary">
-                      {metrics.totalQuestions ? formatDuration(metrics.avgTimePerQuestion) : "-"}
-                    </span>
-                  </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Panel>
+                <SectionHeader title="Performance signals" description="Score rate, accuracy, and completion." />
+                <div className="mt-5 space-y-5">
+                  <MetricBar label="Score rate" value={metrics.scorePercent} />
+                  <MetricBar label="Accuracy" value={metrics.accuracyPercent} />
+                  <MetricBar label="Attempt rate" value={metrics.attemptRate} />
                 </div>
-              </Card>
+              </Panel>
 
-              <Card className="p-5">
-                <h2 className="text-lg font-semibold text-text-primary">Focus areas</h2>
-                <p className="mt-1 text-sm text-text-secondary">Target your revision based on strengths and gaps.</p>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-border bg-background p-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Strongest topic</p>
-                    <p className="mt-2 text-sm font-semibold text-text-primary">
-                      {strongestTopic ? strongestTopic.topic : "Not enough data"}
+              <Panel>
+                <SectionHeader title="Focus areas" description="Target your revision based on strengths and gaps." />
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-success/25 bg-success/5 p-3">
+                    <p className="flex items-center gap-1.5 text-xs font-medium text-success">
+                      <TrendingUp className="size-3.5" aria-hidden="true" />
+                      Strongest topic
                     </p>
-                    <p className="mt-1 text-xs text-text-secondary">
+                    <p className="mt-1.5 text-sm font-semibold text-text-primary">{strongestTopic ? strongestTopic.topic : "Not enough data"}</p>
+                    <p className="mt-0.5 text-xs text-text-secondary">
                       {strongestTopic ? `${formatPercent(strongestTopic.scorePercent)} score` : "Complete more items to unlock."}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-border bg-background p-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Needs attention</p>
-                    <p className="mt-2 text-sm font-semibold text-text-primary">
-                      {weakestTopic ? weakestTopic.topic : "Not enough data"}
+                  <div className="rounded-lg border border-danger/20 bg-danger/5 p-3">
+                    <p className="flex items-center gap-1.5 text-xs font-medium text-danger">
+                      <TrendingDown className="size-3.5" aria-hidden="true" />
+                      Needs attention
                     </p>
-                    <p className="mt-1 text-xs text-text-secondary">
+                    <p className="mt-1.5 text-sm font-semibold text-text-primary">{weakestTopic ? weakestTopic.topic : "Not enough data"}</p>
+                    <p className="mt-0.5 text-xs text-text-secondary">
                       {weakestTopic ? `${formatPercent(weakestTopic.scorePercent)} score` : "Keep practicing to reveal gaps."}
                     </p>
                   </div>
                 </div>
-
-                <div className="mt-4 rounded-xl border border-border bg-muted/60 p-3 text-sm text-text-secondary">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Coaching note</p>
-                  <p className="mt-2 text-sm text-text-primary">{guidance}</p>
-                </div>
-              </Card>
+                <Callout tone="info" icon={Lightbulb} title="Coaching note" className="mt-3">
+                  {guidance}
+                </Callout>
+              </Panel>
             </div>
 
-            <Card className="p-5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-lg font-semibold text-text-primary">Topic performance</h2>
-                  <p className="mt-1 text-sm text-text-secondary">Compare how you performed across topics.</p>
-                </div>
-                {sortedTopics.length > visibleTopics.length ? (
-                  <Badge variant="secondary">Showing top {visibleTopics.length} of {sortedTopics.length}</Badge>
-                ) : null}
-              </div>
+            <Panel>
+              <SectionHeader
+                title="Topic performance"
+                description="Compare how you performed across topics."
+                action={
+                  sortedTopics.length > visibleTopics.length ? (
+                    <StatusBadge tone="neutral">Top {visibleTopics.length} of {sortedTopics.length}</StatusBadge>
+                  ) : null
+                }
+              />
 
               {visibleTopics.length === 0 ? (
-                <div className="mt-4">
-                  <Empty className="border border-border">
-                    <EmptyHeader>
-                      <EmptyTitle>No Topic Data</EmptyTitle>
-                      <EmptyDescription>
-                        {showFullDetails
-                          ? "Topic insights will appear once question details are available."
-                          : "Topic insights unlock after the review window ends."}
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                </div>
+                <EmptyState
+                  className="mt-4 py-8"
+                  icon={Target}
+                  title="No topic data"
+                  description={
+                    showFullDetails
+                      ? "Topic insights will appear once question details are available."
+                      : "Topic insights unlock after the review window ends."
+                  }
+                />
               ) : (
-                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <ul className="mt-5 grid gap-x-8 gap-y-5 lg:grid-cols-2">
                   {visibleTopics.map((topic) => (
-                    <div key={topic.topic} className="rounded-xl border border-border bg-background p-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-semibold text-text-primary">{topic.topic}</p>
-                        <p className="text-xs font-semibold text-text-secondary">{formatPercent(topic.scorePercent)}</p>
+                    <li key={topic.topic}>
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="truncate font-medium text-text-primary">{topic.topic}</span>
+                        <span className="font-semibold tabular-nums text-text-primary">{formatPercent(topic.scorePercent)}</span>
                       </div>
-                      <Progress value={clampPercent(topic.scorePercent)} className="mt-2 h-2" />
-                      <div className="mt-2 flex items-center justify-between text-xs text-text-secondary">
-                        <span>
-                          {topic.correct}/{topic.total} correct
-                        </span>
+                      <Progress value={clampPercent(topic.scorePercent)} className="mt-2 h-1.5 bg-muted **:data-[slot=progress-indicator]:bg-primary" />
+                      <div className="mt-1.5 flex items-center justify-between text-xs text-text-secondary">
+                        <span>{topic.correct}/{topic.total} correct</span>
                         <span>{formatPercent(topic.attemptRate)} attempted</span>
                       </div>
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
-            </Card>
+            </Panel>
 
-            {!showFullDetails ? (
-              <Card className="p-6">
-                <h2 className="text-lg font-semibold text-text-primary">Result Summary</h2>
-                <p className="mt-2 text-sm text-text-secondary">
-                  Answers are hidden until the test is marked completed or the review window opens.
-                </p>
-                {endDate ? (
-                  <p className="mt-1 text-xs text-text-secondary">Available after: {new Date(endDate).toLocaleString()}</p>
-                ) : null}
-              </Card>
-            ) : null}
+            {!showFullDetails ? <LockedReview endDate={endDate} /> : null}
           </div>
         </TabsContent>
 
-        <TabsContent value="review" forceMount>
+        <TabsContent value="review" forceMount className="data-[state=inactive]:hidden">
           {showFullDetails ? (
             <div className="space-y-4">
-              <Card className="p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-semibold text-text-primary">Question Review</h2>
-                    <p className="mt-1 text-sm text-text-secondary">
-                      Filter, search, and compare your responses with the correct answers.
-                    </p>
-                  </div>
-                  <Button type="button" onClick={() => setShowAnswers((prev) => !prev)}>
-                    {showAnswers ? "Hide Answers" : "View Answers"}
-                  </Button>
-                </div>
+              <Panel>
+                <SectionHeader
+                  title="Question review"
+                  description="Filter, search, and compare your responses with the correct answers."
+                  action={
+                    <Button type="button" className={ui.btn} variant={showAnswers ? "outline" : "default"} onClick={() => setShowAnswers((prev) => !prev)}>
+                      {showAnswers ? "Hide Answers" : "View Answers"}
+                    </Button>
+                  }
+                />
 
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_0.6fr_0.6fr_0.6fr]">
-                  <InputGroup className="h-10">
-                    <InputGroupAddon>
-                      <Search className="size-4" />
-                    </InputGroupAddon>
-                    <InputGroupInput
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))]">
+                  <div className="relative sm:col-span-2 xl:col-span-1">
+                    <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-text-secondary" aria-hidden="true" />
+                    <Input
                       value={searchTerm}
                       onChange={(event) => setSearchTerm(event.target.value)}
                       placeholder="Search question, topic, or answer"
-                      aria-label="Search questions" />
-                  </InputGroup>
+                      aria-label="Search questions"
+                      className={cn(ui.field, "pl-9")}
+                    />
+                  </div>
 
-                  <NativeSelect value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                  <NativeSelect value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Status" className={cn("w-full", ui.select)}>
                     <NativeSelectOption value="all">All statuses</NativeSelectOption>
                     <NativeSelectOption value="correct">Correct</NativeSelectOption>
                     <NativeSelectOption value="incorrect">Incorrect</NativeSelectOption>
                     <NativeSelectOption value="unanswered">Unanswered</NativeSelectOption>
                   </NativeSelect>
 
-                  <NativeSelect value={topicFilter} onChange={(event) => setTopicFilter(event.target.value)}>
+                  <NativeSelect value={topicFilter} onChange={(event) => setTopicFilter(event.target.value)} aria-label="Topic" className={cn("w-full", ui.select)}>
                     <NativeSelectOption value="all">All topics</NativeSelectOption>
                     {topicOptions.map((topic) => (
                       <NativeSelectOption key={topic} value={topic}>
@@ -740,7 +693,7 @@ export default function ResultsPage() {
                     ))}
                   </NativeSelect>
 
-                  <NativeSelect value={sortKey} onChange={(event) => setSortKey(event.target.value)}>
+                  <NativeSelect value={sortKey} onChange={(event) => setSortKey(event.target.value)} aria-label="Sort" className={cn("w-full", ui.select)}>
                     <NativeSelectOption value="order">Question order</NativeSelectOption>
                     <NativeSelectOption value="marks-desc">Marks high to low</NativeSelectOption>
                     <NativeSelectOption value="marks-asc">Marks low to high</NativeSelectOption>
@@ -749,121 +702,82 @@ export default function ResultsPage() {
                   </NativeSelect>
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
-                  <ListFilter className="size-4" />
-                  <span>
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-text-secondary">
+                  <span className="mr-1">
                     Showing {filteredBreakdown.length} of {breakdown.length || 0} questions
                   </span>
-                  <Badge variant="secondary">Correct {metrics.correct}</Badge>
-                  <Badge variant="destructive">Incorrect {metrics.incorrect}</Badge>
-                  <Badge variant="pending">Unanswered {metrics.unanswered}</Badge>
+                  <StatusBadge tone="success" icon={CheckCircle2}>Correct {metrics.correct}</StatusBadge>
+                  <StatusBadge tone="danger" icon={XCircle}>Incorrect {metrics.incorrect}</StatusBadge>
+                  <StatusBadge tone="neutral" icon={CircleDashed}>Unanswered {metrics.unanswered}</StatusBadge>
                 </div>
-              </Card>
+              </Panel>
 
-              <Card className="overflow-hidden">
-                {breakdown.length === 0 ? (
-                  <div className="p-6">
-                    <Empty className="border border-border">
-                      <EmptyHeader>
-                        <EmptyTitle>No Question Breakdown</EmptyTitle>
-                        <EmptyDescription>Question-level details are not available for this attempt.</EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  </div>
-                ) : filteredBreakdown.length === 0 ? (
-                  <div className="p-6">
-                    <Empty className="border border-border">
-                      <EmptyHeader>
-                        <EmptyTitle>No matches found</EmptyTitle>
-                        <EmptyDescription>Try clearing filters or searching with a different term.</EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-20">Q#</TableHead>
-                        <TableHead className="min-w-65">Question</TableHead>
-                        <TableHead className="min-w-45">Your answer</TableHead>
-                        <TableHead className="min-w-45">Correct answer</TableHead>
-                        <TableHead className="w-28">Marks</TableHead>
-                        <TableHead className="w-28">Status</TableHead>
-                        <TableHead className="w-32">Explanation</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredBreakdown.map((item) => {
-                        const status = item.isAnswered
-                          ? item.isCorrect
-                            ? { label: "Correct", variant: "active", Icon: CheckCircle2 }
-                            : { label: "Incorrect", variant: "destructive", Icon: XCircle }
-                          : { label: "Unanswered", variant: "pending", Icon: Timer };
+              {breakdown.length === 0 ? (
+                <EmptyState icon={ListChecks} title="No question breakdown" description="Question-level details are not available for this attempt." />
+              ) : filteredBreakdown.length === 0 ? (
+                <EmptyState icon={SearchX} title="No matches found" description="Try clearing filters or searching with a different term." />
+              ) : (
+                <ol className="space-y-3">
+                  {filteredBreakdown.map((item) => {
+                    const status = item.isAnswered
+                      ? item.isCorrect
+                        ? { label: "Correct", tone: "success", Icon: CheckCircle2, accent: "bg-success" }
+                        : { label: "Incorrect", tone: "danger", Icon: XCircle, accent: "bg-danger" }
+                      : { label: "Unanswered", tone: "neutral", Icon: Timer, accent: "bg-border" };
 
-                        return (
-                          <TableRow key={item.id}>
-                            <TableCell className="font-semibold">Q{item.order}</TableCell>
-                            <TableCell className="whitespace-normal">
-                              <p className="text-sm font-semibold text-text-primary">{item.prompt}</p>
-                              <p className="mt-1 text-xs text-text-secondary">{item.topic}</p>
-                            </TableCell>
-                            <TableCell className="whitespace-normal text-sm text-text-primary">{item.studentAnswer}</TableCell>
-                            <TableCell className="whitespace-normal text-sm text-text-primary">
-                              {showAnswers ? (
-                                item.correctAnswer
-                              ) : (
-                                <span className="italic text-text-secondary">Hidden</span>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-sm font-semibold text-text-primary">
+                    return (
+                      <li key={item.id} className={cn(ui.card, "relative overflow-hidden p-4 pl-5 sm:p-5 sm:pl-6")}>
+                        <span className={cn("absolute inset-y-0 left-0 w-1", status.accent)} aria-hidden="true" />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-semibold text-text-primary">Q{item.order}</span>
+                          <span className="text-xs text-text-secondary">{item.topic}</span>
+                          <span className="ml-auto flex items-center gap-2">
+                            <span className="text-sm font-semibold tabular-nums text-text-primary">
                               {item.marks}
                               {item.totalMarks > 0 ? ` / ${item.totalMarks}` : ""}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={status.variant} className="gap-1">
-                                <status.Icon className="size-3" />
-                                {status.label}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              {item.explanationVideoUrl ? (
-                                <a
-                                  href={item.explanationVideoUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-                                >
-                                  <PlayCircle className="size-4" />
-                                  Watch
-                                </a>
-                              ) : (
-                                <span className="text-xs italic text-text-secondary">No explanation</span>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                )}
-              </Card>
+                              <span className="sr-only"> marks</span>
+                            </span>
+                            <StatusBadge tone={status.tone} icon={status.Icon}>{status.label}</StatusBadge>
+                          </span>
+                        </div>
+                        <p className="mt-3 text-sm font-medium leading-6 text-text-primary sm:text-base">{item.prompt}</p>
+                        <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-lg bg-muted/50 p-3">
+                            <dt className="text-xs text-text-secondary">Your answer</dt>
+                            <dd className={cn("mt-1 text-sm font-medium", item.isAnswered ? "text-text-primary" : "italic text-text-secondary")}>{item.studentAnswer}</dd>
+                          </div>
+                          <div className="rounded-lg bg-muted/50 p-3">
+                            <dt className="text-xs text-text-secondary">Correct answer</dt>
+                            <dd className="mt-1 text-sm font-medium text-text-primary">
+                              {showAnswers ? item.correctAnswer : <span className="italic font-normal text-text-secondary">Hidden</span>}
+                            </dd>
+                          </div>
+                        </dl>
+                        {item.explanationVideoUrl ? (
+                          <a
+                            href={item.explanationVideoUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-primary outline-none hover:bg-primary/5 focus-visible:ring-3 focus-visible:ring-ring/50 -ml-2"
+                          >
+                            <PlayCircle className="size-4" />
+                            Watch explanation
+                          </a>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
             </div>
           ) : (
-            <Card className="p-6">
-              <h2 className="text-lg font-semibold text-text-primary">Result Summary</h2>
-              <p className="mt-2 text-sm text-text-secondary">
-                Answers are hidden until the test is marked completed or the review window opens.
-              </p>
-              {endDate ? (
-                <p className="mt-1 text-xs text-text-secondary">Available after: {new Date(endDate).toLocaleString()}</p>
-              ) : null}
-            </Card>
+            <LockedReview endDate={endDate} />
           )}
         </TabsContent>
       </Tabs>
 
-      <div className="flex justify-center">
-        <Button type="button" variant="outline" onClick={() => navigate("/tests/ongoing")}>
+      <div className="flex justify-center pt-2">
+        <Button type="button" variant="outline" className={ui.btn} onClick={() => navigate("/tests/ongoing")}>
           Return to Home
         </Button>
       </div>

@@ -52,13 +52,18 @@ export default function TypedConfirmDialog({
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-2">
-          <p className="text-xs text-text-secondary">Required: <strong>{expectedText}</strong></p>
-          <Label htmlFor="typed-confirm-input">{inputLabel}</Label>
-          <Input 
-            id="typed-confirm-input" 
-            value={typedText} 
+          <Label htmlFor="typed-confirm-input" className="text-sm font-medium text-text-primary">{inputLabel}</Label>
+          <p className="text-xs text-text-secondary">
+            Type <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-text-primary select-all">{expectedText}</code> to continue.
+          </p>
+          <Input
+            id="typed-confirm-input"
+            value={typedText}
             onChange={(event) => setTypedText(event.target.value)}
             disabled={isLoading}
+            autoComplete="off"
+            spellCheck={false}
+            className="h-10 rounded-lg font-mono"
           />
         </div>
         <AlertDialogFooter>

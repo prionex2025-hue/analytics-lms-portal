@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { activeAttemptsQueryOptions } from "@/services/studentQueries";
+import { LoadingState } from "@/components/Students/ui/StudentUI";
 
 const getAttemptIdToResume = (items) => {
   if (!Array.isArray(items)) {
@@ -39,8 +40,8 @@ export default function ResumeAttemptPage() {
   }, [activeAttemptsQuery.isLoading, attemptId, navigate]);
 
   if (activeAttemptsQuery.isError) {
-    return <div className="grid min-h-[40vh] place-items-center text-text-secondary">Unable to check active test. Redirecting...</div>;
+    return <LoadingState label="Unable to check active test. Redirecting..." />;
   }
 
-  return <div className="grid min-h-[40vh] place-items-center text-text-secondary">Checking your active test session...</div>;
+  return <LoadingState label="Checking your active test session..." />;
 }

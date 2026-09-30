@@ -8,7 +8,8 @@ import { connectTestSocket, disconnectTestSocket, joinTestRoom, leaveTestRoom } 
 import usePermission from "@/hooks/usePermission";
 import { ADMIN_PERMISSIONS } from "@/features/Admin/adminPermissions";
 import ViolationFeed from "@/components/Admin/ViolationFeed";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ArrowLeft, Clock3, FileCheck2, ListChecks, Radio, Users, WifiOff } from "lucide-react";
+import { EmptyState, FormField, PageHeader, SectionCard, StatTile, StatusBadge } from "@/components/common/page-kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -282,21 +283,28 @@ export default function LiveMonitoringPage() {
   };
 
   const renderRow = (row) => (
-    <tr key={row.submissionId} className="border-b border-border">
-      <td className="px-3 py-2">{row.name}</td>
-      <td className="px-3 py-2">{row.department}</td>
-      <td className="px-3 py-2">{row.progress}%</td>
-      <td className="px-3 py-2">{Math.floor(displayTimeLeftSec(row) / 60)}m</td>
-      <td className="px-3 py-2">{row.violations}</td>
-      <td className={`px-3 py-2 font-medium ${statusTone[displayConnectionStatus(row)] || statusTone.OFFLINE}`}>{displayConnectionStatus(row)}</td>
-      <td className="px-3 py-2 text-right">
+    <tr key={row.submissionId} className="border-b border-border transition-colors hover:bg-muted/40">
+      <td className="px-4 py-3 font-medium text-text-primary">{row.name}</td>
+      <td className="px-4 py-3 text-text-secondary">{row.department}</td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <div className="hidden h-1.5 w-16 overflow-hidden rounded-full bg-muted sm:block" aria-hidden="true">
+            <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, Number(row.progress) || 0))}%` }} />
+          </div>
+          <span className="tabular-nums">{row.progress}%</span>
+        </div>
+      </td>
+      <td className="px-4 py-3 tabular-nums">{Math.floor(displayTimeLeftSec(row) / 60)}m</td>
+      <td className={`px-4 py-3 tabular-nums ${Number(row.violations) > 0 ? "font-semibold text-danger" : "text-text-secondary"}`}>{row.violations}</td>
+      <td className={`px-4 py-3 font-medium ${statusTone[displayConnectionStatus(row)] || statusTone.OFFLINE}`}>{displayConnectionStatus(row)}</td>
+      <td className="px-4 py-3 text-right">
         {canControlMonitoring ? (
-          <div className="flex justify-end gap-2">
-            <Button size="sm" variant="outline" onClick={() => setExtendDialog({ open: true, row, minutes: 10 })}>Extend Time</Button>
-            <Button size="sm" variant="destructive" onClick={() => setForceDialog({ open: true, row, reason: "" })}>Force Submit</Button>
+          <div className="flex justify-end gap-1.5">
+            <Button size="lg" variant="outline" className="rounded-lg" onClick={() => setExtendDialog({ open: true, row, minutes: 10 })}>Extend Time</Button>
+            <Button size="lg" variant="ghost" className="rounded-lg text-danger hover:bg-danger/10 hover:text-danger" onClick={() => setForceDialog({ open: true, row, reason: "" })}>Force Submit</Button>
           </div>
         ) : (
-          <span className="rounded-full border border-border px-2 py-0.5 text-xs text-text-secondary">Read-only</span>
+          <StatusBadge tone="neutral">Read-only</StatusBadge>
         )}
       </td>
     </tr>
@@ -304,62 +312,58 @@ export default function LiveMonitoringPage() {
 
   return (
     <div className="space-y-6">
-      <section className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-text-primary">Live Test Monitoring</h1>
-          <p className="text-sm text-text-secondary">Socket-first real-time monitoring for active attempts.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={`text-xs font-semibold ${socketHealthy ? "text-success" : "text-warning"}`}>
-            {socketHealthy ? "Socket Connected" : "Fallback Polling"}
-          </span>
-          {!canControlMonitoring && monitorQuery.data ? (
-            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-              Read-only monitoring
-            </span>
-          ) : null}
-          <Button variant="outline" onClick={() => navigate(`${basePath}/tests`)}>Back to Tests</Button>
-        </div>
-      </section>
+      <PageHeader
+        title="Live test monitoring"
+        description="Socket-first real-time monitoring for active attempts."
+        actions={
+          <>
+            <StatusBadge tone={socketHealthy ? "success" : "warning"} icon={socketHealthy ? Radio : WifiOff} className="h-8 px-3">
+              {socketHealthy ? "Socket Connected" : "Fallback Polling"}
+            </StatusBadge>
+            {!canControlMonitoring && monitorQuery.data ? <StatusBadge tone="warning" className="h-8 px-3">Read-only monitoring</StatusBadge> : null}
+            <Button variant="outline" className="h-10 rounded-lg px-4" onClick={() => navigate(`${basePath}/tests`)}>
+              <ArrowLeft className="size-4" />
+              Back to Tests
+            </Button>
+          </>
+        }
+      />
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="rounded-2xl border-border"><CardContent className="p-4"><p className="text-xs text-text-secondary">Active Students</p><p className="text-2xl font-semibold">{activeStudents}</p></CardContent></Card>
-        <Card className="rounded-2xl border-border"><CardContent className="p-4"><p className="text-xs text-text-secondary">Test</p><p className="text-base font-semibold">{monitorQuery.data?.test?.title || "-"}</p></CardContent></Card>
-        <Card className="rounded-2xl border-border"><CardContent className="p-4"><p className="text-xs text-text-secondary">Question Count</p><p className="text-2xl font-semibold">{monitorQuery.data?.test?.questionCount || 0}</p></CardContent></Card>
+      <div className="grid gap-3 sm:gap-4 md:grid-cols-3">
+        <StatTile icon={Users} label="Active Students" value={activeStudents} tone="success" />
+        <StatTile icon={FileCheck2} label="Test" value={<span className="text-base">{monitorQuery.data?.test?.title || "-"}</span>} />
+        <StatTile icon={ListChecks} label="Question Count" value={monitorQuery.data?.test?.questionCount || 0} tone="neutral" />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>Exam API Pressure</CardTitle>
-            <p className="text-sm text-text-secondary">
-              {rateLimits.collegeScoped ? "College-scoped" : "Global"} blocked exam limiter hits in the last {rateLimits.windowHours || 24}h.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <SectionCard
+          title="Exam API pressure"
+          description={`${rateLimits.collegeScoped ? "College-scoped" : "Global"} blocked exam limiter hits in the last ${rateLimits.windowHours || 24}h.`}
+          bodyClassName="space-y-4"
+        >
             <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-xl border border-border bg-background px-3 py-3">
+              <div className="rounded-lg bg-muted/50 px-3 py-3">
                 <p className="text-xs text-text-secondary">Blocked Requests</p>
                 <p className="mt-1 text-2xl font-semibold text-text-primary">{Number(rateLimits.totalBlocked || 0)}</p>
               </div>
-              <div className="rounded-xl border border-border bg-background px-3 py-3">
+              <div className="rounded-lg bg-muted/50 px-3 py-3">
                 <p className="text-xs text-text-secondary">Hottest Limiter</p>
                 <p className="mt-1 text-sm font-semibold text-text-primary">{hottestLimiter ? formatLimiterLabel(hottestLimiter.label) : "No limiter pressure"}</p>
                 <p className="text-xs text-text-secondary">{hottestLimiter ? `${hottestLimiter.blocked} blocked` : "No blocked requests recorded"}</p>
               </div>
-              <div className="rounded-xl border border-border bg-background px-3 py-3">
+              <div className="rounded-lg bg-muted/50 px-3 py-3">
                 <p className="text-xs text-text-secondary">Last Updated</p>
                 <p className="mt-1 text-sm font-semibold text-text-primary">{formatMetricTimestamp(rateLimits.generatedAt)}</p>
               </div>
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-xl border border-border bg-background px-3 py-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Top Limiters</p>
+              <div className="rounded-lg bg-muted/50 px-3 py-3">
+                <p className="text-xs font-medium text-text-secondary">Top limiters</p>
                 {rateLimits.topScopes?.length ? (
                   <div className="mt-3 space-y-2">
                     {rateLimits.topScopes.map((item) => (
-                      <div key={item.label} className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 text-sm">
+                      <div key={item.label} className="flex items-center justify-between gap-3 rounded-md bg-card px-3 py-2 text-sm">
                         <span className="font-medium text-text-primary">{formatLimiterLabel(item.label)}</span>
                         <span className="text-text-secondary">{item.blocked}</span>
                       </div>
@@ -370,12 +374,12 @@ export default function LiveMonitoringPage() {
                 )}
               </div>
 
-              <div className="rounded-xl border border-border bg-background px-3 py-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Top Blocked Routes</p>
+              <div className="rounded-lg bg-muted/50 px-3 py-3">
+                <p className="text-xs font-medium text-text-secondary">Top blocked routes</p>
                 {rateLimits.topRoutes?.length ? (
                   <div className="mt-3 space-y-2">
                     {rateLimits.topRoutes.map((item) => (
-                      <div key={item.label} className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 text-sm">
+                      <div key={item.label} className="flex items-center justify-between gap-3 rounded-md bg-card px-3 py-2 text-sm">
                         <span className="font-mono text-xs text-text-primary">{item.label}</span>
                         <span className="text-text-secondary">{item.blocked}</span>
                       </div>
@@ -386,22 +390,16 @@ export default function LiveMonitoringPage() {
                 )}
               </div>
             </div>
-          </CardContent>
-        </Card>
+        </SectionCard>
 
-        <Card className="rounded-2xl border-border">
-          <CardHeader>
-            <CardTitle>Blocked Clients</CardTitle>
-            <p className="text-sm text-text-secondary">Anonymized actors with the highest blocked exam traffic.</p>
-          </CardHeader>
-          <CardContent>
+        <SectionCard title="Blocked clients" description="Anonymized actors with the highest blocked exam traffic.">
             {rateLimits.topActors?.length ? (
               <div className="space-y-2">
                 {rateLimits.topActors.map((item) => (
                   <div key={item.label} className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-3">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="font-mono text-xs text-warning">{item.label}</p>
-                      <p className="text-sm font-semibold text-warning">{item.blocked}</p>
+                      <p className="font-mono text-xs text-text-primary">{item.label}</p>
+                      <p className="text-sm font-semibold tabular-nums text-amber-700 dark:text-warning">{item.blocked}</p>
                     </div>
                   </div>
                 ))}
@@ -414,35 +412,34 @@ export default function LiveMonitoringPage() {
                 Highest blocked actor right now: {hottestActor.label} with {hottestActor.blocked} blocked requests.
               </p>
             ) : null}
-          </CardContent>
-        </Card>
+        </SectionCard>
       </div>
 
-      <Card className="rounded-2xl border-border">
-        <CardHeader>
-          <CardTitle>Student Activity</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <SectionCard title="Student activity" description={`${studentRows.length} active attempt${studentRows.length === 1 ? "" : "s"}`} flush>
+        <div className="relative overflow-x-auto">
           <div ref={parentRef} className={virtualized ? "max-h-112 overflow-y-auto" : ""}>
-            <table className="w-full border-collapse text-sm">
+            <table className="w-full min-w-[820px] border-collapse text-sm">
               <thead>
-                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-secondary">
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Department</th>
-                  <th className="px-3 py-2">Progress</th>
-                  <th className="px-3 py-2">Time Left</th>
-                  <th className="px-3 py-2">Violations</th>
-                  <th className="px-3 py-2">Connection</th>
-                  <th className="px-3 py-2 text-right">Actions</th>
+                <tr className="border-b border-border bg-muted/50 text-left text-xs font-medium tracking-wide text-text-secondary uppercase">
+                  <th className="h-10 px-4">Name</th>
+                  <th className="h-10 px-4">Department</th>
+                  <th className="h-10 px-4">Progress</th>
+                  <th className="h-10 px-4">Time Left</th>
+                  <th className="h-10 px-4">Violations</th>
+                  <th className="h-10 px-4">Connection</th>
+                  <th className="h-10 px-4 text-right"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>
                 {virtualized ? rowVirtualizer.getVirtualItems().map((virtualRow) => renderRow(studentRows[virtualRow.index])) : studentRows.map((row) => renderRow(row))}
               </tbody>
             </table>
+            {studentRows.length === 0 ? (
+              <EmptyState icon={Clock3} title={monitorQuery.isLoading ? "Loading attempts…" : "No active attempts"} description="Students appear here as soon as they start the test." className="border-0" />
+            ) : null}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </SectionCard>
 
       <ViolationFeed items={violationFeed} />
 
@@ -452,10 +449,12 @@ export default function LiveMonitoringPage() {
             <AlertDialogTitle>Force Submit Attempt</AlertDialogTitle>
             <AlertDialogDescription>This action is irreversible. Provide a reason.</AlertDialogDescription>
           </AlertDialogHeader>
-          <Input value={forceDialog.reason} onChange={(event) => setForceDialog((prev) => ({ ...prev, reason: event.target.value }))} placeholder="Reason for force submit" />
+          <FormField label="Reason" htmlFor="force-submit-reason" required>
+            <Input id="force-submit-reason" className="h-10 rounded-lg" value={forceDialog.reason} onChange={(event) => setForceDialog((prev) => ({ ...prev, reason: event.target.value }))} placeholder="Reason for force submit" />
+          </FormField>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction disabled={!forceDialog.reason.trim()} onClick={forceSubmit}>Confirm</AlertDialogAction>
+            <AlertDialogAction variant="destructive" disabled={!forceDialog.reason.trim()} onClick={forceSubmit}>Force Submit</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -466,7 +465,9 @@ export default function LiveMonitoringPage() {
             <AlertDialogTitle>Extend Time</AlertDialogTitle>
             <AlertDialogDescription>Add extra minutes for this student attempt.</AlertDialogDescription>
           </AlertDialogHeader>
-          <Input type="number" min={1} max={120} value={extendDialog.minutes} onChange={(event) => setExtendDialog((prev) => ({ ...prev, minutes: Number(event.target.value) }))} />
+          <FormField label="Extra minutes" htmlFor="extend-minutes" hint="Between 1 and 120.">
+            <Input id="extend-minutes" type="number" min={1} max={120} className="h-10 rounded-lg" value={extendDialog.minutes} onChange={(event) => setExtendDialog((prev) => ({ ...prev, minutes: Number(event.target.value) }))} />
+          </FormField>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={extendTime}>Apply</AlertDialogAction>
