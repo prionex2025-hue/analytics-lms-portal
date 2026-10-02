@@ -15,6 +15,13 @@ const { collectSubmissions } = require("../../services/submission-batch.service"
 const { isQuestionCorrect } = require("../../services/test.service");
 const { buildAdminTestVisibilityWhere } = require("../../utils/admin-test-access");
 const {
+  attachStudentGroups,
+  countViolationsBySubmission,
+  loadNamesById,
+  sumQuestionMarksByTest,
+  uniqueIds,
+} = require("../../services/report-lookup.service");
+const {
   REPORTABLE_SUBMISSION_STATUSES,
   buildStudentLifecycleWhere,
   buildReportScopeMetadata,
@@ -29,6 +36,21 @@ const buildBatchStudentWhere = (batchId) =>
   batchId ? { OR: [{ batchId }, { batchIds: { in: [batchId] } }] } : {};
 
 const PASS_THRESHOLD_PERCENT = 40;
+
+// Scalar student fields the report rows need; group names come from
+// attachStudentGroups (batched) instead of per-student includes.
+const REPORT_STUDENT_SELECT = {
+  id: true,
+  fullName: true,
+  studentId: true,
+  enrollNumber: true,
+  enrollmentNumber: true,
+  year: true,
+  collegeId: true,
+  departmentId: true,
+  batchId: true,
+  batchIds: true,
+};
 
 const toPercent = (value) => clampPercent(value);
 const getScorePercent = getSubmissionScorePercent;
@@ -267,15 +289,8 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
     batchIds: scopedBatchIds,
     testId: testId || null,
   });
-  const [students, tests, departments] = await Promise.all([
-    db.student.findMany({
-      where: studentWhere,
-      include: {
-        college: { select: { id: true, name: true, code: true } },
-        department: { select: { id: true, name: true } },
-        batch: { select: { id: true, name: true } },
-      },
-    }),
+  const [scalarStudents, tests, scalarDepartments, college] = await Promise.all([
+    db.student.findMany({ where: studentWhere, select: REPORT_STUDENT_SELECT }),
     db.test.findMany({
       where: testWhere,
       select: {
@@ -294,12 +309,15 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
         ...(collegeId ? { collegeId } : {}),
         ...(departmentId ? { id: departmentId } : {}),
       },
-      include: {
-        college: { select: { id: true, name: true, code: true } },
-      },
+      select: { id: true, name: true, collegeId: true },
       orderBy: [{ collegeId: "asc" }, { name: "asc" }],
     }),
+    db.college.findUnique({ where: { id: collegeId }, select: { id: true, name: true, code: true } }),
   ]);
+  // Everything is scoped to one college, so its name is resolved once rather
+  // than per student / department.
+  const students = (await attachStudentGroups(db, scalarStudents)).map((student) => ({ ...student, college }));
+  const departments = scalarDepartments.map((department) => ({ ...department, college }));
 
   const scopedTestIds = new Set(tests.map((test) => test.id));
   const scopedStudentIds = new Set(students.map((student) => student.id));
@@ -338,87 +356,83 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
       },
     });
 
+    // The per-student table is the bulk of the payload (one row per student in
+    // scope). Views that don't show it opt out: rows=none drops it, rows=absent
+    // keeps only students with no submission (the test deep-dive's list).
+    const rowsMode = String(req.query.rows || "all").toLowerCase();
+    if (rowsMode === "none") payload.tableRows = [];
+    else if (rowsMode === "absent") payload.tableRows = payload.tableRows.filter((row) => row.testsTaken === 0);
+
     return res.status(200).json(payload);
   }
 
-  const submissions = await db.submission.findMany({
+  // Student deep-dive: one student's submissions plus their tests, questions,
+  // violations and answers, each fetched in one query (not one per submission).
+  const scalarSubmissions = await db.submission.findMany({
     where: submissionWhere,
-    include: {
-      user: {
-        select: {
-          id: true,
-          fullName: true,
-          studentId: true,
-          enrollNumber: true,
-          enrollmentNumber: true,
-          year: true,
-          collegeId: true,
-          departmentId: true,
-          batchId: true,
-          college: { select: { id: true, name: true, code: true } },
-          department: { select: { id: true, name: true } },
-          batch: { select: { id: true, name: true } },
-        },
-      },
-      test: {
-        select: {
-          id: true,
-          title: true,
-          subject: true,
-          totalMarks: true,
-          ...(studentId
-            ? {
-                questions: {
-                  select: {
-                    id: true,
-                    type: true,
-                    marks: true,
-                    correctOption: true,
-                    correctOptions: true,
-                    correctBoolean: true,
-                    correctText: true,
-                  },
-                },
-              }
-            : {}),
-          collegeId: true,
-          departmentId: true,
-        },
-      },
-      ...(studentId
-        ? {
-            violations: {
-              select: {
-                id: true,
-                type: true,
-                createdAt: true,
-                metadata: true,
-              },
-              orderBy: { createdAt: "desc" },
-            },
-            answers: {
-              select: {
-                id: true,
-                questionId: true,
-                selectedOption: true,
-                selectedOptions: true,
-                selectedBoolean: true,
-                selectedText: true,
-                answerBoolean: true,
-                answerText: true,
-              },
-            },
-          }
-        : {
-            _count: {
-              select: {
-                violations: true,
-              },
-            },
-          }),
+    select: {
+      id: true,
+      userId: true,
+      testId: true,
+      score: true,
+      accuracy: true,
+      status: true,
+      timeSpentSeconds: true,
+      submittedAt: true,
+      updatedAt: true,
+      createdAt: true,
     },
     orderBy: { submittedAt: "asc" },
   });
+  const detailSubmissionIds = scalarSubmissions.map((submission) => submission.id);
+  const detailTestIds = uniqueIds(scalarSubmissions.map((submission) => submission.testId));
+  const [detailTests, detailQuestions, detailViolations, detailAnswers] = await Promise.all([
+    db.test.findMany({
+      where: { id: { in: detailTestIds } },
+      select: { id: true, title: true, subject: true, totalMarks: true, collegeId: true, departmentId: true },
+    }),
+    db.question.findMany({
+      where: { testId: { in: detailTestIds } },
+      select: { id: true, testId: true, type: true, marks: true, correctOption: true, correctOptions: true, correctBoolean: true, correctText: true },
+    }),
+    db.violation.findMany({
+      where: { submissionId: { in: detailSubmissionIds } },
+      select: { id: true, submissionId: true, type: true, createdAt: true, metadata: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.answer.findMany({
+      where: { submissionId: { in: detailSubmissionIds } },
+      select: {
+        id: true,
+        submissionId: true,
+        questionId: true,
+        selectedOption: true,
+        selectedOptions: true,
+        selectedBoolean: true,
+        selectedText: true,
+        answerBoolean: true,
+        answerText: true,
+      },
+    }),
+  ]);
+  const groupBy = (rows, key) => rows.reduce((map, row) => {
+    const id = String(row[key]);
+    if (!map.has(id)) map.set(id, []);
+    map.get(id).push(row);
+    return map;
+  }, new Map());
+  const questionsByTest = groupBy(detailQuestions, "testId");
+  const violationsBySubmission = groupBy(detailViolations, "submissionId");
+  const answersBySubmission = groupBy(detailAnswers, "submissionId");
+  const testById = new Map(detailTests.map((test) => [String(test.id), { ...test, questions: questionsByTest.get(String(test.id)) || [] }]));
+  const studentById = new Map(students.map((student) => [String(student.id), student]));
+  const submissions = scalarSubmissions.map((submission) => ({
+    ...submission,
+    user: studentById.get(String(submission.userId)) || null,
+    test: testById.get(String(submission.testId)) || null,
+    violations: violationsBySubmission.get(String(submission.id)) || [],
+    answers: answersBySubmission.get(String(submission.id)) || [],
+  }));
   const scopedSubmissions = submissions.filter((submission) => {
     if (studentId && !scopedStudentIds.has(submission.userId)) return false;
     if (testId && !scopedTestIds.has(submission.testId)) return false;
@@ -685,14 +699,16 @@ const deriveSuperTestListStatus = (test = {}) => {
 // College-scoped, paginated per-test aggregate list for the super-admin
 // Reports "Tests" tab. Mirrors the admin buildReportTestsPayload; the tests CSV/XLSX
 // export reuses it so an export can never diverge from the tab.
-const buildSuperReportTestsPayload = async (req) => {
+// `all` (exports only) returns every row instead of one page.
+const buildSuperReportTestsPayload = async (req, { all = false } = {}) => {
   const m = await models.init();
   const db = m.dbClient;
   const collegeId = normalizeId(req.query.collegeId);
   const departmentId = normalizeId(req.query.departmentId);
   const batchId = normalizeId(req.query.batchId);
+  const year = normalizeStudentYear(req.query.year);
   const page = Math.max(Number(req.query.page || 1), 1);
-  const limit = Math.min(Math.max(Number(req.query.limit || 10), 1), 100);
+  const requestedLimit = Math.min(Math.max(Number(req.query.limit || 10), 1), 100);
   const sortBy = String(req.query.sortBy || "startsAt");
   const sortDir = String(req.query.sortDir || "desc").toLowerCase() === "asc" ? "asc" : "desc";
   const search = String(req.query.search || "").trim().toLowerCase();
@@ -731,27 +747,31 @@ const buildSuperReportTestsPayload = async (req) => {
       startsAt: true,
       endsAt: true,
       totalMarks: true,
-      department: { select: { name: true } },
-      batch: { select: { name: true } },
-      questions: { select: { marks: true } },
+      departmentId: true,
+      batchId: true,
     },
   });
 
   if (tests.length === 0) {
-    return { data: [], pagination: { page: 1, limit, total: 0, totalPages: 1 } };
+    return { data: [], pagination: { page: 1, limit: requestedLimit, total: 0, totalPages: 1 } };
   }
   const testIds = tests.map((test) => String(test.id));
 
-  const scopedStudents = await db.student.findMany({
-    where: {
-      collegeId,
-      ...buildStudentLifecycleWhere(reportScopeFilters),
-      ...(departmentId ? { departmentId } : {}),
-      ...buildBatchStudentWhere(batchId),
-    },
-    select: { id: true },
-  });
-  const inScopeStudentCount = scopedStudents.length;
+  // Year narrows the participation denominator, matching the admin tests list.
+  const [inScopeStudentCount, departmentNames, batchNames, questionMarks] = await Promise.all([
+    db.student.count({
+      where: {
+        collegeId,
+        ...buildStudentLifecycleWhere(reportScopeFilters),
+        ...(departmentId ? { departmentId } : {}),
+        ...(year ? { year } : {}),
+        ...buildBatchStudentWhere(batchId),
+      },
+    }),
+    loadNamesById(db, "department", tests.map((test) => test.departmentId)),
+    loadNamesById(db, "batch", tests.map((test) => test.batchId)),
+    sumQuestionMarksByTest(testIds),
+  ]);
 
   const { rows: submissions, truncated } = await collectSubmissions({
     db,
@@ -764,15 +784,19 @@ const buildSuperReportTestsPayload = async (req) => {
         : {}),
     },
     select: {
+      id: true,
       testId: true,
       userId: true,
       score: true,
       accuracy: true,
-      _count: { select: { violations: true } },
     },
   });
+  const violationCounts = await countViolationsBySubmission(submissions.map((submission) => submission.id));
 
-  const testTotalMarks = new Map(tests.map((test) => [String(test.id), getTestTotalMarks(test)]));
+  const testTotalMarks = new Map(tests.map((test) => [
+    String(test.id),
+    getTestTotalMarks({ totalMarks: test.totalMarks, questions: [{ marks: questionMarks.get(String(test.id)) || 0 }] }),
+  ]));
   const byTest = new Map();
   for (const submission of submissions) {
     const testKey = String(submission.testId);
@@ -785,7 +809,7 @@ const buildSuperReportTestsPayload = async (req) => {
     current.count += 1;
     current.scoreSum += scorePercent;
     if (scorePercent >= PASS_THRESHOLD_PERCENT) current.passCount += 1;
-    current.violations += Number(submission._count?.violations || 0);
+    current.violations += violationCounts.get(String(submission.id)) || 0;
     if (submission.userId) current.students.add(String(submission.userId));
     byTest.set(testKey, current);
   }
@@ -798,8 +822,8 @@ const buildSuperReportTestsPayload = async (req) => {
       id: test.id,
       title: test.title || "Untitled test",
       status: deriveSuperTestListStatus(test),
-      department: test.department?.name || "-",
-      batch: test.batch?.name || "-",
+      department: departmentNames.get(String(test.departmentId))?.name || "-",
+      batch: batchNames.get(String(test.batchId))?.name || "-",
       startsAt: test.startsAt || null,
       endsAt: test.endsAt || null,
       totalMarks: testTotalMarks.get(String(test.id)) || 0,
@@ -836,6 +860,7 @@ const buildSuperReportTestsPayload = async (req) => {
   });
 
   const total = rows.length;
+  const limit = all ? Math.max(total, 1) : requestedLimit;
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const safePage = Math.min(page, totalPages);
   const start = (safePage - 1) * limit;
@@ -898,7 +923,7 @@ const getSuperReportTableDashboard = asyncHandler(async (req, res) => {
       batchIds: scopedBatchIds,
       testId: testId || null,
     }),
-    select: { id: true },
+    select: { id: true, title: true, totalMarks: true, assessmentFormat: true, modules: true },
   });
   const testIds = scopeTests.map((test) => String(test.id));
 
@@ -914,10 +939,16 @@ const getSuperReportTableDashboard = asyncHandler(async (req, res) => {
     ...(year ? { year } : {}),
     ...buildBatchStudentWhere(batchId),
   };
-  const tableStudents = await db.student.findMany({ where: tableStudentWhere, select: { id: true } });
-  const tableStudentIds = tableStudents.map((student) => String(student.id));
+  // Student names/groups come from this one scoped query (plus two batched name
+  // lookups) instead of three lookups per submission.
+  const [tableStudents, questionMarks] = await Promise.all([
+    db.student.findMany({ where: tableStudentWhere, select: REPORT_STUDENT_SELECT }).then((rows) => attachStudentGroups(db, rows)),
+    sumQuestionMarksByTest(testIds),
+  ]);
+  const studentById = new Map(tableStudents.map((student) => [String(student.id), student]));
+  const tableStudentIds = [...studentById.keys()];
   const submissionStudentFilter = studentId
-    ? (tableStudentIds.includes(String(studentId)) ? { userId: studentId } : { userId: { in: [] } })
+    ? (studentById.has(String(studentId)) ? { userId: studentId } : { userId: { in: [] } })
     : { userId: { in: tableStudentIds } };
 
   const submissions = await db.submission.findMany({
@@ -930,28 +961,28 @@ const getSuperReportTableDashboard = asyncHandler(async (req, res) => {
         ? { submittedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
         : {}),
     },
-    include: {
-      user: {
-        select: {
-          id: true,
-          fullName: true,
-          studentId: true,
-          enrollNumber: true,
-          enrollmentNumber: true,
-          department: { select: { name: true } },
-          batch: { select: { name: true } },
-        },
-      },
-      test: {
-        select: { title: true, totalMarks: true, assessmentFormat: true, modules: true, questions: { select: { id: true, marks: true } } },
-      },
-      violations: { select: { id: true, type: true, createdAt: true }, orderBy: { createdAt: "desc" } },
-      _count: { select: { violations: true } },
+    select: {
+      id: true,
+      userId: true,
+      testId: true,
+      score: true,
+      accuracy: true,
+      status: true,
+      timeSpentSeconds: true,
+      moduleState: true,
+      submittedAt: true,
+      updatedAt: true,
+      createdAt: true,
     },
     orderBy: { submittedAt: "desc" },
   });
+  const violationCounts = await countViolationsBySubmission(submissions.map((submission) => submission.id));
 
-  const resolveStudentId = (submission) => String(submission.userId || submission.user?.id || "");
+  const testById = new Map(scopeTests.map((test) => [
+    String(test.id),
+    { ...test, totalMarks: getTestTotalMarks({ totalMarks: test.totalMarks, questions: [{ marks: questionMarks.get(String(test.id)) || 0 }] }) },
+  ]));
+  const resolveStudentId = (submission) => String(submission.userId || "");
   const attemptsPerStudent = submissions.reduce((acc, submission) => {
     const key = resolveStudentId(submission);
     if (key) acc[key] = Number(acc[key] || 0) + 1;
@@ -959,11 +990,11 @@ const getSuperReportTableDashboard = asyncHandler(async (req, res) => {
   }, {});
 
   let rows = submissions.map((submission) => {
+    const test = testById.get(String(submission.testId)) || {};
+    const student = studentById.get(resolveStudentId(submission)) || null;
     const obtainedMarks = Number(submission.score || 0);
-    const totalMarks = Array.isArray(submission.test?.questions) && submission.test.questions.length > 0
-      ? submission.test.questions.reduce((sum, question) => sum + Number(question.marks || 0), 0)
-      : Number(submission.test?.totalMarks || 0);
-    const scorePercent = getScorePercent(submission);
+    const totalMarks = Number(test.totalMarks || 0);
+    const scorePercent = getScorePercent({ score: submission.score, accuracy: submission.accuracy, test: { totalMarks } });
     const date = submission.submittedAt || submission.updatedAt || submission.createdAt || new Date();
 
     return {
@@ -971,11 +1002,11 @@ const getSuperReportTableDashboard = asyncHandler(async (req, res) => {
       submissionId: submission.id,
       testId: submission.testId,
       studentId: resolveStudentId(submission),
-      studentName: submission.user?.fullName || "-",
-      studentRollNo: getStudentNumber(submission.user),
-      department: submission.user?.department?.name || "-",
-      batch: submission.user?.batch?.name || "-",
-      testName: submission.test?.title || "-",
+      studentName: student?.fullName || "-",
+      studentRollNo: getStudentNumber(student || {}),
+      department: student?.department?.name || "-",
+      batch: student?.batch?.name || "-",
+      testName: test.title || "-",
       score: scorePercent,
       scorePercent,
       accuracy: scorePercent,
@@ -984,18 +1015,8 @@ const getSuperReportTableDashboard = asyncHandler(async (req, res) => {
       timeTaken: Number(submission.timeSpentSeconds || 0),
       attemptCount: Number(attemptsPerStudent[resolveStudentId(submission)] || 0),
       status: submission.status || "IN_PROGRESS",
-      ...buildSubmissionModuleColumns(submission, submission.test),
-      violationCount: Number(submission._count?.violations || submission.violations?.length || 0),
-      violations: (submission.violations || []).map((violation) => ({
-        id: violation.id,
-        type: violation.type,
-        anomalyId: violation.id,
-        anomalyType: violation.type,
-        testId: submission.testId,
-        testName: submission.test?.title || "Test",
-        submissionId: submission.id,
-        createdAt: violation.createdAt,
-      })),
+      ...buildSubmissionModuleColumns(submission, test),
+      violationCount: violationCounts.get(String(submission.id)) || 0,
       date: new Date(date).toISOString(),
     };
   });
@@ -1022,11 +1043,90 @@ const getSuperReportTableDashboard = asyncHandler(async (req, res) => {
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const safePage = Math.min(page, totalPages);
   const start = (safePage - 1) * limit;
+  const pageRows = rows.slice(start, start + limit);
+
+  // Violation events (for the review dialog) are only needed for the visible page.
+  const pageViolations = pageRows.length
+    ? await db.violation.findMany({
+        where: { submissionId: { in: pageRows.map((row) => row.submissionId) } },
+        select: { id: true, submissionId: true, type: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      })
+    : [];
+  const violationsBySubmission = pageViolations.reduce((map, violation) => {
+    const key = String(violation.submissionId);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(violation);
+    return map;
+  }, new Map());
 
   res.status(200).json({
-    data: rows.slice(start, start + limit),
+    data: pageRows.map((row) => ({
+      ...row,
+      violations: (violationsBySubmission.get(String(row.submissionId)) || []).map((violation) => ({
+        id: violation.id,
+        type: violation.type,
+        anomalyId: violation.id,
+        anomalyType: violation.type,
+        testId: row.testId,
+        testName: row.testName,
+        submissionId: row.submissionId,
+        createdAt: violation.createdAt,
+      })),
+    })),
     pagination: { page: safePage, limit, total, totalPages },
   });
+});
+
+// Active colleges for the report college picker. Inactive colleges are left
+// out because every report endpoint rejects them (validateReportScope).
+const getSuperReportColleges = asyncHandler(async (req, res) => {
+  const m = await models.init();
+  const colleges = await m.dbClient.college.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true, code: true },
+    orderBy: { name: "asc" },
+  });
+  res.status(200).json({ data: colleges });
+});
+
+// Upper bound on tests offered in the report filters (newest first).
+const FILTER_OPTION_TEST_LIMIT = 500;
+
+// Everything the report filter bar needs for one college, in one request with
+// scalar projections — replaces four management-list calls (departments, tests,
+// batches, passout cohorts) that each resolved several relations per row.
+const getSuperReportFilterOptions = asyncHandler(async (req, res) => {
+  const m = await models.init();
+  const db = m.dbClient;
+  const collegeId = normalizeId(req.query.collegeId);
+  if (!collegeId) {
+    throw new ApiError(400, "Select a college before loading report filters");
+  }
+  await validateReportScope({ db, collegeId });
+
+  const [departments, batches, tests, passoutCohorts] = await Promise.all([
+    db.department.findMany({ where: { collegeId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    db.batch.findMany({
+      where: { collegeId },
+      select: { id: true, name: true, departmentId: true, departmentIds: true },
+      orderBy: { name: "asc" },
+    }),
+    db.test.findMany({
+      where: { collegeId },
+      select: { id: true, title: true },
+      orderBy: { createdAt: "desc" },
+      take: FILTER_OPTION_TEST_LIMIT,
+    }),
+    db.studentPassoutCohort.findMany({
+      where: { collegeId, status: "COMPLETED" },
+      select: { id: true, passoutYear: true, academicLabel: true, totalStudents: true },
+      orderBy: [{ passoutYear: "desc" }, { createdAt: "desc" }],
+      take: 100,
+    }),
+  ]);
+
+  res.status(200).json({ departments, batches, tests, passoutCohorts });
 });
 
 const getPassoutCohorts = asyncHandler(async (req, res) => {
@@ -1401,6 +1501,8 @@ module.exports = {
   buildSuperReportTestsPayload,
   getSuperReportTestsDashboard,
   getSuperReportTableDashboard,
+  getSuperReportColleges,
+  getSuperReportFilterOptions,
   getPassoutCohorts,
   getSuperReportJobs,
   downloadSuperReport,

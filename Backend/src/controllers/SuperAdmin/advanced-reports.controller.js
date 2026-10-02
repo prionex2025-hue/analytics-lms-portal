@@ -16,6 +16,7 @@ const {
   parseExportTestIds,
 } = require("../../services/report-export-datasets.service");
 const { buildSuperReportTestsPayload } = require("./reports.controller");
+const { attachStudentGroups, countViolationsBySubmission, sumQuestionMarksByTest, uniqueIds } = require("../../services/report-lookup.service");
 const { buildAdminTestVisibilityWhere, getDepartmentBatchIds } = require("../../utils/admin-test-access");
 const {
   REPORTABLE_SUBMISSION_STATUSES,
@@ -113,9 +114,18 @@ const loadSuperTestAttemptData = async ({ db, collegeId, testId }) => {
   const { rows: submissions, truncated } = await collectSubmissions({
     db,
     where: { collegeId, testId, status: { in: SUBMITTED_STATUSES } },
-    include: {
-      user: { select: { id: true, fullName: true, studentId: true, enrollNumber: true, enrollmentNumber: true } },
-    },
+  });
+  // One student lookup for all submissions (was one query per submission).
+  const userIds = uniqueIds(submissions.map((submission) => submission.userId));
+  const userRows = userIds.length
+    ? await db.student.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, fullName: true, studentId: true, enrollNumber: true, enrollmentNumber: true },
+      })
+    : [];
+  const users = new Map(userRows.map((user) => [String(user.id), user]));
+  submissions.forEach((submission) => {
+    submission.user = users.get(String(submission.userId)) || null;
   });
 
   const totalMarks = getTestTotalMarks(test);
@@ -137,7 +147,7 @@ const loadSuperScopedAttempts = async ({ db, collegeId, filters, onlyTestIds = n
     collegeId,
     departmentId: filters.departmentId,
     batchId: filters.batchId,
-    testSelect: { id: true, title: true, totalMarks: true, endsAt: true, questions: { select: { marks: true } } },
+    testSelect: { id: true, title: true, totalMarks: true, endsAt: true },
   });
 
   if (Array.isArray(onlyTestIds) && onlyTestIds.length > 0) {
@@ -155,19 +165,24 @@ const loadSuperScopedAttempts = async ({ db, collegeId, filters, onlyTestIds = n
     ...(scope.batchId ? { OR: [{ batchId: scope.batchId }, { batchIds: { in: [scope.batchId] } }] } : {}),
   };
 
-  const students = await db.student.findMany({
-    where: studentWhere,
-    select: {
-      id: true,
-      fullName: true,
-      studentId: true,
-      enrollNumber: true,
-      enrollmentNumber: true,
-      departmentId: true,
-      department: { select: { id: true, name: true } },
-      batch: { select: { id: true, name: true } },
-    },
-  });
+  const [students, questionMarks] = await Promise.all([
+    db.student
+      .findMany({
+        where: studentWhere,
+        select: {
+          id: true,
+          fullName: true,
+          studentId: true,
+          enrollNumber: true,
+          enrollmentNumber: true,
+          departmentId: true,
+          batchId: true,
+          batchIds: true,
+        },
+      })
+      .then((rows) => attachStudentGroups(db, rows)),
+    sumQuestionMarksByTest(scope.testIds),
+  ]);
   const studentIds = students.map((student) => String(student.id));
 
   const { rows: submissions, truncated } = studentIds.length
@@ -195,12 +210,15 @@ const loadSuperScopedAttempts = async ({ db, collegeId, filters, onlyTestIds = n
           accuracy: true,
           submittedAt: true,
           createdAt: true,
-          _count: { select: { violations: true } },
         },
       })
     : { rows: [], truncated: false };
+  const violationCounts = await countViolationsBySubmission(submissions.map((submission) => submission.id));
 
-  const testTotals = new Map(scope.tests.map((test) => [String(test.id), getTestTotalMarks(test)]));
+  const testTotals = new Map(scope.tests.map((test) => [
+    String(test.id),
+    getTestTotalMarks({ totalMarks: test.totalMarks, questions: [{ marks: questionMarks.get(String(test.id)) || 0 }] }),
+  ]));
   const attempts = submissions.map((submission) => ({
     ...submission,
     scorePercent: getScorePercent({
@@ -210,7 +228,7 @@ const loadSuperScopedAttempts = async ({ db, collegeId, filters, onlyTestIds = n
     }),
     totalMarks: testTotals.get(String(submission.testId)) || 0,
     date: submission.submittedAt || submission.createdAt,
-    violations: Number(submission._count?.violations || 0),
+    violations: violationCounts.get(String(submission.id)) || 0,
   }));
 
   return { ok: true, scope, students, attempts, truncated };
@@ -445,7 +463,7 @@ const buildSuperExportDataset = async (req) => {
     const data = await loadSuperScopedAttempts({ db, collegeId, filters, onlyTestIds: testIds });
     rows = data.ok ? buildTestResultRows(data) : [];
   } else if (dataset === "tests") {
-    const payload = await buildSuperReportTestsPayload({ ...req, query: { ...req.query, page: 1, limit: 100 } });
+    const payload = await buildSuperReportTestsPayload({ ...req, query: { ...req.query, page: 1 } }, { all: true });
     rows = Array.isArray(payload?.data) ? payload.data : [];
   }
 

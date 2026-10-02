@@ -10,6 +10,8 @@ const {
 	getSuperReportAnalytics,
 	getSuperReportTestsDashboard,
 	getSuperReportTableDashboard,
+	getSuperReportColleges,
+	getSuperReportFilterOptions,
 	getPassoutCohorts,
 	getSuperReportJobs,
 	downloadSuperReport,
@@ -57,6 +59,8 @@ const superReportReadLimiter = createRateLimiter({
 router.post("/generate", authenticateSuperAdmin, superReportLimiter, validate(createSuperReportSchema), generateSuperReport);
 router.get("/", authenticateSuperAdmin, superReportReadLimiter, getSuperReportJobs);
 router.get("/passout-cohorts", authenticateSuperAdmin, superReportReadLimiter, getPassoutCohorts);
+router.get("/colleges", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportColleges);
+router.get("/filter-options", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportFilterOptions);
 router.get("/analytics", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportAnalytics);
 router.get("/tests", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportTestsDashboard);
 router.get("/table", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportTableDashboard);

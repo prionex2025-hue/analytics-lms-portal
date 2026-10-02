@@ -1199,6 +1199,19 @@ async function collectRelationFilteredDocuments({
 // MongoDB queries with proper indexed filters and $lookup for relations.
 // ---------------------------------------------------------------------------
 
+// A `select` made only of scalar fields becomes a native projection, so Mongo
+// sends just those fields. Selects with relations or _count return null: their
+// resolvers need source fields (e.g. departmentId) that may not be selected.
+function buildScalarProjection(modelName, select) {
+  if (!select || typeof select !== "object") return null;
+  const projection = { _id: 1 };
+  for (const [field, spec] of Object.entries(select)) {
+    if (field === "_count" || (RELATIONS[modelName] && RELATIONS[modelName][field])) return null;
+    if (spec) projection[toDocumentFieldName(field)] = 1;
+  }
+  return projection;
+}
+
 function modelClient(modelName) {
   return {
     // Compatibility helper: some controllers expect a Mongoose-like
@@ -1222,7 +1235,8 @@ function modelClient(modelName) {
 
       // If no relation filters, use native MongoDB pagination
       if (Object.keys(relations).length === 0) {
-        let cursor = collection.find(cleanFilter);
+        const projection = args.include ? null : buildScalarProjection(modelName, args.select);
+        let cursor = collection.find(cleanFilter, projection ? { projection } : undefined);
         if (sort) {
           cursor = cursor.sort(sort);
         }

@@ -418,7 +418,11 @@ const createResponseCacheInvalidationHook = () => (req, res, next) => {
       pathname.startsWith("/api/super-admin/analytics") ||
       pathname.startsWith("/api/superadmin/analytics") ||
       pathname.startsWith("/api/super-admin/tests") ||
-      pathname.startsWith("/api/superadmin/tests")
+      pathname.startsWith("/api/superadmin/tests") ||
+      // Report filter options (colleges/departments/batches) are cached too.
+      pathname.startsWith("/api/super-admin/colleges") ||
+      pathname.startsWith("/api/super-admin/departments") ||
+      pathname.startsWith("/api/super-admin/batches")
     ) {
       tags.push("super-analytics:all", "super-dashboard:all");
     }

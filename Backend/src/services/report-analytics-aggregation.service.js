@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const { withSubmissionScorePercent, toObjectIdIfValid, normalizeMongoId } = require("../utils/analytics-aggregation");
+const { scorePercentExpression, toObjectIdIfValid, normalizeMongoId } = require("../utils/analytics-aggregation");
 const { clampPercent } = require("../utils/score");
 const { describeDistribution, PASS_THRESHOLD_PERCENT } = require("../utils/stats");
 const { REPORTABLE_SUBMISSION_STATUSES } = require("./report-scope.service");
@@ -19,7 +19,7 @@ const scoreBand = (score) => {
  * Database-side aggregation for the scoped report analytics. Replaces loading
  * up to 20k submissions into Node: Mongo computes overall metrics, monthly
  * trend, subject and department comparatives, and per-student rollups in a
- * single `$facet`. Reuses the production `withSubmissionScorePercent()` helper.
+ * single `$facet`. Uses the production `scorePercentExpression`.
  */
 async function aggregateReportSubmissions({ collegeId, testIds, studentIds, dateFrom, dateTo }) {
   const db = mongoose.connection.db;
@@ -38,13 +38,24 @@ async function aggregateReportSubmissions({ collegeId, testIds, studentIds, date
 
   const pipeline = [
     { $match: match },
-    ...withSubmissionScorePercent(),
+    { $project: { userId: 1, testId: 1, score: 1, accuracy: 1, moduleState: 1, submittedAt: 1, updatedAt: 1, createdAt: 1 } },
+    // Same score expression as withSubmissionScorePercent(). Each joined
+    // document is reduced to the one field used below straight after its
+    // lookup, so whole test / violation / student documents are not carried
+    // through the rest of the pipeline. (Plain localField/foreignField joins:
+    // sub-pipeline $lookups measured ~50% slower here.)
+    { $lookup: { from: "test", localField: "testId", foreignField: "_id", as: "testDocs" } },
+    { $addFields: { test: { totalMarks: { $first: "$testDocs.totalMarks" }, subject: { $first: "$testDocs.subject" } } } },
+    { $project: { testDocs: 0 } },
+    { $addFields: { scorePercent: scorePercentExpression } },
     { $lookup: { from: "violation", localField: "_id", foreignField: "submissionId", as: "violationDocs" } },
-    { $lookup: { from: "student", localField: "userId", foreignField: "_id", as: "studentDoc" } },
-    { $unwind: { path: "$studentDoc", preserveNullAndEmptyArrays: true } },
+    { $addFields: { violationCount: { $size: "$violationDocs" } } },
+    { $project: { violationDocs: 0 } },
+    { $lookup: { from: "student", localField: "userId", foreignField: "_id", as: "studentDocs" } },
+    { $addFields: { studentDoc: { departmentId: { $first: "$studentDocs.departmentId" } } } },
+    { $project: { studentDocs: 0 } },
     {
       $addFields: {
-        violationCount: { $size: { $ifNull: ["$violationDocs", []] } },
         eventDate: { $ifNull: ["$submittedAt", { $ifNull: ["$updatedAt", "$createdAt"] }] },
         isPass: { $cond: [{ $gte: ["$scorePercent", PASS_THRESHOLD_PERCENT] }, 1, 0] },
       },
