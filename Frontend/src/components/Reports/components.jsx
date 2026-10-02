@@ -15,9 +15,11 @@ import {
   createSeriesColorScale,
   formatDateLabel,
   formatPercent,
+  NO_DATA_LABEL,
   ordinalColor,
+  percentOrNull,
 } from "@/components/Reports/utils";
-import { scoreColorClass } from "@/components/Reports/stats";
+import { scoreColorClassOrNoData } from "@/components/Reports/stats";
 
 const AXIS_TICK = { fontSize: 11, fill: "var(--text-secondary)" };
 const GRID_STROKE = "var(--chart-grid)";
@@ -35,7 +37,9 @@ export function ChartTooltip({ active, payload, label }) {
         <div key={`${point.name}-${index}`} className="flex items-center gap-2 text-text-secondary">
           <span className="inline-block h-2 w-2 rounded-sm" style={{ background: point.color }} />
           <span>{point.name}:</span>
-          <span className="font-semibold text-text-primary">{typeof point.value === "number" ? clampPercent(point.value).toFixed(1) : point.value}</span>
+          <span className="font-semibold text-text-primary">
+            {point.value == null ? NO_DATA_LABEL : typeof point.value === "number" ? clampPercent(point.value).toFixed(1) : point.value}
+          </span>
         </div>
       ))}
     </div>
@@ -152,8 +156,12 @@ export function AnalyticsSkeleton() {
   );
 }
 
-export function ScoreBadge({ score }) {
-  return <span className={`font-semibold tabular-nums ${scoreColorClass(score)}`}>{score != null ? formatPercent(score) : "-"}</span>;
+export function ScoreBadge({ score, noDataLabel = NO_DATA_LABEL }) {
+  return (
+    <span className={`font-semibold tabular-nums ${scoreColorClassOrNoData(score)}`}>
+      {score == null ? noDataLabel : formatPercent(score)}
+    </span>
+  );
 }
 
 export function StatusBadge({ label, variant = "default" }) {
@@ -172,6 +180,7 @@ export function Th({ children, sortKey, sortState, onSort }) {
   const asc = sortState?.dir === "asc";
   return (
     <th
+      scope="col"
       onClick={() => onSort?.(sortKey)}
       className={`select-none whitespace-nowrap px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-widest text-text-secondary ${onSort ? "cursor-pointer hover:text-text-primary" : ""}`}
     >
@@ -229,6 +238,49 @@ export function ScoreDistributionChart({ data, height = "h-[220px]" }) {
           </BarChart>
         </ResponsiveContainer>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Average score per subject as horizontal bars. Each subject is a distinct
+ * entity, not a step in an ordered sequence, so colour is keyed to the subject
+ * name instead of its position. Subjects the API answered with `null` are
+ * dropped rather than drawn as a 0% bar.
+ */
+export function SubjectPerformanceChart({ topics, height = "h-[240px]" }) {
+  const rows = (Array.isArray(topics) ? topics : [])
+    .filter((topic) => topic?.score != null)
+    .map((topic) => ({ subject: String(topic.subject || "General"), score: percentOrNull(topic.score) }))
+    .sort((a, b) => b.score - a.score);
+
+  if (!rows.length) {
+    return <EmptyState title="No subject scores" description="Subject averages appear once students submit tests." />;
+  }
+
+  const colorFor = createSeriesColorScale(rows.map((row) => row.subject));
+
+  return (
+    <div className={`${height} w-full`}>
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 320, height: 220 }}>
+        <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 44, left: 8, bottom: 4 }} barCategoryGap="22%">
+          <CartesianGrid {...gridProps} horizontal={false} />
+          <XAxis type="number" domain={[0, 100]} unit="%" axisLine={false} tickLine={false} tick={AXIS_TICK} />
+          <YAxis type="category" dataKey="subject" width={110} interval={0} axisLine={false} tickLine={false} tick={AXIS_TICK} />
+          <Tooltip cursor={{ fill: "var(--muted)", fillOpacity: 0.5 }} content={ChartTooltip} />
+          <Bar
+            dataKey="score"
+            name="Average score"
+            radius={[0, 4, 4, 0]}
+            isAnimationActive={false}
+            label={{ position: "right", fontSize: 11, fill: "var(--text-secondary)", formatter: (value) => `${Number(value).toFixed(1)}%` }}
+          >
+            {rows.map((row) => (
+              <Cell key={row.subject} fill={colorFor(row.subject)} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }

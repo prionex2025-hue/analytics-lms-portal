@@ -180,6 +180,7 @@ function buildAggregateReportResponse({ facet = {}, students = [], tests = [], d
 
   const studentRows = students.map((student) => {
     const agg = byStudent.get(normalizeMongoId(student.id)) || { attempts: 0, avgScore: 0, violations: 0 };
+    const attempts = Number(agg.attempts || 0);
     return {
       studentId: student.id,
       name: student.fullName,
@@ -190,10 +191,10 @@ function buildAggregateReportResponse({ facet = {}, students = [], tests = [], d
       department: student.department?.name || "-",
       batch: student.batch?.name || "-",
       year: student.year || null,
-      avgScore: toPercent(agg.avgScore),
-      testsTaken: Number(agg.attempts || 0),
+      avgScore: attempts > 0 ? toPercent(agg.avgScore) : null,
+      testsTaken: attempts,
       violations: Number(agg.violations || 0),
-      participation: totalTests > 0 ? toPercent((Number(agg.attempts || 0) / totalTests) * 100) : 0,
+      participation: totalTests > 0 ? toPercent((attempts / totalTests) * 100) : null,
     };
   });
 
@@ -213,9 +214,9 @@ function buildAggregateReportResponse({ facet = {}, students = [], tests = [], d
 
   const totalSubmissions = Number(overall.totalSubmissions || 0);
   const attemptedStudents = Number(overall.attemptedCount || 0);
-  const avgScore = toPercent(overall.avgScore || 0);
-  const passRate = totalSubmissions ? toPercent((Number(overall.passing || 0) / totalSubmissions) * 100) : 0;
-  const participationRate = students.length ? toPercent((attemptedStudents / students.length) * 100) : 0;
+  const avgScore = totalSubmissions > 0 ? toPercent(overall.avgScore) : null;
+  const passRate = totalSubmissions ? toPercent((Number(overall.passing || 0) / totalSubmissions) * 100) : null;
+  const participationRate = students.length ? toPercent((attemptedStudents / students.length) * 100) : null;
   const totalViolations = Number(overall.violations || 0);
 
   const scoreTrend = (facet.byMonth || []).map((row) => ({ month: row.month, score: toPercent(row.score) }));
@@ -227,7 +228,9 @@ function buildAggregateReportResponse({ facet = {}, students = [], tests = [], d
   rankedStudents.forEach((row) => {
     distributionBase[scoreBand(row.avgScore)] += 1;
   });
-  const distributionStats = describeDistribution(rankedStudents.map((row) => row.avgScore));
+  const distributionStats = rankedStudents.length
+    ? describeDistribution(rankedStudents.map((row) => row.avgScore))
+    : null;
 
   const studentCountByDepartment = new Map();
   students.forEach((student) => {
@@ -252,9 +255,9 @@ function buildAggregateReportResponse({ facet = {}, students = [], tests = [], d
       college: department.college?.name || "-",
       students: deptStudents,
       submissions,
-      avgScore: toPercent(agg.avgScore || 0),
-      passRate: submissions ? toPercent((Number(agg.passing || 0) / submissions) * 100) : 0,
-      participation: deptStudents ? toPercent((Number(agg.attemptedCount || 0) / deptStudents) * 100) : 0,
+      avgScore: submissions > 0 ? toPercent(agg.avgScore || 0) : null,
+      passRate: submissions ? toPercent((Number(agg.passing || 0) / submissions) * 100) : null,
+      participation: deptStudents ? toPercent((Number(agg.attemptedCount || 0) / deptStudents) * 100) : null,
       violations: Number(agg.violations || 0),
     };
   });
@@ -354,33 +357,49 @@ function aggregateModulePerformance(submissions = [], { modules = [] } = {}) {
     name: bucket.name,
     order: bucket.order,
     attempts: bucket.count,
-    averageScore: bucket.count ? Number((bucket.scoreSum / bucket.count).toFixed(2)) : 0,
-    averageMaxScore: bucket.count ? Number((bucket.maxSum / bucket.count).toFixed(2)) : 0,
-    averagePercentage: bucket.count ? Number((bucket.pctSum / bucket.count).toFixed(2)) : 0,
-    averageTimeSeconds: bucket.count ? Math.round(bucket.timeSum / bucket.count) : 0,
-    completionRate: bucket.count ? Number(((bucket.completed / bucket.count) * 100).toFixed(2)) : 0,
+    averageScore: bucket.count ? Number((bucket.scoreSum / bucket.count).toFixed(2)) : null,
+    averageMaxScore: bucket.count ? Number((bucket.maxSum / bucket.count).toFixed(2)) : null,
+    averagePercentage: bucket.count ? Number((bucket.pctSum / bucket.count).toFixed(2)) : null,
+    averageTimeSeconds: bucket.count ? Math.round(bucket.timeSum / bucket.count) : null,
+    completionRate: bucket.count ? Number(((bucket.completed / bucket.count) * 100).toFixed(2)) : null,
   }));
 
   const studentRows = withModules.map((submission) => {
     const byKey = new Map((submission.moduleState || []).map((ms) => [ms.key, ms]));
+    const modules = keys.map((k) => {
+      const ms = byKey.get(k.key) || {};
+      return {
+        key: k.key,
+        name: k.name,
+        score: Number(ms.score || 0),
+        maxScore: Number(ms.maxScore || 0),
+        percentage: Number(ms.percentage || 0),
+        timeTakenSeconds: Number(ms.timeTakenSeconds || 0),
+      };
+    });
+
+    // The module states are the authoritative denominator. `overallMaxScore` is
+    // persisted at submit time, but older/backfilled submissions may predate it,
+    // and a missing value must never render as "36/0".
+    const moduleMaxScore = modules.reduce((sum, mod) => sum + mod.maxScore, 0);
+    const moduleScore = modules.reduce((sum, mod) => sum + mod.score, 0);
+    const storedMaxScore = Number(submission.overallMaxScore || 0);
+    const overallMaxScore = storedMaxScore > 0 ? storedMaxScore : moduleMaxScore;
+    const storedPercentage = Number(submission.overallPercentage);
+    const overallPercentage = Number.isFinite(storedPercentage) && submission.overallPercentage != null
+      ? storedPercentage
+      : overallMaxScore > 0
+        ? Number(((moduleScore / overallMaxScore) * 100).toFixed(2))
+        : Number(submission.accuracy || 0);
+
     return {
       submissionId: submission.id,
       userId: submission.userId,
-      overallScore: Number(submission.score || 0),
-      overallMaxScore: Number(submission.overallMaxScore || 0),
-      overallPercentage: Number(submission.overallPercentage || submission.accuracy || 0),
+      overallScore: Number(submission.score ?? moduleScore),
+      overallMaxScore,
+      overallPercentage,
       totalActualTimeSeconds: Number(submission.totalActualTimeSeconds || submission.timeSpentSeconds || 0),
-      modules: keys.map((k) => {
-        const ms = byKey.get(k.key) || {};
-        return {
-          key: k.key,
-          name: k.name,
-          score: Number(ms.score || 0),
-          maxScore: Number(ms.maxScore || 0),
-          percentage: Number(ms.percentage || 0),
-          timeTakenSeconds: Number(ms.timeTakenSeconds || 0),
-        };
-      }),
+      modules,
     };
   });
 

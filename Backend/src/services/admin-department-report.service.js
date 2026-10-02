@@ -1,4 +1,4 @@
-const PASS_THRESHOLD_PERCENT = 40;
+const { PASS_THRESHOLD_PERCENT } = require("../utils/stats");
 const PLACEMENT_READY_PERCENT = 60;
 const { clampPercent } = require("../utils/score");
 const {
@@ -9,6 +9,7 @@ const {
 const { computeItemAnalysis } = require("./item-analysis.service");
 const { isQuestionCorrect } = require("./test.service");
 const { aggregateModulePerformance } = require("./report-analytics-aggregation.service");
+const { averageOf, participationRateOf, passRateOf, shareAtOrAboveOf } = require("./report-metrics.service");
 
 // Above this many attempts we skip per-question item analysis in the report to
 // avoid loading an unbounded number of answer rows in the worker.
@@ -108,6 +109,7 @@ const resolveStudentYear = (student) => {
 };
 
 const getSubjectStatus = (avgScore) => {
+  if (avgScore == null) return "No Data";
   if (avgScore < 50) return "Needs Attention";
   if (avgScore < 70) return "Moderate";
   return "Good";
@@ -139,7 +141,28 @@ const REPORT_SUBMISSION_INCLUDE = {
       batch: { select: { name: true, year: true, academicYear: true } },
     },
   },
-  test: { select: { id: true, title: true, subject: true, totalMarks: true } },
+  test: {
+    select: {
+      id: true,
+      title: true,
+      subject: true,
+      totalMarks: true,
+      assessmentFormat: true,
+      modules: true,
+      questions: {
+        select: {
+          id: true,
+          type: true,
+          marks: true,
+          correctOption: true,
+          correctOptions: true,
+          correctBoolean: true,
+          correctText: true,
+        },
+      },
+    },
+  },
+  answers: true,
   violations: { select: { type: true } },
 };
 
@@ -311,6 +334,27 @@ const aggregateInstitutionReport = ({ meta, students = [], submissions = [], inc
     const deptId = String(submission.user?.departmentId || studentById.get(studentKey)?.departmentId || "");
     const deptName = departmentNameById.get(deptId) || fallbackDeptName;
 
+    const questions = Array.isArray(submission.test?.questions) ? submission.test.questions : [];
+    const answers = Array.isArray(submission.answers) ? submission.answers : [];
+    let correctCount = 0;
+    let wrongCount = 0;
+    questions.forEach((question) => {
+      const answer = answers.find((item) => String(item.questionId) === String(question.id));
+      if (isQuestionCorrect(question, answer)) correctCount += 1;
+      else if (answer) wrongCount += 1;
+    });
+    const unansweredCount = Math.max(0, (questions.length || answers.length) - correctCount - wrongCount);
+    const moduleBreakdown = Array.isArray(submission.moduleState)
+      ? submission.moduleState.map((ms) => ({
+          key: ms.key,
+          name: ms.name,
+          order: ms.order,
+          score: toNumber(ms.score),
+          maxScore: toNumber(ms.maxScore),
+          percentage: toNumber(ms.percentage),
+        }))
+      : [];
+
     const record = {
       studentId: studentKey,
       name: submission.user?.fullName || "Student",
@@ -320,7 +364,18 @@ const aggregateInstitutionReport = ({ meta, students = [], submissions = [], inc
       departmentId: deptId,
       departmentName: deptName,
       scorePercent,
+      obtainedMarks: toNumber(submission.score),
+      totalMarks: toNumber(submission.test?.totalMarks),
       timeMin,
+      timeTaken: toNumber(submission.timeSpentSeconds),
+      totalTimeSeconds: toNumber(submission.timeSpentSeconds),
+      correctCount,
+      wrongCount,
+      unansweredCount,
+      totalQuestions: questions.length || answers.length,
+      modules: moduleBreakdown,
+      assessmentFormat: submission.test?.assessmentFormat || "OPEN_TEST",
+      status: submission.status || null,
       violations: violationCount,
       violationsByType: submission.violations || [],
     };
@@ -347,16 +402,19 @@ const aggregateInstitutionReport = ({ meta, students = [], submissions = [], inc
   const studentsNotAttended = Math.max(totalStudents - studentsAppeared, 0);
   const scores = bestRows.map((row) => row.scorePercent);
   const times = bestRows.map((row) => row.timeMin).filter((value) => value > 0);
-  const averageScore = studentsAppeared > 0 ? round1(scores.reduce((sum, value) => sum + value, 0) / studentsAppeared) : 0;
-  const highestScore = scores.length ? round1(Math.max(...scores)) : 0;
-  const lowestScore = scores.length ? round1(Math.min(...scores)) : 0;
-  const averageTimeMin = times.length ? Math.round(times.reduce((sum, value) => sum + value, 0) / times.length) : 0;
+  // Score-based metrics are null when nobody produced a score: a department or
+  // cohort that never sat the test has no average, which is not the same fact as
+  // an average of zero.
+  const averageScore = averageOf(scores);
+  const highestScore = scores.length ? round1(Math.max(...scores)) : null;
+  const lowestScore = scores.length ? round1(Math.min(...scores)) : null;
+  const averageTimeMin = times.length ? Math.round(times.reduce((sum, value) => sum + value, 0) / times.length) : null;
 
   const passedCount = bestRows.filter((row) => row.scorePercent >= PASS_THRESHOLD_PERCENT).length;
   const failedCount = bestRows.filter((row) => row.scorePercent < PASS_THRESHOLD_PERCENT).length;
-  const passPercentage = studentsAppeared > 0 ? round1((passedCount / studentsAppeared) * 100) : 0;
+  const passPercentage = studentsAppeared > 0 ? round1((passedCount / studentsAppeared) * 100) : null;
   const placementReadyCount = bestRows.filter((row) => row.scorePercent >= PLACEMENT_READY_PERCENT).length;
-  const placementReadyPercent = studentsAppeared > 0 ? round1((placementReadyCount / studentsAppeared) * 100) : 0;
+  const placementReadyPercent = studentsAppeared > 0 ? round1((placementReadyCount / studentsAppeared) * 100) : null;
 
   // Incomplete = opened the test but never produced a reportable submission.
   const attemptedIds = new Set(bestRows.map((row) => row.studentId));
@@ -373,21 +431,21 @@ const aggregateInstitutionReport = ({ meta, students = [], submissions = [], inc
     .map(([subject, scoresMap]) => {
       const values = Array.from(scoresMap.values());
       const stat = subjectStats.get(subject) || { time: [] };
-      const avgScore = values.length ? round1(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
       const timeValues = (stat.time || []).filter((value) => value > 0);
       return {
         subject,
-        averageScore: avgScore,
-        highest: values.length ? round1(Math.max(...values)) : 0,
-        lowest: values.length ? round1(Math.min(...values)) : 0,
-        avgTimeMin: timeValues.length ? Math.round(timeValues.reduce((sum, value) => sum + value, 0) / timeValues.length) : 0,
+        averageScore: averageOf(values),
+        highest: values.length ? round1(Math.max(...values)) : null,
+        lowest: values.length ? round1(Math.min(...values)) : null,
+        avgTimeMin: timeValues.length ? Math.round(timeValues.reduce((sum, value) => sum + value, 0) / timeValues.length) : null,
       };
     })
-    .sort((a, b) => b.averageScore - a.averageScore);
+    .sort((a, b) => (b.averageScore ?? -1) - (a.averageScore ?? -1));
 
+  // Weakest first, with a subject nobody scored sorted last.
   const weakSubjects = subjectPerformance
     .slice()
-    .sort((a, b) => a.averageScore - b.averageScore)
+    .sort((a, b) => (a.averageScore ?? Infinity) - (b.averageScore ?? Infinity))
     .map((row) => ({ subject: row.subject, averageScore: row.averageScore, status: getSubjectStatus(row.averageScore) }));
   const strongSubjects = subjectPerformance.slice(0, 5);
 
@@ -415,7 +473,6 @@ const aggregateInstitutionReport = ({ meta, students = [], submissions = [], inc
   const departmentPerformance = Array.from(departmentAgg.values())
     .map((bucket) => {
       const attempted = bucket.scores.length;
-      const avg = attempted ? round1(bucket.scores.reduce((sum, value) => sum + value, 0) / attempted) : 0;
       return {
         departmentName: bucket.departmentName,
         registered: bucket.registered,
@@ -423,15 +480,18 @@ const aggregateInstitutionReport = ({ meta, students = [], submissions = [], inc
         notAttended: Math.max(bucket.registered - attempted, 0),
         passed: bucket.passed,
         failed: Math.max(attempted - bucket.passed, 0),
-        averageScore: avg,
-        highest: attempted ? round1(Math.max(...bucket.scores)) : 0,
-        participation: bucket.registered ? round1((attempted / bucket.registered) * 100) : 0,
-        passRate: attempted ? round1((bucket.passed / attempted) * 100) : 0,
-        placementReady: attempted ? round1((bucket.placement / attempted) * 100) : 0,
-        avgTimeMin: bucket.times.length ? Math.round(bucket.times.reduce((sum, value) => sum + value, 0) / bucket.times.length) : 0,
+        // A department where nobody attempted has no average, no pass rate and
+        // no placement-ready figure. Those stay null so the report shows "no
+        // data" instead of a reassuring-looking 0%.
+        averageScore: averageOf(bucket.scores),
+        highest: attempted ? round1(Math.max(...bucket.scores)) : null,
+        participation: participationRateOf({ attempted, assigned: bucket.registered }),
+        passRate: passRateOf(bucket.scores),
+        placementReady: shareAtOrAboveOf(bucket.scores, PLACEMENT_READY_PERCENT),
+        avgTimeMin: bucket.times.length ? Math.round(bucket.times.reduce((sum, value) => sum + value, 0) / bucket.times.length) : null,
       };
     })
-    .sort((a, b) => b.averageScore - a.averageScore)
+    .sort((a, b) => (b.averageScore ?? -1) - (a.averageScore ?? -1))
     .map((row, index) => ({ ...row, rank: index + 1 }));
 
   const rankedStudents = bestRows
@@ -447,7 +507,18 @@ const aggregateInstitutionReport = ({ meta, students = [], submissions = [], inc
       department: row.departmentName,
       scorePercent: round1(row.scorePercent),
       accuracy: round1(row.scorePercent),
+      obtainedMarks: Number(row.obtainedMarks || 0),
+      totalMarks: Number(row.totalMarks || 0),
       timeMin: row.timeMin,
+      totalTimeSeconds: Number(row.totalTimeSeconds ?? (row.timeMin || 0) * 60),
+      timeTaken: Number(row.totalTimeSeconds ?? (row.timeMin || 0) * 60),
+      correctCount: Number(row.correctCount || 0),
+      wrongCount: Number(row.wrongCount || 0),
+      unansweredCount: Number(row.unansweredCount || 0),
+      totalQuestions: Number(row.totalQuestions || 0),
+      modules: Array.isArray(row.modules) ? row.modules : [],
+      assessmentFormat: row.assessmentFormat || "OPEN_TEST",
+      status: row.status || null,
     }));
 
   const topPerformers = rankedStudents.slice(0, 20);

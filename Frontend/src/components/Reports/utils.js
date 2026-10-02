@@ -1,7 +1,44 @@
+// The report APIs answer with `null` — not 0 — for a metric they have no data
+// for, so every formatter has to tell "no data" apart from a real zero.
+export const NO_DATA_LABEL = "—";
+
 export const clampPercent = (value) => {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return 0;
   return Math.max(0, Math.min(100, number));
+};
+
+/** clampPercent that keeps a missing metric (`null`) missing instead of making it 0. */
+export const percentOrNull = (value) => {
+  if (value == null) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.min(100, number));
+};
+
+/**
+ * Comparable stand-in for a percentage that may be missing (`null` = no data),
+ * so rankings never treat "no data" as a real 0. Missing values always rank
+ * last; the two comparators below pick the direction.
+ */
+export const percentRank = (value) => {
+  if (value == null) return -Infinity;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : -Infinity;
+};
+
+/** Best first, with metrics that have no data last. */
+export const comparePercentDesc = (a, b) => {
+  const av = percentRank(a);
+  const bv = percentRank(b);
+  return av === bv ? 0 : bv - av;
+};
+
+/** Worst first, with metrics that have no data last. */
+export const comparePercentAsc = (a, b) => {
+  const av = percentRank(a);
+  const bv = percentRank(b);
+  return av === bv ? 0 : av - bv;
 };
 
 /** Map a report/export API error to a human-readable message for the UI. */
@@ -106,6 +143,7 @@ export const scoreStatusRole = (score) => {
 };
 
 export const formatPercent = (value) => {
+  if (value == null) return NO_DATA_LABEL;
   const number = clampPercent(value);
   return `${number.toFixed(1)}%`;
 };
@@ -116,10 +154,14 @@ export const formatDateLabel = (value) => {
   return date.toLocaleDateString();
 };
 
-export const toQueryString = (params = {}) => {
+// `options.keepAll` names params whose "all" value is a real choice rather than
+// "unset" (e.g. academicStatus=all), so they survive serialisation.
+export const toQueryString = (params = {}, options = {}) => {
+  const keepAll = Array.isArray(options.keepAll) ? options.keepAll : [];
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value == null || value === "" || value === "all") return;
+    if (value == null || value === "") return;
+    if (value === "all" && !keepAll.includes(key)) return;
     query.set(key, String(value));
   });
   const value = query.toString();

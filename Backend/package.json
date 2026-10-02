@@ -30,6 +30,7 @@
     "db:migrate:objectid-ids": "node scripts/mongo/migrate-objectid-ids.js",
     "db:migrate:refresh-token-hashes": "node scripts/mongo/backfill-refresh-token-hashes.js",
     "db:migrate:violations": "node scripts/mongo/backfill-violations.js",
+    "db:migrate:report-lifecycle": "node scripts/mongo/backfill-report-lifecycle.js",
     "db:create-indexes": "node scripts/mongo/create-indexes.js",
     "backup:mongodb": "sh scripts/backup/mongodb-backup.sh",
     "backup:uploads": "sh scripts/backup/uploads-backup.sh",

@@ -7,7 +7,7 @@ const { createAuditLog } = require("../../services/audit.service");
 const { emitToRole } = require("../../realtime/socket");
 const { ApiError, asyncHandler } = require("../../utils/http");
 const { clampPercent, getSubmissionScorePercent, getTestTotalMarks } = require("../../utils/score");
-const { describeDistribution } = require("../../utils/stats");
+const { describeDistribution, PASS_THRESHOLD_PERCENT } = require("../../utils/stats");
 const { isQuestionCorrect } = require("../../services/test.service");
 const { computeItemAnalysis } = require("../../services/item-analysis.service");
 const { computeIntegrityAnalytics } = require("../../services/integrity-analysis.service");
@@ -364,7 +364,8 @@ const buildReportAnalyticsPayload = async (req, queryOverrides = {}) => {
     where: submissionWhere,
     include: {
       user: { select: { id: true, fullName: true, studentId: true, enrollNumber: true, enrollmentNumber: true, year: true, departmentId: true, batchId: true, batchIds: true } },
-      test: { select: { id: true, title: true, subject: true, totalMarks: true } },
+      test: { select: { id: true, title: true, subject: true, totalMarks: true, questions: { select: { id: true, correctOption: true, correctOptions: true, correctBoolean: true, correctText: true, type: true, marks: true } } } },
+      answers: true,
       violations: {
         select: {
           id: true,
@@ -425,6 +426,41 @@ const buildReportAnalyticsPayload = async (req, queryOverrides = {}) => {
       )
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+    // Compute aggregate stats across submissions for this student
+    let totalTimeSeconds = 0;
+    let correctCount = 0;
+    let wrongCount = 0;
+    let totalQuestions = 0;
+    let obtainedMarks = 0;
+    let totalMarks = 0;
+    const moduleAgg = new Map();
+    const statusSet = new Set();
+    rows.forEach((row) => {
+      if (row.status) statusSet.add(String(row.status).toUpperCase());
+      totalTimeSeconds += Number(row.timeSpentSeconds || 0);
+      obtainedMarks += Number(row.score || 0);
+      const questions = Array.isArray(row.test?.questions) ? row.test.questions : [];
+      const answers = Array.isArray(row.answers) ? row.answers : [];
+      totalMarks += questions.length
+        ? questions.reduce((sum, q) => sum + Number(q.marks || 0), 0)
+        : Number(row.test?.totalMarks || 0);
+      totalQuestions += questions.length || answers.length;
+      questions.forEach((q) => {
+        const ans = answers.find((a) => String(a.questionId) === String(q.id));
+        if (isQuestionCorrect(q, ans)) correctCount++;
+        else if (ans) wrongCount++;
+      });
+      // module state
+      if (Array.isArray(row.moduleState)) {
+        row.moduleState.forEach((ms) => {
+          const k = ms.key || ms.name;
+          if (!k) return;
+          moduleAgg.set(k, { key: k, name: ms.name || k, score: (moduleAgg.get(k)?.score || 0) + Number(ms.score || 0), maxScore: (moduleAgg.get(k)?.maxScore || 0) + Number(ms.maxScore || 0) });
+        });
+      }
+    });
+    const unansweredCount = Math.max(0, totalQuestions - (correctCount + wrongCount));
+
     return {
       studentId: student.id,
       name: student.fullName,
@@ -436,10 +472,21 @@ const buildReportAnalyticsPayload = async (req, queryOverrides = {}) => {
       batchName: student.batch?.name || "-",
       year: student.year || null,
       avgScore: toPercent(average),
+      scorePercent: toPercent(average),
       testsTaken: rows.length,
       violations,
       violationEvents,
       participation: tests.length > 0 ? toPercent((rows.length / tests.length) * 100) : 0,
+      totalTimeSeconds,
+      correctCount,
+      wrongCount,
+      unansweredCount,
+      totalQuestions,
+      obtainedMarks,
+      totalMarks,
+      submissionStatus: statusSet.size === 1 ? [...statusSet][0] : (statusSet.size > 1 ? "MIXED" : null),
+      hasAutoSubmitted: statusSet.has("AUTO_SUBMITTED"),
+      modules: Array.from(moduleAgg.values()),
     };
   });
 
@@ -456,7 +503,7 @@ const buildReportAnalyticsPayload = async (req, queryOverrides = {}) => {
   const ranked = [...attendedRows].sort((a, b) => b.avgScore - a.avgScore).map((item, index) => ({ ...item, rank: index + 1 }));
   const avgScore = ranked.length ? ranked.reduce((sum, row) => sum + row.avgScore, 0) / ranked.length : 0;
   const passRate = scopedSubmissions.length
-    ? (scopedSubmissions.filter((row) => getScorePercent(row) >= 40).length / scopedSubmissions.length) * 100
+    ? (scopedSubmissions.filter((row) => getScorePercent(row) >= PASS_THRESHOLD_PERCENT).length / scopedSubmissions.length) * 100
     : 0;
   const participatingStudents = attendedRows.length;
   const participationRate = studentRows.length ? (participatingStudents / studentRows.length) * 100 : 0;
@@ -494,7 +541,7 @@ const buildReportAnalyticsPayload = async (req, queryOverrides = {}) => {
     const attendedDepartmentRows = rows.filter((row) => row.testsTaken > 0);
     const deptAvg = attendedDepartmentRows.length ? attendedDepartmentRows.reduce((sum, row) => sum + row.avgScore, 0) / attendedDepartmentRows.length : 0;
     const deptParticipation = rows.length ? (attendedDepartmentRows.length / rows.length) * 100 : 0;
-    const deptPassRate = attendedDepartmentRows.length ? (attendedDepartmentRows.filter((row) => row.avgScore >= 40).length / attendedDepartmentRows.length) * 100 : 0;
+    const deptPassRate = attendedDepartmentRows.length ? (attendedDepartmentRows.filter((row) => row.avgScore >= PASS_THRESHOLD_PERCENT).length / attendedDepartmentRows.length) * 100 : 0;
     return {
       departmentId: department.id,
       departmentName: department.name,
@@ -508,7 +555,7 @@ const buildReportAnalyticsPayload = async (req, queryOverrides = {}) => {
     const rows = studentRows.filter((row) => row.batchId === batch.id || row.batchIds.includes(batch.id));
     const attendedBatchRows = rows.filter((row) => row.testsTaken > 0);
     const value = attendedBatchRows.length ? attendedBatchRows.reduce((sum, row) => sum + row.avgScore, 0) / attendedBatchRows.length : 0;
-    const pass = attendedBatchRows.length ? (attendedBatchRows.filter((row) => row.avgScore >= 40).length / attendedBatchRows.length) * 100 : 0;
+    const pass = attendedBatchRows.length ? (attendedBatchRows.filter((row) => row.avgScore >= PASS_THRESHOLD_PERCENT).length / attendedBatchRows.length) * 100 : 0;
     const participation = rows.length ? (attendedBatchRows.length / rows.length) * 100 : 0;
     return {
       batchId: batch.id,
@@ -850,10 +897,16 @@ const getReportTableDashboard = asyncHandler(async (req, res) => {
             select: {
               id: true,
               marks: true,
+              correctOption: true,
+              correctOptions: true,
+              correctBoolean: true,
+              correctText: true,
+              type: true,
             },
           },
         },
       },
+      answers: true,
       violations: {
         select: { id: true, type: true, createdAt: true },
         orderBy: { createdAt: "desc" },
@@ -880,6 +933,16 @@ const getReportTableDashboard = asyncHandler(async (req, res) => {
     const scorePercent = getScorePercent(submission);
     const date = submission.submittedAt || submission.updatedAt || submission.createdAt || new Date();
 
+    const qlist = Array.isArray(submission.test?.questions) ? submission.test.questions : [];
+    const alist = Array.isArray(submission.answers) ? submission.answers : [];
+    let correctCount = 0;
+    let wrongCount = 0;
+    qlist.forEach((q) => {
+      const ans = alist.find((a) => String(a.questionId) === String(q.id));
+      if (isQuestionCorrect(q, ans)) correctCount += 1;
+      else if (ans) wrongCount += 1;
+    });
+
     return {
       id: submission.id,
       submissionId: submission.id,
@@ -896,6 +959,7 @@ const getReportTableDashboard = asyncHandler(async (req, res) => {
       obtainedMarks,
       totalMarks,
       timeTaken: Number(submission.timeSpentSeconds || 0),
+      totalTimeSeconds: Number(submission.timeSpentSeconds || 0),
       attemptCount: Number(attemptsPerStudent[resolveSubmissionStudentId(submission)] || 0),
       status: submission.status || "IN_PROGRESS",
       ...buildSubmissionModuleColumns(submission, submission.test),
@@ -910,6 +974,9 @@ const getReportTableDashboard = asyncHandler(async (req, res) => {
         submissionId: submission.id,
         createdAt: violation.createdAt,
       })),
+      correctCount,
+      wrongCount,
+      totalQuestions: qlist.length || alist.length,
       date: new Date(date).toISOString(),
     };
   });
@@ -1057,7 +1124,7 @@ const buildReportTestsPayload = async (req) => {
     });
     current.count += 1;
     current.scoreSum += scorePercent;
-    if (scorePercent >= 40) current.passCount += 1;
+    if (scorePercent >= PASS_THRESHOLD_PERCENT) current.passCount += 1;
     current.violations += Number(submission._count?.violations || 0);
     if (submission.userId) current.students.add(String(submission.userId));
     byTest.set(testKey, current);

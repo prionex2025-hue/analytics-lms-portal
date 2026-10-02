@@ -15,6 +15,14 @@ jest.mock("../../utils/admin-test-access", () => {
   const actual = jest.requireActual("../../utils/admin-test-access");
   return { ...actual, resolveAdminTestScope: jest.fn() };
 });
+// Raw-driver lookups need a live mongoose connection; unit tests stub them.
+jest.mock("../../services/report-lookup.service", () => ({
+  attachStudentGroups: jest.fn(async (_db, students) => students),
+  countViolationsBySubmission: jest.fn(async () => new Map()),
+  loadNamesById: jest.fn(async () => new Map()),
+  sumQuestionMarksByTest: jest.fn(async () => new Map()),
+  uniqueIds: (values) => [...new Set((values || []).filter(Boolean).map(String))],
+}));
 
 const { buildInstitutionReportPayload } = require("../../services/admin-department-report.service");
 const { generateAdminReportHTML } = require("../../services/report-formatter.service");
@@ -299,5 +307,26 @@ describe("results export (one row per student per selected test)", () => {
     expect(response.body).toContain("Aptitude A");
     expect(response.body).toContain("Asha");
     expect(response.body).not.toContain("Other Test");
+  });
+
+  it("scopes the results export to the selected academic status", async () => {
+    const db = {
+      college: { findUnique: jest.fn(async () => ({ id: COLLEGE_ID, isActive: true })) },
+      test: { findMany: jest.fn(async () => [{ id: "t1", title: "Aptitude A", totalMarks: 100, questions: [] }]) },
+      student: { findMany: jest.fn(async () => []) },
+    };
+    models.init.mockResolvedValue({ dbClient: db });
+    collectSubmissions.mockResolvedValue({ rows: [], truncated: false });
+
+    const response = await invoke(exportSuperReportCsv, {
+      query: { collegeId: COLLEGE_ID, dataset: "results", testIds: "t1", academicStatus: "graduated" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    // The export honours the same academic scope the on-screen report uses, so a
+    // graduate-only view can never silently include active students.
+    expect(db.student.findMany.mock.calls[0][0].where).toMatchObject({
+      lifecycleStatus: { in: ["ALUMNI", "GRADUATED"] },
+    });
   });
 });

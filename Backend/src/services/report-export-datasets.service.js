@@ -1,7 +1,6 @@
 const { ApiError } = require("../utils/http");
 const { MAX_REPORT_TESTS } = require("../constants/report-limits");
-
-const PASS_THRESHOLD_PERCENT = 40;
+const { PASS_THRESHOLD_PERCENT } = require("../utils/stats");
 
 // Spreadsheet export datasets shared by the admin/college-admin and super-admin
 // report exports. Both portals build their rows with their own scoping, then

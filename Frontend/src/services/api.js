@@ -890,7 +890,6 @@ export const superAdminApi = {
   getReportTable: (params = "") => superAdminApiRequest(`/super-admin/reports/table${params}`),
   getReportItemAnalysis: (params = "") => superAdminApiRequest(`/super-admin/reports/item-analysis${params}`),
   getReportIntegrity: (params = "") => superAdminApiRequest(`/super-admin/reports/integrity${params}`),
-  getReportTrends: (params = "") => superAdminApiRequest(`/super-admin/reports/trends${params}`),
   getReportAtRisk: (params = "") => superAdminApiRequest(`/super-admin/reports/at-risk${params}`),
   generateReport: (body) => superAdminApiRequest("/super-admin/reports/generate", { method: "POST", body: JSON.stringify(body) }),
   getReportJobStatus: (reportJobId) => superAdminApiRequest(`/super-admin/reports/jobs/${reportJobId}/status`),

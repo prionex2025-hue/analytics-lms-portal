@@ -9,6 +9,11 @@
  * the whole render and surface to admins as "error while generating PDF".
  */
 
+const { PASS_THRESHOLD_PERCENT } = require("../utils/stats");
+
+// Placeholder printed wherever a metric has no data.
+const NO_DATA_CELL = "—";
+
 const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
@@ -26,7 +31,91 @@ const formatDateValue = (value) => {
 const clampPercent = (value) => Math.max(0, Math.min(100, Number(value || 0)));
 const num = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 const round1 = (value) => Math.round(num(value) * 10) / 10;
-const formatPercentCompact = (value) => `${round1(clampPercent(value)).toFixed(1)}%`;
+// A metric the payload answers with `null` has no data; it must never print as
+// "0.0%", which reads as a measured zero.
+const formatPercentCompact = (value) => (value == null ? NO_DATA_CELL : `${round1(clampPercent(value)).toFixed(1)}%`);
+const formatPercentCell = (value, suffix = "%") => (value == null ? NO_DATA_CELL : `${round1(value)}${suffix}`);
+const formatNumberCell = (value, suffix = "") => (value == null ? NO_DATA_CELL : `${round1(value)}${suffix}`);
+
+const renderScoreCell = (row) => {
+  const obtained = row.obtainedMarks;
+  const total = row.totalMarks;
+  if (Number.isFinite(Number(obtained)) && Number.isFinite(Number(total)) && Number(total) > 0) {
+    return `${round1(obtained)}/${round1(total)}`;
+  }
+  return "-";
+};
+const renderPercentCell = (row) => `${round1(row.scorePercent ?? row.score ?? row.avgScore)}%`;
+const renderSubmissionCell = (row) => {
+  const raw = String(row.submissionStatus || row.status || "").toUpperCase();
+  if (raw === "AUTO_SUBMITTED") return `<span class="pill pill-warn">Auto Submitted</span>`;
+  if (raw === "SUBMITTED") return `<span class="pill pill-pass">Manual</span>`;
+  if (raw === "GRADED") return `<span class="pill pill-pass">Graded</span>`;
+  if (raw === "MIXED") return `<span class="pill pill-warn">Mixed</span>`;
+  return raw ? escapeHtml(raw) : "-";
+};
+
+const formatSeconds = (seconds = 0) => {
+  const total = Math.max(0, Math.floor(num(seconds)));
+  const hours = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) {
+    return `${hours}h ${mins}m ${secs}s`;
+  }
+  if (mins > 0) {
+    return `${mins}m ${secs}s`;
+  }
+  return `${secs}s`;
+};
+
+// `timeMin` is the legacy minute-based field; prefer the seconds-based ones.
+const secondsFromRow = (row) =>
+  row.totalTimeSeconds ?? row.timeTaken ?? row.timeSpentSeconds ?? (row.timeMin == null ? 0 : row.timeMin * 60);
+
+const correctCell = (row) => escapeHtml(String(row.correctCount ?? row.correct ?? row.questionAnalysis?.correct ?? "-"));
+const wrongCell = (row) => escapeHtml(String(row.wrongCount ?? row.incorrect ?? row.questionAnalysis?.incorrect ?? "-"));
+
+// Columns shared by both student performance sheets. A MODULE_TEST report gains
+// one marks column per module; everything else keeps the same layout.
+const studentPerformanceColumns = ({ meta = {}, payload = {}, moduleDefs = [], isModuleReport = false }) => {
+  const format = meta.assessmentFormat || meta.selectedTest?.assessmentFormat || payload.meta?.assessmentFormat || payload.meta?.selectedTest?.assessmentFormat || "";
+  const isModule = isModuleReport || String(format).toUpperCase() === "MODULE_TEST";
+  const cols = [
+    { label: "Rank", align: "num", render: (row) => `#${num(row.rank)}` },
+    { label: "Name", render: (row) => escapeHtml(row.name || row.studentName || "-") },
+    { label: "Reg No", render: (row) => escapeHtml(row.registerNumber || row.rollNo || row.studentId || "-") },
+    { label: "Dept", render: (row) => escapeHtml(row.department || "-") },
+    { label: "Year", render: (row) => escapeHtml(row.year || "-") },
+    { label: "Score", align: "num", render: renderScoreCell },
+    { label: "Percentage", align: "num", render: renderPercentCell },
+    { label: "Time Taken", align: "num", render: (row) => formatSeconds(secondsFromRow(row)) },
+    { label: "Correct", align: "num", render: correctCell },
+    { label: "Wrong", align: "num", render: wrongCell },
+    { label: "Submission", render: renderSubmissionCell },
+  ];
+
+  if (isModule) {
+    moduleDefs.forEach((mod) => {
+      cols.push({
+        label: mod.name || mod.key || "Module",
+        align: "num",
+        render: (row) => {
+          const found = (Array.isArray(row.modules) ? row.modules : []).find((m) => m.key === mod.key || m.order === mod.order);
+          if (!found) return "-";
+          const pct = num(found.maxScore) > 0 ? round1((num(found.score) / num(found.maxScore)) * 100) : 0;
+          return `${round1(found.score)}/${round1(found.maxScore)} (${pct}%)`;
+        },
+      });
+    });
+  }
+
+  cols.push({
+    label: "Result",
+    render: (row) => resultPill(num(row.scorePercent ?? row.score ?? row.avgScore) >= PASS_THRESHOLD_PERCENT ? "PASS" : "FAIL"),
+  });
+  return cols;
+};
 
 const PALETTE = {
   primary: "#2563EB",
@@ -80,17 +169,20 @@ const chartLegend = (segments = []) => `
 // Horizontal labelled bars used for department/subject comparisons.
 const svgBarList = (items = [], { max = 100, unit = "%", color = PALETTE.primary } = {}) => {
   if (!items.length) return `<p class="muted">No data available.</p>`;
-  const ceiling = Math.max(max, ...items.map((item) => num(item.value))) || 1;
+  const ceiling = Math.max(max, ...items.map((item) => (item.value == null ? 0 : num(item.value)))) || 1;
   return `
     <div class="bar-list">
       ${items.map((item, index) => {
-        const width = clampPercent((num(item.value) / ceiling) * 100);
+        // A missing value draws an empty track and says so, instead of a 0-length
+        // bar that looks like a measured zero.
+        const hasValue = item.value != null;
+        const width = hasValue ? clampPercent((num(item.value) / ceiling) * 100) : 0;
         const fill = item.color || (color === "series" ? SERIES[index % SERIES.length] : color);
         return `
           <div class="bar-row">
             <div class="bar-label" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</div>
-            <div class="bar-track"><div class="bar-fill" style="width:${width}%;background:${fill}"></div></div>
-            <div class="bar-value">${escapeHtml(item.display ?? `${round1(item.value)}${unit}`)}</div>
+            <div class="bar-track">${hasValue ? `<div class="bar-fill" style="width:${width}%;background:${fill}"></div>` : ""}</div>
+            <div class="bar-value">${escapeHtml(item.display ?? (hasValue ? `${round1(item.value)}${unit}` : NO_DATA_CELL))}</div>
           </div>`;
       }).join("")}
     </div>`;
@@ -221,6 +313,16 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
   const attendance = payload.attendance || {};
   const passFail = payload.passFail || {};
 
+  // Module definitions for test-type-aware performance sheets (MODULE_TEST).
+  // Declared before the page builders so the performance-sheet columns can use it.
+  const modulePerformance = payload.modulePerformance || (reportData && reportData.modulePerformance) || null;
+  const isModuleReport = meta.isModuleTest === true || String(meta.assessmentFormat || "").toUpperCase() === "MODULE_TEST" || Boolean(modulePerformance);
+  const moduleDefs = Array.isArray(modulePerformance?.modules)
+    ? modulePerformance.modules
+    : Array.isArray(modulePerformance?.moduleStats)
+      ? modulePerformance.moduleStats
+      : [];
+
   const studentPerformance = Array.isArray(payload.studentPerformance) && payload.studentPerformance.length
     ? payload.studentPerformance
     : Array.isArray(payload.scoreboard) ? payload.scoreboard : [];
@@ -332,9 +434,9 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
         ${kpiCard(failed, "Fail", "tone-danger")}
         ${kpiCard(incomplete, "Incomplete / Skipped", "tone-amber")}
         ${kpiCard(formatPercentCompact(kpis.averageScore), "Average Score")}
-        ${kpiCard(`${round1(kpis.highestScore ?? 0)}%`, "Highest Score", "tone-success")}
-        ${kpiCard(`${round1(kpis.lowestScore ?? 0)}%`, "Lowest Score", "tone-danger")}
-        ${kpiCard(`${num(kpis.averageTimeMin)} min`, "Average Time")}
+        ${kpiCard(formatPercentCell(kpis.highestScore), "Highest Score", "tone-success")}
+        ${kpiCard(formatPercentCell(kpis.lowestScore), "Lowest Score", "tone-danger")}
+        ${kpiCard(kpis.averageTimeMin == null ? NO_DATA_CELL : `${round1(kpis.averageTimeMin)} min`, "Average Time")}
         ${kpiCard(formatPercentCompact(kpis.placementReadyPercent), "Placement Ready", "tone-primary")}
         ${kpiCard(num(kpis.cheatingCases), "Cheating Cases", num(kpis.cheatingCases) > 0 ? "tone-danger" : "")}
       </div>
@@ -372,8 +474,8 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
     { label: "Not Att.", align: "num", render: (row) => num(row.notAttended) },
     { label: "Pass", align: "num", render: (row) => num(row.passed) },
     { label: "Fail", align: "num", render: (row) => num(row.failed) },
-    { label: "Avg", align: "num", render: (row) => `${round1(row.averageScore)}%` },
-    { label: "High", align: "num", render: (row) => `${round1(row.highest)}%` },
+    { label: "Avg", align: "num", render: (row) => formatPercentCell(row.averageScore) },
+    { label: "High", align: "num", render: (row) => formatPercentCell(row.highest) },
   ];
   const page2 = `
     <section class="sheet">
@@ -403,9 +505,9 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
       ${tableOrEmpty(departmentPerformance, [
         { label: "Rank", align: "num", render: (row) => `#${num(row.rank)}` },
         { label: "Department", key: "departmentName" },
-        { label: "Avg Score", align: "num", render: (row) => `${round1(row.averageScore)}%` },
-        { label: "Placement Ready", align: "num", render: (row) => `${round1(row.placementReady)}%` },
-        { label: "Avg Time", align: "num", render: (row) => `${num(row.avgTimeMin)} min` },
+        { label: "Avg Score", align: "num", render: (row) => formatPercentCell(row.averageScore) },
+        { label: "Placement Ready", align: "num", render: (row) => formatPercentCell(row.placementReady) },
+        { label: "Avg Time", align: "num", render: (row) => formatNumberCell(row.avgTimeMin, " min") },
       ], "No ranking data available.")}
 
       ${sheetFooter(meta, 2, TOTAL_PAGES)}
@@ -421,7 +523,8 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
         { label: "Reg No", render: (row) => escapeHtml(row.registerNumber || row.rollNo || row.studentId || "-") },
         { label: "Dept", render: (row) => escapeHtml(row.department || "-") },
         { label: "Score", align: "num", render: (row) => `${round1(row.scorePercent ?? row.score ?? row.avgScore)}%` },
-        { label: "Accuracy", align: "num", render: (row) => `${round1(row.accuracy ?? row.scorePercent ?? row.score)}%` },
+        { label: "Correct", align: "num", render: (row) => escapeHtml(String(row.correctCount ?? row.correct ?? '-')) },
+        { label: "Wrong", align: "num", render: (row) => escapeHtml(String(row.wrongCount ?? row.incorrect ?? '-')) },
         { label: "Time", align: "num", render: (row) => `${num(row.timeMin)} min` },
       ], "No students have submitted this test yet.")}
 
@@ -432,7 +535,7 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
         { label: "Dept", render: (row) => escapeHtml(row.department) },
         { label: "Score", align: "num", render: (row) => `${round1(row.scorePercent)}%` },
         { label: "Weak Topic", render: (row) => escapeHtml(row.weakSubject) },
-        { label: "Avg Time", align: "num", render: (row) => `${num(row.avgTimeMin)} min` },
+        { label: "Avg Time", align: "num", render: (row) => formatNumberCell(row.avgTimeMin, " min") },
       ], "No students scored below the pass threshold.")}
 
       <div class="chart-grid-2">
@@ -460,9 +563,9 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
       ${tableOrEmpty(subjectPerformance, [
         { label: "Subject", key: "subject" },
         { label: "Average", align: "num", render: (row) => `${round1(row.averageScore)}%` },
-        { label: "Highest", align: "num", render: (row) => `${round1(row.highest ?? 0)}%` },
-        { label: "Lowest", align: "num", render: (row) => `${round1(row.lowest ?? 0)}%` },
-        { label: "Avg Time", align: "num", render: (row) => `${num(row.avgTimeMin)} min` },
+        { label: "Highest", align: "num", render: (row) => formatPercentCell(row.highest) },
+        { label: "Lowest", align: "num", render: (row) => formatPercentCell(row.lowest) },
+        { label: "Avg Time", align: "num", render: (row) => formatNumberCell(row.avgTimeMin, " min") },
         { label: "Status", render: (row) => escapeHtml(getSubjectBand(row.averageScore)) },
       ], "No subject data available.")}
 
@@ -473,7 +576,7 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
         </div>
         <div class="chart-card">
           <h3 class="chart-title">Average Time per Subject</h3>
-          ${svgBarList(subjectPerformance.map((row) => ({ label: row.subject, value: row.avgTimeMin, display: `${num(row.avgTimeMin)} min` })), { max: Math.max(1, ...subjectPerformance.map((row) => num(row.avgTimeMin))), unit: " min", color: PALETTE.cyan })}
+          ${svgBarList(subjectPerformance.map((row) => ({ label: row.subject, value: row.avgTimeMin })), { max: Math.max(1, ...subjectPerformance.map((row) => num(row.avgTimeMin))), unit: " min", color: PALETTE.cyan })}
         </div>
       </div>
 
@@ -568,16 +671,7 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
       ], "No students failed this assessment.")}
 
       <h2 class="section-title">Complete Performance Sheet</h2>
-      ${tableOrEmpty(studentPerformance, [
-        { label: "Rank", align: "num", render: (row) => `#${num(row.rank)}` },
-        { label: "Name", render: (row) => escapeHtml(row.name || row.studentName || "-") },
-        { label: "Reg No", render: (row) => escapeHtml(row.registerNumber || row.rollNo || row.studentId || "-") },
-        { label: "Dept", render: (row) => escapeHtml(row.department || "-") },
-        { label: "Year", render: (row) => escapeHtml(row.year || "-") },
-        { label: "Score", align: "num", render: (row) => `${round1(row.scorePercent ?? row.score ?? row.avgScore)}%` },
-        { label: "Result", render: (row) => resultPill(num(row.scorePercent ?? row.score ?? row.avgScore) >= 40 ? "PASS" : "FAIL") },
-      ], "No students have submitted this test yet.")}
-
+      ${tableOrEmpty(studentPerformance, studentPerformanceColumns({ meta, payload, moduleDefs, isModuleReport }), "No students have submitted this test yet.")}
       ${sheetFooter(meta, 5 + qaOffset, TOTAL_PAGES)}
     </section>`;
 
@@ -625,15 +719,7 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
       <h2 class="section-title">Complete Student Test Report — Ranked by Marks</h2>
 
       <h3 class="chart-title">Attended Students (${studentPerformance.length}) — highest to lowest</h3>
-      ${tableOrEmpty(studentPerformance, [
-        { label: "Rank", align: "num", render: (row) => `#${num(row.rank)}` },
-        { label: "Name", render: (row) => escapeHtml(row.name || row.studentName || "-") },
-        { label: "Reg No", render: (row) => escapeHtml(row.registerNumber || row.rollNo || row.studentId || "-") },
-        { label: "Department", render: (row) => escapeHtml(row.department || "-") },
-        { label: "Year", render: (row) => escapeHtml(row.year || "-") },
-        { label: "Marks / Score", align: "num", render: (row) => `${round1(row.scorePercent ?? row.score ?? row.avgScore)}%` },
-        { label: "Result", render: (row) => resultPill(num(row.scorePercent ?? row.score ?? row.avgScore) >= 40 ? "PASS" : "FAIL") },
-      ], "No students attended this assessment.")}
+${tableOrEmpty(studentPerformance, studentPerformanceColumns({ meta, payload, moduleDefs, isModuleReport }), "No students attended this assessment.")}
 
       <h2 class="section-title">Not Attended Students (${notAttendedStudents.length})</h2>
       ${tableOrEmpty(notAttendedStudents.map((row, index) => ({ ...row, __sno: index + 1 })), [
@@ -652,7 +738,7 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
     if (!cell || cell.status === "not_assigned") return `<span class="muted-cell">—</span>`;
     if (cell.status === "absent") return `<span class="muted-cell">Absent</span>`;
     const value = round1(cell.scorePercent);
-    return `<span class="${value >= 40 ? "score-pass" : "score-fail"}">${value}%</span>`;
+    return `<span class="${value >= PASS_THRESHOLD_PERCENT ? "score-pass" : "score-fail"}">${value}%</span>`;
   };
   const testWisePage = testWise
     ? `
@@ -663,8 +749,8 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
         { label: "Test", render: (row) => escapeHtml(row.title) },
         { label: "Date", render: (row) => escapeHtml(row.date ? formatDateValue(row.date) : "-") },
         { label: "Attempted", align: "num", render: (row) => `${num(row.attempted)} / ${num(row.registered)}` },
-        { label: "Avg Score", align: "num", render: (row) => `${round1(row.averageScore)}%` },
-        { label: "Pass Rate", align: "num", render: (row) => `${round1(row.passRate)}%` },
+        { label: "Avg Score", align: "num", render: (row) => formatPercentCell(row.averageScore) },
+        { label: "Pass Rate", align: "num", render: (row) => formatPercentCell(row.passRate) },
       ], "No tests selected.")}
 
       <h3 class="chart-title">Student results by test (best attempt per test)</h3>
@@ -686,8 +772,6 @@ const buildInstitutionReportHTML = (reportJob, reportData) => {
 
   // Test-type-aware: a MODULE_TEST report always renders the module sheet; the
   // legacy `modulePerformance` presence keeps older payloads working.
-  const modulePerformance = payload.modulePerformance || (reportData && reportData.modulePerformance) || null;
-  const isModuleReport = meta.isModuleTest === true || Boolean(modulePerformance);
   const modulePage = isModuleReport && Array.isArray(modulePerformance?.moduleStats) && modulePerformance.moduleStats.length
     ? moduleAnalyticsSheet(modulePerformance, meta)
     : "";
@@ -754,6 +838,7 @@ const reportStyles = () => `
     .score-fail { color: ${PALETTE.danger}; font-weight: 600; }
     .muted-cell { color: #94A3B8; }
     .pill-fail { background: rgba(220,38,38,0.12); color: ${PALETTE.danger}; }
+    .pill-warn { background: rgba(217,119,6,0.14); color: #B45309; }
     .group-block { margin-top: 10px; break-inside: avoid; }
     .group-title { font-size: 12px; font-weight: 700; margin: 8px 0 4px; color: ${PALETTE.primary}; }
     .muted { color: ${PALETTE.slate}; font-size: 12px; padding: 8px 0; }
@@ -865,7 +950,7 @@ const formatStudentWiseReport = (rows = [], generatedAt, expiresAt, isGlobal = f
         { label: "Date", render: (row) => formatDate(row.date) },
         { label: "Test", render: (row) => escapeHtml(row.testName) },
         { label: "Score", align: "num", render: (row) => `${row.scorePercent.toFixed(2)}%` },
-        { label: "Result", render: (row) => resultPill(row.scorePercent >= 40 ? "PASS" : "FAIL") },
+        { label: "Result", render: (row) => resultPill(row.scorePercent >= PASS_THRESHOLD_PERCENT ? "PASS" : "FAIL") },
         { label: "Time", align: "num", render: (row) => `${Math.round(row.timeTaken / 60)} min` },
         { label: "Violations", align: "num", render: (row) => row.violationsCount },
         { label: "Status", render: (row) => escapeHtml(row.status) },

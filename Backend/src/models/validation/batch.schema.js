@@ -10,6 +10,16 @@ const BatchValidationSchema = new mongoose.Schema(
     academicYear: { type: String, default: null, trim: true },
     section: { type: String, default: null, trim: true },
     isActive: { type: Boolean, default: true },
+    isArchived: { type: Boolean, default: false },
+    status: {
+      type: String,
+      enum: ["ACTIVE", "COMPLETED", "ARCHIVED"],
+      default: "ACTIVE",
+    },
+    archivedAt: { type: Date, default: null },
+    archivedReason: { type: String, default: null },
+    archivedByAdminId: { type: String, default: null, validate: referenceValidator },
+    archivedBySuperAdminId: { type: String, default: null, validate: referenceValidator },
   },
   {
     _id: false,

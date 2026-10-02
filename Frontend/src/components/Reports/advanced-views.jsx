@@ -10,7 +10,7 @@ import {
   ViolationBadge,
 } from "@/components/Reports/components";
 import { MetricStrip } from "@/components/Reports/summary-blocks";
-import { formatPercent } from "@/components/Reports/utils";
+import { formatPercent, NO_DATA_LABEL } from "@/components/Reports/utils";
 
 // Shared advanced-report views used by both the Admin/College-Admin and
 // Super-Admin report pages. They are purely presentational: pass a react-query
@@ -319,7 +319,7 @@ export function TrendsView({ query, groupBy, onGroupByChange, showGroupBy = true
   );
 }
 
-export function AtRiskView({ query, canViewStudent = false, onViewStudent }) {
+export function AtRiskView({ query, canViewStudent = false, onViewStudent, showParticipation = false, noDataLabel = NO_DATA_LABEL }) {
   const payload = query?.data || {};
   const students = Array.isArray(payload.students) ? payload.students : [];
   const summary = payload.summary || {};
@@ -350,6 +350,7 @@ export function AtRiskView({ query, canViewStudent = false, onViewStudent }) {
                 <Th>Risk</Th>
                 <Th>Why</Th>
                 <Th>Avg score</Th>
+                {showParticipation ? <Th>Participation</Th> : null}
                 {canViewStudent ? <Th>Action</Th> : null}
               </tr>
             </thead>
@@ -373,7 +374,14 @@ export function AtRiskView({ query, canViewStudent = false, onViewStudent }) {
                       ))}
                     </ul>
                   </td>
-                  <td className="px-4 py-3"><ScoreBadge score={student.averageScore} /></td>
+                  <td className="px-4 py-3"><ScoreBadge score={student.averageScore} noDataLabel={noDataLabel} /></td>
+                  {showParticipation ? (
+                    // Participation can be null (no tests assigned); it must never
+                    // read or sort like a real 0%.
+                    <td className="whitespace-nowrap px-4 py-3 tabular-nums text-text-secondary">
+                      {student.participation == null ? noDataLabel : formatPercent(student.participation)}
+                    </td>
+                  ) : null}
                   {canViewStudent ? (
                     <td className="px-4 py-3">
                       <button

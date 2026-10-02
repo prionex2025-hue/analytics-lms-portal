@@ -1,6 +1,6 @@
 import { EmptyState } from "@/components/Reports/components";
-import { scoreColorClass } from "@/components/Reports/stats";
-import { clampPercent, formatPercent } from "@/components/Reports/utils";
+import { scoreColorClassOrNoData } from "@/components/Reports/stats";
+import { comparePercentDesc, formatPercent, percentOrNull } from "@/components/Reports/utils";
 
 // Compact, text-first building blocks for the admin-level report pages. They
 // replace stacks of stat cards and charts with the few numbers a reader needs,
@@ -46,7 +46,7 @@ function TopicList({ title, topics, emptyText }) {
           {topics.map((topic) => (
             <li key={topic.name} className="flex items-baseline justify-between gap-3 text-sm">
               <span className="min-w-0 break-words text-text-primary">{topic.name}</span>
-              <span className={`shrink-0 font-semibold tabular-nums ${scoreColorClass(topic.score)}`}>{formatPercent(topic.score)}</span>
+              <span className={`shrink-0 font-semibold tabular-nums ${scoreColorClassOrNoData(topic.score)}`}>{formatPercent(topic.score)}</span>
             </li>
           ))}
         </ul>
@@ -60,8 +60,8 @@ function TopicList({ title, topics, emptyText }) {
 /** Strong areas vs areas needing improvement, instead of a bar + radar chart of the same topics. */
 export function TopicStrengths({ topics = [], limit = 3 }) {
   const normalized = (Array.isArray(topics) ? topics : [])
-    .map((item) => ({ name: item.subject || item.topic || item.name || "General", score: clampPercent(item.score ?? item.avgScore) }))
-    .sort((a, b) => b.score - a.score);
+    .map((item) => ({ name: item.subject || item.topic || item.name || "General", score: percentOrNull(item.score ?? item.avgScore) }))
+    .sort((a, b) => comparePercentDesc(b.score, a.score));
 
   if (!normalized.length) {
     return <EmptyState title="No topic data yet" description="Topic results appear once students submit tests." />;
@@ -80,7 +80,7 @@ export function TopicStrengths({ topics = [], limit = 3 }) {
 
 /** Ranked groups (departments or batches) by average score, with pass rate alongside. */
 export function GroupPerformanceList({ rows = [], labelKey = "department", onSelect, emptyText = "No results in this scope yet." }) {
-  const sorted = [...(Array.isArray(rows) ? rows : [])].sort((a, b) => clampPercent(b.avgScore) - clampPercent(a.avgScore));
+  const sorted = [...(Array.isArray(rows) ? rows : [])].sort((a, b) => comparePercentDesc(b.avgScore, a.avgScore));
   if (!sorted.length) {
     return <EmptyState title="Nothing to compare yet" description={emptyText} />;
   }
@@ -89,7 +89,7 @@ export function GroupPerformanceList({ rows = [], labelKey = "department", onSel
     <ul className="space-y-3">
       {sorted.map((row) => {
         const name = row[labelKey] || "-";
-        const avg = clampPercent(row.avgScore);
+        const avg = percentOrNull(row.avgScore);
         return (
           <li key={row.departmentId || row.batchId || name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(8rem,14rem)_minmax(0,1fr)_auto]">
             {onSelect ? (
@@ -100,10 +100,10 @@ export function GroupPerformanceList({ rows = [], labelKey = "department", onSel
               <span className="truncate text-sm font-medium text-text-primary" title={name}>{name}</span>
             )}
             <div className="order-last col-span-2 h-2 rounded-full bg-muted sm:order-none sm:col-span-1">
-              <span className="block h-full rounded-full bg-primary" style={{ width: `${avg}%` }} />
+              <span className="block h-full rounded-full bg-primary" style={{ width: `${avg ?? 0}%` }} />
             </div>
             <span className="text-right text-sm tabular-nums">
-              <span className={`font-semibold ${scoreColorClass(avg)}`}>{formatPercent(avg)}</span>
+              <span className={`font-semibold ${scoreColorClassOrNoData(avg)}`}>{formatPercent(avg)}</span>
               <span className="ml-2 text-xs text-text-secondary">pass {formatPercent(row.passRate)}</span>
             </span>
           </li>
@@ -115,10 +115,10 @@ export function GroupPerformanceList({ rows = [], labelKey = "department", onSel
 
 /** "Score" cell: percentage first, raw marks as secondary text (one column instead of two). */
 export function ScoreWithMarks({ percent, obtained, total }) {
-  const hasMarks = Number(total) > 0;
+  const hasMarks = percent != null && Number(total) > 0;
   return (
     <span className="whitespace-nowrap">
-      <span className={`font-semibold tabular-nums ${scoreColorClass(percent)}`}>{percent == null ? "-" : formatPercent(percent)}</span>
+      <span className={`font-semibold tabular-nums ${scoreColorClassOrNoData(percent)}`}>{formatPercent(percent)}</span>
       {hasMarks ? <span className="ml-1.5 text-xs tabular-nums text-text-secondary">{Number(obtained || 0)}/{Number(total)}</span> : null}
     </span>
   );

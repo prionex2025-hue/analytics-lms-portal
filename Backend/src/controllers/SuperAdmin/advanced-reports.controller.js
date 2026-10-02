@@ -4,7 +4,6 @@ const { getSubmissionScorePercent, getTestTotalMarks } = require("../../utils/sc
 const { isQuestionCorrect } = require("../../services/test.service");
 const { computeItemAnalysis } = require("../../services/item-analysis.service");
 const { computeIntegrityAnalytics } = require("../../services/integrity-analysis.service");
-const { computeCohortTrends } = require("../../services/cohort-trends.service");
 const { computeAtRisk } = require("../../services/at-risk.service");
 const { collectSubmissions } = require("../../services/submission-batch.service");
 const { toCsv, buildFileName } = require("../../services/csv-export.service");
@@ -22,6 +21,7 @@ const {
   REPORTABLE_SUBMISSION_STATUSES,
   buildStudentLifecycleWhere,
   normalizeStudentScope,
+  normalizeAcademicStatus,
   normalizePassoutYear,
   normalizeOptionalId,
 } = require("../../services/report-scope.service");
@@ -48,12 +48,6 @@ const toValidDate = (value) => {
   if (!value) return null;
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date : null;
-};
-
-const deriveMonthKey = (dateLike) => {
-  const date = new Date(dateLike);
-  if (!Number.isFinite(date.getTime())) return "Unknown";
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 };
 
 const getStudentNumber = (student = {}) => student.enrollNumber || student.enrollmentNumber || student.studentId || "-";
@@ -242,6 +236,7 @@ const resolveSuperFilters = (query = {}) => {
     batchId: normalizeId(query.batchId) || undefined,
     year: normalizeStudentYear(query.year) || undefined,
     studentScope: normalizeStudentScope(query.studentScope),
+    academicStatus: normalizeAcademicStatus(query.academicStatus) || undefined,
     passoutYear: normalizePassoutYear(query.passoutYear) || undefined,
     passoutCohortId: normalizeOptionalId(query.passoutCohortId) || undefined,
     dateFrom: validDateFrom ? validDateFrom.toISOString() : undefined,
@@ -359,39 +354,6 @@ const getSuperReportIntegrity = asyncHandler(async (req, res) => {
   });
 });
 
-const getSuperReportTrends = asyncHandler(async (req, res) => {
-  const m = await models.init();
-  const db = m.dbClient;
-  const collegeId = normalizeId(req.query.collegeId);
-  await assertActiveCollege(db, collegeId);
-  const filters = resolveSuperFilters(req.query || {});
-  const groupBy = String(req.query.groupBy || "department").toLowerCase() === "batch" ? "batch" : "department";
-  const indexToBase = String(req.query.indexed || "") === "true";
-
-  const data = await loadSuperScopedAttempts({ db, collegeId, filters });
-  if (!data.ok) {
-    return res.status(200).json({ periods: [], series: [], summary: { entities: 0, periods: 0, improving: 0, declining: 0, stable: 0 } });
-  }
-
-  const { students, attempts } = data;
-  const studentById = new Map(students.map((student) => [String(student.id), student]));
-
-  const entityMap = new Map();
-  const points = [];
-  for (const attempt of attempts) {
-    const student = studentById.get(String(attempt.userId));
-    if (!student) continue;
-    const entity = groupBy === "batch" ? student.batch : student.department;
-    const entityId = entity?.id || `unassigned-${groupBy}`;
-    const entityName = entity?.name || "Unassigned";
-    if (!entityMap.has(String(entityId))) entityMap.set(String(entityId), { id: entityId, name: entityName });
-    points.push({ entityId, period: deriveMonthKey(attempt.date), scorePercent: attempt.scorePercent });
-  }
-
-  const result = computeCohortTrends({ entities: [...entityMap.values()], points, indexToBase });
-  res.status(200).json({ groupBy, ...result, truncated: Boolean(data.truncated) });
-});
-
 const getSuperReportAtRisk = asyncHandler(async (req, res) => {
   const m = await models.init();
   const db = m.dbClient;
@@ -491,6 +453,5 @@ module.exports = {
   exportSuperReportXlsx,
   getSuperReportItemAnalysis,
   getSuperReportIntegrity,
-  getSuperReportTrends,
   getSuperReportAtRisk,
 };

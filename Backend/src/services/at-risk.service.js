@@ -7,8 +7,9 @@
  */
 
 const { linearSlope } = require("./cohort-trends.service");
+const { PASS_THRESHOLD_PERCENT } = require("../utils/stats");
 
-const PASS_MARK = 40;
+const PASS_MARK = PASS_THRESHOLD_PERCENT;
 
 // Weights sum to 100 at worst case. Tuned so a single signal never alone
 // produces a CRITICAL flag — risk needs corroboration.
@@ -53,9 +54,9 @@ const computeAtRisk = ({ students = [], passMark = PASS_MARK, minRiskScore = 20 
 
     const scores = attempts.map((attempt) => toFinite(attempt.scorePercent));
     const attemptCount = scores.length;
-    const average = attemptCount ? scores.reduce((sum, value) => sum + value, 0) / attemptCount : 0;
+    const average = attemptCount ? scores.reduce((sum, value) => sum + value, 0) / attemptCount : null;
     const assignedTests = Math.max(toFinite(student.assignedTests), attemptCount);
-    const participation = assignedTests > 0 ? (attemptCount / assignedTests) * 100 : 0;
+    const participation = assignedTests > 0 ? (attemptCount / assignedTests) * 100 : null;
     const violations = toFinite(student.violations);
     const slope = linearSlope(scores);
 
@@ -118,10 +119,10 @@ const computeAtRisk = ({ students = [], passMark = PASS_MARK, minRiskScore = 20 
       rollNo: student.rollNo || "-",
       department: student.department || "-",
       batch: student.batch || "-",
-      averageScore: Number(average.toFixed(2)),
+      averageScore: average == null ? null : Number(average.toFixed(2)),
       attempts: attemptCount,
       assignedTests,
-      participation: Number(participation.toFixed(2)),
+      participation: participation == null ? null : Number(participation.toFixed(2)),
       violations,
       trendSlope: Number(slope.toFixed(3)),
       riskScore,
@@ -132,7 +133,7 @@ const computeAtRisk = ({ students = [], passMark = PASS_MARK, minRiskScore = 20 
 
   const atRisk = assessed
     .filter((student) => student.riskScore >= minRiskScore)
-    .sort((a, b) => b.riskScore - a.riskScore || a.averageScore - b.averageScore);
+    .sort((a, b) => b.riskScore - a.riskScore || (a.averageScore ?? Infinity) - (b.averageScore ?? Infinity));
 
   return {
     students: atRisk,

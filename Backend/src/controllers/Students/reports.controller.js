@@ -19,6 +19,7 @@ const { REPORTABLE_SUBMISSION_STATUSES } = require("../../services/report-scope.
 const { evaluationOrderBy } = require("../../services/attempt-evaluation.service");
 const { renderHtmlToPdfBuffer } = require("../../services/report-pdf.service");
 const { clampPercent, getSubmissionScorePercent, getTestTotalMarks } = require("../../utils/score");
+const { PASS_THRESHOLD_PERCENT } = require("../../utils/stats");
 
 const toPercent = (value) => clampPercent(value);
 
@@ -465,7 +466,7 @@ const buildStudentReportHtml = ({ student, payload, filters, generatedAt }) => {
             <td><strong>${escapeHtml(formatPercent(scorePercent))}</strong></td>
             <td>${escapeHtml(formatMarksPair(row.obtainedMarks, row.totalMarks))}</td>
             <td>${escapeHtml(formatDuration(row.timeSpentSeconds))}</td>
-            <td><span class="badge ${scorePercent >= 40 ? "success" : "danger"}">${scorePercent >= 40 ? "PASS" : "FAIL"}</span></td>
+            <td><span class="badge ${scorePercent >= PASS_THRESHOLD_PERCENT ? "success" : "danger"}">${scorePercent >= PASS_THRESHOLD_PERCENT ? "PASS" : "FAIL"}</span></td>
             <td>${escapeHtml(row.testStatus || row.test_status || "-")}</td>
           </tr>
         `;

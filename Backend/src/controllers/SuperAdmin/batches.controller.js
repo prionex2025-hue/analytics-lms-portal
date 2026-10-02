@@ -58,28 +58,45 @@ const assignStudentsToBatchRecord = async ({ db, batch, studentIds }) => {
 const getBatchesGlobal = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
   const collegeId = req.query.collegeId;
+  const departmentId = req.query.departmentId;
   const search = (req.query.search || "").trim();
+
+  const and = [];
+  if (search) {
+    and.push({
+      OR: [
+        { name: { contains: search, mode: "insensitive" } },
+        {
+          department: {
+            name: { contains: search, mode: "insensitive" },
+          },
+        },
+        {
+          college: {
+            name: { contains: search, mode: "insensitive" },
+          },
+        },
+      ],
+    });
+  }
+  if (departmentId) {
+    // A batch belongs to a department either through the scalar departmentId or
+    // the multi-department departmentIds[] list (global batches).
+    and.push({ OR: [{ departmentId }, { departmentIds: { in: [departmentId] } }] });
+  }
 
   const where = {
     ...(collegeId ? { collegeId } : {}),
-    ...(search
-      ? {
-          OR: [
-            { name: { contains: search, mode: "insensitive" } },
-            {
-              department: {
-                name: { contains: search, mode: "insensitive" },
-              },
-            },
-            {
-              college: {
-                name: { contains: search, mode: "insensitive" },
-              },
-            },
-          ],
-        }
-      : {}),
+    ...(and.length ? { AND: and } : {}),
   };
+
+  // Only scalar columns can be ordered database-side here; relation-name and
+  // per-row counts would need joins, so the table leaves those unsorted rather
+  // than pretending to sort a whole page client-side.
+  const BATCH_SORT_COLUMNS = { name: "name", year: "year", createdAt: "createdAt" };
+  const requestedSort = String(req.query.sortBy || "");
+  const sortColumn = BATCH_SORT_COLUMNS[requestedSort] || "createdAt";
+  const sortDir = String(req.query.sortDir || "").toLowerCase() === "asc" ? "asc" : "desc";
 
   const [items, total] = await Promise.all([
     (async () => {
@@ -94,7 +111,7 @@ const getBatchesGlobal = asyncHandler(async (req, res) => {
             select: { students: true, tests: true, testAssignments: true },
           },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { [sortColumn]: sortDir },
         skip,
         take: limit,
       });
@@ -337,7 +354,15 @@ const updateBatchGlobal = asyncHandler(async (req, res) => {
       ...(req.body.departmentId !== undefined || req.body.departmentIds !== undefined || req.body.isGlobal !== undefined ? { departmentId: primaryDepartmentId } : {}),
       ...(req.body.departmentId !== undefined || req.body.departmentIds !== undefined || req.body.isGlobal !== undefined ? { departmentIds: finalDepartmentIds } : {}),
       ...(req.body.isGlobal !== undefined ? { isGlobal: nextIsGlobal } : {}),
-      ...(req.body.isArchived !== undefined ? { isArchived: req.body.isArchived } : {}),
+      ...(req.body.isArchived !== undefined
+        ? {
+            isArchived: req.body.isArchived,
+            status: req.body.isArchived ? "ARCHIVED" : "ACTIVE",
+            archivedAt: req.body.isArchived ? new Date() : null,
+            archivedReason: req.body.isArchived ? "SUPER_ADMIN_ARCHIVE" : null,
+            archivedBySuperAdminId: req.body.isArchived ? req.superAdmin.id : null,
+          }
+        : {}),
     },
     include: {
       college: true,

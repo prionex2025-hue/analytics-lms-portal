@@ -26,16 +26,17 @@ const {
   buildStudentLifecycleWhere,
   buildReportScopeMetadata,
   normalizeStudentScope,
+  normalizeAcademicStatus,
   normalizePassoutYear,
   normalizeOptionalId,
 } = require("../../services/report-scope.service");
+const { paginateAnalyticsPayload } = require("../../services/report-list-pagination.service");
+const { PASS_THRESHOLD_PERCENT } = require("../../utils/stats");
 
 // Prisma student filter that matches a student assigned to a batch either via the
 // scalar batchId or the batchIds[] array (students can belong to multiple batches).
 const buildBatchStudentWhere = (batchId) =>
   batchId ? { OR: [{ batchId }, { batchIds: { in: [batchId] } }] } : {};
-
-const PASS_THRESHOLD_PERCENT = 40;
 
 // Scalar student fields the report rows need; group names come from
 // attachStudentGroups (batched) instead of per-student includes.
@@ -100,7 +101,7 @@ const buildSuperReportCollegeWhere = (collegeId) => ({
   ],
 });
 
-const validateReportScope = async ({ db, collegeId, departmentId, batchId, studentId, testId, studentScope, passoutYear, passoutCohortId }) => {
+const validateReportScope = async ({ db, collegeId, departmentId, batchId, studentId, testId, studentScope, academicStatus, passoutYear, passoutCohortId }) => {
   if (collegeId) {
     const college = await db.college.findUnique({ where: { id: collegeId }, select: { id: true, isActive: true } });
     if (!college || !college.isActive) {
@@ -143,7 +144,7 @@ const validateReportScope = async ({ db, collegeId, departmentId, batchId, stude
         id: studentId,
         ...(collegeId ? { collegeId } : {}),
         ...(departmentId ? { departmentId } : {}),
-        ...buildStudentLifecycleWhere({ studentScope, passoutYear, passoutCohortId }),
+        ...buildStudentLifecycleWhere({ studentScope, academicStatus, passoutYear, passoutCohortId }),
       },
       select: { id: true },
     });
@@ -240,6 +241,7 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
   const year = normalizeStudentYear(req.query.year);
   const reportScopeFilters = {
     studentScope: normalizeStudentScope(req.query.studentScope),
+    academicStatus: normalizeAcademicStatus(req.query.academicStatus),
     passoutYear: normalizePassoutYear(req.query.passoutYear),
     passoutCohortId: normalizeOptionalId(req.query.passoutCohortId),
   };
@@ -363,6 +365,10 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
     if (rowsMode === "none") payload.tableRows = [];
     else if (rowsMode === "absent") payload.tableRows = payload.tableRows.filter((row) => row.testsTaken === 0);
 
+    if (String(req.query.paginate || "") === "1") {
+      paginateAnalyticsPayload(payload, req.query, rowsMode);
+    }
+
     return res.status(200).json(payload);
   }
 
@@ -453,8 +459,8 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
   const studentRows = students.map((student) => {
     const rows = submissionsByStudent.get(student.id) || [];
     const avgScore = rows.length
-      ? rows.reduce((sum, submission) => sum + getScorePercent(submission), 0) / rows.length
-      : 0;
+      ? toPercent(rows.reduce((sum, submission) => sum + getScorePercent(submission), 0) / rows.length)
+      : null;
     const violations = rows.reduce((sum, submission) => sum + getViolationCount(submission), 0);
 
     return {
@@ -467,10 +473,10 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
       department: student.department?.name || "-",
       batch: student.batch?.name || "-",
       year: student.year || null,
-      avgScore: toPercent(avgScore),
+      avgScore,
       testsTaken: rows.length,
       violations,
-      participation: tests.length > 0 ? toPercent((rows.length / tests.length) * 100) : 0,
+      participation: tests.length > 0 ? toPercent((rows.length / tests.length) * 100) : null,
     };
   });
 
@@ -577,9 +583,9 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
       college: department.college?.name || "-",
       students: deptStudents.length,
       submissions: deptSubmissions.length,
-      avgScore: toPercent(deptAvg),
-      passRate: toPercent(deptPass),
-      participation: deptStudents.length ? toPercent((deptAttempted.size / deptStudents.length) * 100) : 0,
+      avgScore: deptSubmissions.length ? toPercent(deptAvg) : null,
+      passRate: deptSubmissions.length ? toPercent(deptPass) : null,
+      participation: deptStudents.length ? toPercent((deptAttempted.size / deptStudents.length) * 100) : null,
       violations: deptViolations,
     };
   });
@@ -668,15 +674,15 @@ const getSuperReportAnalytics = asyncHandler(async (req, res) => {
       attemptedStudents: attemptedStudentIds.size,
       totalTests: tests.length,
       totalSubmissions: scopedSubmissions.length,
-      avgScore: toPercent(avgScore),
-      passRate: toPercent(passRate),
-      participationRate: toPercent(participationRate),
+      avgScore: scopedSubmissions.length ? toPercent(avgScore) : null,
+      passRate: scopedSubmissions.length ? toPercent(passRate) : null,
+      participationRate: students.length ? toPercent(participationRate) : null,
       violations: totalViolations,
     },
     scoreTrend,
     subjectPerformance,
     distribution: Object.entries(distributionBase).map(([range, count]) => ({ range, count })),
-    distributionStats: describeDistribution(rankedStudents.map((row) => row.avgScore)),
+    distributionStats: rankedStudents.length ? describeDistribution(rankedStudents.map((row) => row.avgScore)) : null,
     departmentRows,
     tableRows,
     selectedStudent,
@@ -715,6 +721,7 @@ const buildSuperReportTestsPayload = async (req, { all = false } = {}) => {
   const statusFilter = String(req.query.status || "").trim().toUpperCase();
   const reportScopeFilters = {
     studentScope: normalizeStudentScope(req.query.studentScope),
+    academicStatus: normalizeAcademicStatus(req.query.academicStatus),
     passoutYear: normalizePassoutYear(req.query.passoutYear),
     passoutCohortId: normalizeOptionalId(req.query.passoutCohortId),
   };
@@ -892,6 +899,7 @@ const getSuperReportTableDashboard = asyncHandler(async (req, res) => {
   const year = normalizeStudentYear(req.query.year);
   const reportScopeFilters = {
     studentScope: normalizeStudentScope(req.query.studentScope),
+    academicStatus: normalizeAcademicStatus(req.query.academicStatus),
     passoutYear: normalizePassoutYear(req.query.passoutYear),
     passoutCohortId: normalizeOptionalId(req.query.passoutCohortId),
   };

@@ -7,6 +7,7 @@ const { ApiError } = require("../utils/http");
 const { createStudentPassword } = require("../utils/student-password");
 const { bumpPrincipalTokenVersion, invalidatePrincipalAuthCache } = require("./auth-revocation.service");
 const { isAlumniStatus, STUDENT_LIFECYCLE_STATUS } = require("./student-lifecycle.service");
+const { recordStudentStatusChange, STATUS_EVENT_ACTOR } = require("./student-status-history.service");
 
 const resolveStudentId = (enrollmentNumber) => String(enrollmentNumber || "").trim();
 
@@ -351,6 +352,16 @@ async function toggleStudentStatus(studentId, collegeId, adminId, isActive) {
   } else {
     await invalidatePrincipalAuthCache("student", studentId);
   }
+
+  await recordStudentStatusChange({
+    db,
+    student: existing,
+    previousStatus: existing.lifecycleStatus,
+    newStatus: validated.isActive ? STUDENT_LIFECYCLE_STATUS.ACTIVE : STUDENT_LIFECYCLE_STATUS.SUSPENDED,
+    reason: validated.isActive ? "MANUAL_ACTIVATION" : "MANUAL_SUSPEND",
+    actorId: adminId,
+    actorType: STATUS_EVENT_ACTOR.ADMIN,
+  });
 
   await db.auditLog.create({
     data: {

@@ -25,7 +25,6 @@ const {
 	exportSuperReportXlsx,
 	getSuperReportItemAnalysis,
 	getSuperReportIntegrity,
-	getSuperReportTrends,
 	getSuperReportAtRisk,
 } = require("../../controllers/SuperAdmin/advanced-reports.controller");
 
@@ -66,7 +65,6 @@ router.get("/tests", authenticateSuperAdmin, superReportReadLimiter, superReport
 router.get("/table", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportTableDashboard);
 router.get("/item-analysis", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportItemAnalysis);
 router.get("/integrity", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportIntegrity);
-router.get("/trends", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportTrends);
 router.get("/at-risk", authenticateSuperAdmin, superReportReadLimiter, superReportCache, getSuperReportAtRisk);
 router.get("/anomalies/escalations", authenticateSuperAdmin, superReportReadLimiter, validate(escalatedAnomaliesQuerySchema), getEscalatedAnomalies);
 router.post("/anomalies/review", authenticateSuperAdmin, superReportLimiter, validate(reviewSuperAnomalySchema), reviewSuperAnomaly);

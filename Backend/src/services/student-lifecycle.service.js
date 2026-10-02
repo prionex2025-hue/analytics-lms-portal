@@ -1,5 +1,6 @@
 const { ApiError } = require("../utils/http");
 const { REPORTABLE_SUBMISSION_STATUSES } = require("./report-scope.service");
+const { recordStudentStatusChange } = require("./student-status-history.service");
 
 const DEFAULT_DEGREE_YEARS = 4;
 const STUDENT_LIFECYCLE_STATUS = {
@@ -216,6 +217,18 @@ const promoteStudentsForPassout = async ({
           data: {
             passoutSnapshot: buildStudentPassoutSnapshot(student),
           },
+        });
+
+        await recordStudentStatusChange({
+          db,
+          student,
+          previousStatus: student.lifecycleStatus,
+          newStatus: STUDENT_LIFECYCLE_STATUS.ALUMNI,
+          reason: "PASSOUT",
+          effectiveDate: now,
+          actorId,
+          actorType,
+          metadata: { passoutYear, passoutCohortId: cohort.id, previousYear: student.year },
         });
       }
     }

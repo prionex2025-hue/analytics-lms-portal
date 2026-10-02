@@ -21,6 +21,10 @@ const TIER_TONE = { high: "success", mid: "info", low: "warning" };
 export const scoreColorClass = (score) => TIER_COLOR_CLASS[scoreTier(score)];
 export const scoreTone = (score) => TIER_TONE[scoreTier(score)];
 
+// A missing score (the APIs send null when a metric has no data) reads as
+// neutral, never as the danger colour a real 0% would earn.
+export const scoreColorClassOrNoData = (score) => (score == null ? "text-text-secondary" : scoreColorClass(score));
+
 // Health badge used by department / batch registry rows.
 export const healthBadge = (score) => {
   const tier = scoreTier(score);

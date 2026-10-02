@@ -10,6 +10,7 @@ const {
   promoteStudentsForPassout,
 } = require("../../services/student-lifecycle.service");
 const { appendLifecycleFilters } = require("../../services/report-scope.service");
+const { recordStudentStatusChange, STATUS_EVENT_ACTOR } = require("../../services/student-status-history.service");
 const { ApiError, asyncHandler } = require("../../utils/http");
 const { getPagination } = require("../../utils/pagination");
 const {
@@ -462,6 +463,16 @@ const toggleStudentStatus = asyncHandler(async (req, res) => {
   if (req.body.isActive === false) {
     await revokeStudentRefreshTokens(db, studentId);
   }
+
+  await recordStudentStatusChange({
+    db,
+    student: existing,
+    previousStatus: existing.lifecycleStatus,
+    newStatus: req.body.isActive ? STUDENT_LIFECYCLE_STATUS.ACTIVE : STUDENT_LIFECYCLE_STATUS.SUSPENDED,
+    reason: req.body.isActive ? "MANUAL_ACTIVATION" : "MANUAL_SUSPEND",
+    actorId: req.superAdmin.id,
+    actorType: STATUS_EVENT_ACTOR.SUPER_ADMIN,
+  });
 
   await createAuditLog({
     action: req.body.isActive ? "SUPER_ADMIN_UNBLOCK_STUDENT" : "SUPER_ADMIN_BLOCK_STUDENT",

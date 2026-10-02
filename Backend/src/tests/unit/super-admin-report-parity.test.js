@@ -27,6 +27,15 @@ jest.mock("../../services/submission-batch.service", () => ({
   collectSubmissions: jest.fn(async () => ({ rows: [], truncated: false })),
 }));
 
+// Raw-driver lookups need a live mongoose connection; unit tests stub them.
+jest.mock("../../services/report-lookup.service", () => ({
+  attachStudentGroups: jest.fn(async (_db, students) => students),
+  countViolationsBySubmission: jest.fn(async () => new Map()),
+  loadNamesById: jest.fn(async () => new Map()),
+  sumQuestionMarksByTest: jest.fn(async () => new Map()),
+  uniqueIds: (values) => [...new Set((values || []).filter(Boolean).map(String))],
+}));
+
 const { reviewReportAnomalySchema } = require("../../schemas/Admin/admin-core.schema");
 const { createSuperReportSchema, reviewSuperAnomalySchema } = require("../../schemas/SuperAdmin/super-admin-core.schema");
 const { generateSuperAdminReportHTML } = require("../../services/report-formatter.service");
@@ -215,7 +224,10 @@ describe("super admin report parity — controllers", () => {
           { id: TEST_ID, title: "Aptitude 1", status: "PUBLISHED", totalMarks: 10, department: { name: "CSE" }, batch: { name: "A" }, questions: [] },
         ]),
       },
-      student: { findMany: jest.fn(async () => [{ id: "s1" }, { id: "s2" }]) },
+      student: {
+        findMany: jest.fn(async () => [{ id: "s1" }, { id: "s2" }]),
+        count: jest.fn(async () => 2),
+      },
     };
     models.init.mockResolvedValue({ dbClient: db });
     collectSubmissions.mockResolvedValue({

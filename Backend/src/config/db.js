@@ -38,6 +38,7 @@ const MODEL_TO_COLLECTION = {
   testInstructionAgreement: "testInstructionAgreement",
   testBatch: "testBatch",
   studentPassoutCohort: "studentPassoutCohort",
+  studentStatusEvent: "studentStatusEvent",
   reportJob: "reportJob",
   superReportJob: "superReportJob",
   platformSetting: "platformSetting",
@@ -50,6 +51,7 @@ const RELATIONS = {
     admins: { model: "admin", type: "many", sourceField: "id", targetField: "collegeId" },
     students: { model: "student", type: "many", sourceField: "id", targetField: "collegeId" },
     passoutCohorts: { model: "studentPassoutCohort", type: "many", sourceField: "id", targetField: "collegeId" },
+    studentStatusEvents: { model: "studentStatusEvent", type: "many", sourceField: "id", targetField: "collegeId" },
     reportJobs: { model: "reportJob", type: "many", sourceField: "id", targetField: "collegeId" },
     auditLogs: { model: "auditLog", type: "many", sourceField: "id", targetField: "collegeId" },
     events: { model: "event", type: "many", sourceField: "id", targetField: "collegeId" },
@@ -190,6 +192,11 @@ const RELATIONS = {
     students: { model: "student", type: "many", sourceField: "id", targetField: "passoutCohortId" },
     submissions: { model: "submission", type: "many", sourceField: "id", targetField: "passoutCohortId" },
   },
+  studentStatusEvent: {
+    college: { model: "college", type: "one", sourceField: "collegeId", targetField: "id" },
+    changedByAdmin: { model: "admin", type: "one", sourceField: "changedByAdminId", targetField: "id" },
+    changedBySuperAdmin: { model: "superAdmin", type: "one", sourceField: "changedBySuperAdminId", targetField: "id" },
+  },
   reportJob: {
     college: { model: "college", type: "one", sourceField: "collegeId", targetField: "id" },
     admin: { model: "admin", type: "one", sourceField: "adminId", targetField: "id" },
@@ -212,7 +219,7 @@ const DEFAULTS = {
   college: { isActive: true },
   superAdmin: { role: "SUPER_ADMIN", isActive: true },
   department: {},
-  batch: {},
+  batch: { status: "ACTIVE", isArchived: false, isActive: true },
   admin: { role: "ADMIN", isActive: true },
   student: {
     role: "STUDENT",
@@ -287,6 +294,7 @@ const DEFAULTS = {
   testInstructionAgreement: { agreedAt: () => new Date() },
   testBatch: {},
   studentPassoutCohort: { status: "PROCESSING", studentIds: [], departmentStats: [], batchStats: [] },
+  studentStatusEvent: {},
   violation: { metadata: null },
   reportJob: { status: "QUEUED" },
   superReportJob: { status: "QUEUED" },
@@ -325,6 +333,10 @@ const OBJECT_ID_FIELDS = new Set([
   "updatedById",
   "promotedById",
   "passoutCohortId",
+  "changedByAdminId",
+  "changedBySuperAdminId",
+  "archivedByAdminId",
+  "archivedBySuperAdminId",
 ]);
 
 const isPlainObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof mongoose.Types.ObjectId);

@@ -609,7 +609,13 @@ const archiveBatch = asyncHandler(async (req, res) => {
 
   const archived = await db.batch.update({
     where: { id: batchId },
-    data: { isArchived: true },
+    data: {
+      isArchived: true,
+      status: "ARCHIVED",
+      archivedAt: now,
+      archivedReason: "ADMIN_ARCHIVE",
+      archivedByAdminId: req.admin.id,
+    },
   });
 
   await createAuditLog({
@@ -620,6 +626,8 @@ const archiveBatch = asyncHandler(async (req, res) => {
     adminId: req.admin.id,
     afterState: {
       removedFromFutureTests: futureIds.length,
+      status: "ARCHIVED",
+      archivedAt: now,
     },
   });
 
