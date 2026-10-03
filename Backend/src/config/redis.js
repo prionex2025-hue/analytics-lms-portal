@@ -99,13 +99,13 @@ if (redisEnabled) {
 
   redisClient.on("error", (error) => {
     redisReady = false;
-    lastRedisError = error?.message || "unknown redis error";
+    lastRedisError = error?.name || "RedisConnectionError";
     // Avoid flooding logs when Redis is down and reconnect retries are active.
     if (!hasLoggedRedisDown) {
       logger.error("redis.connection_error", {
         target: describeRedisTarget(),
         reason: lastRedisError,
-        impact: "rate limits fall back to per-instance memory; response cache bypassed; exam locks rely on DB guards",
+        impact: "rate-limited requests and access-token revocation fail closed; response cache is bypassed; exam locks rely on DB guards",
       });
       hasLoggedRedisDown = true;
     }
@@ -116,7 +116,7 @@ if (redisEnabled) {
   });
 } else if (env.nodeEnv === "production") {
   logger.warn("redis.not_configured", {
-    impact: "rate limits and lockouts are per-instance only; do not run more than one API replica without Redis",
+    impact: "production readiness and rate-limited requests fail closed until Redis is configured",
   });
 }
 
@@ -167,7 +167,7 @@ const getRedisHealthSnapshot = async () => {
       available: false,
       status: "down",
       latencyMs: -1,
-      error: error?.message || lastRedisError || "ping failed",
+      error: error?.name || lastRedisError || "RedisPingFailed",
     };
   }
 };

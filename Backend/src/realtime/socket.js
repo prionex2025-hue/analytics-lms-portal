@@ -2,6 +2,7 @@ const { Server } = require("socket.io");
 const { createAdapter } = require("@socket.io/redis-adapter");
 const { logger } = require("../utils/logger");
 const Redis = require("ioredis");
+const { redisClient, isRedisAvailable } = require("../config/redis");
 const db = require("../config/db");
 const { ROLES, isAdminLikeRole, isCollegeAdminRole, isDepartmentAdminRole, normalizeRole } = require("../constants/roles");
 const { verifyAccessToken } = require("../utils/token");
@@ -227,6 +228,22 @@ const initSocket = (httpServer, frontendOrigins) => {
     },
   });
 
+  // A Socket.IO handshake checks Redis-backed token revocation, but already
+  // connected clients would otherwise keep receiving local events through a
+  // Redis outage. Close this replica's sockets when shared auth state drops;
+  // clients can reconnect after Redis recovers and pass the normal handshake.
+  const closeSocketsIfRedisUnavailable = () => {
+    if (env.nodeEnv !== "production" || isRedisAvailable() || !io) return;
+    logger.throttled("warn", "socket.auth_state_unavailable", 60_000, "socket.redis_unavailable_disconnect", {
+      impact: "closed local sockets until Redis-backed authentication is restored",
+    });
+    io.local.disconnectSockets(true);
+  };
+  if (redisClient) {
+    redisClient.on("error", closeSocketsIfRedisUnavailable);
+    redisClient.on("end", closeSocketsIfRedisUnavailable);
+  }
+
   attachRedisAdapterIfAvailable().catch((error) => {
     console.warn("Socket.IO Redis adapter bootstrap error, using in-memory adapter:", error?.message || "unknown error");
   });
@@ -411,4 +428,3 @@ module.exports = {
   disconnectAllSockets,
   shutdownSocket,
 };
-

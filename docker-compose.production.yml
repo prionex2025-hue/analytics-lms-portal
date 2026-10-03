@@ -95,8 +95,11 @@ services:
       context: ./Backend
       dockerfile: dockerfile
     restart: unless-stopped
-    # Must exceed SHUTDOWN_TIMEOUT_MS: Docker's default 10s would SIGKILL the
-    # API mid-drain (in-flight submissions, running report jobs).
+    # Ordering must hold: REPORT_PDF_TIMEOUT_MS < SHUTDOWN_TIMEOUT_MS <
+    # stop_grace_period. Docker's default 10s grace would SIGKILL the API
+    # mid-drain (in-flight submissions, running Puppeteer report jobs), and a
+    # drain shorter than the render budget kills reports that are nearly done.
+    # prod:check enforces both inequalities.
     stop_grace_period: 30s
     mem_limit: ${API_MEMORY_LIMIT:-2g}
     cpus: ${API_CPU_LIMIT:-1.5}
@@ -115,6 +118,7 @@ services:
       # SPA and API share lms.analyticsedify.com, so the refresh cookie never needs
       # to be sent cross-site. "strict" blocks it from all cross-site requests (CSRF).
       AUTH_COOKIE_SAMESITE: ${AUTH_COOKIE_SAMESITE:-strict}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       # `:?` makes an unset/empty secret abort `docker compose up` with a clear
       # message. `:-` silently passed an empty value through, so the API crash-
       # looped on env.js's length check and every later `docker compose exec`
@@ -142,13 +146,14 @@ services:
       REDIS_KEEP_ALIVE_MS: ${REDIS_KEEP_ALIVE_MS:-30000}
       REDIS_MAX_RETRY_DELAY_MS: ${REDIS_MAX_RETRY_DELAY_MS:-2000}
       REDIS_COMMAND_TIMEOUT_MS: ${REDIS_COMMAND_TIMEOUT_MS:-1000}
-      REDIS_REQUIRED_FOR_READINESS: ${REDIS_REQUIRED_FOR_READINESS:-false}
+      REDIS_REQUIRED_FOR_READINESS: ${REDIS_REQUIRED_FOR_READINESS:-true}
       MONGODB_MAX_POOL_SIZE: ${MONGODB_MAX_POOL_SIZE:-20}
       MONGODB_MIN_POOL_SIZE: ${MONGODB_MIN_POOL_SIZE:-2}
       MONGODB_SERVER_SELECTION_TIMEOUT_MS: ${MONGODB_SERVER_SELECTION_TIMEOUT_MS:-5000}
       HTTP_KEEP_ALIVE_TIMEOUT_MS: ${HTTP_KEEP_ALIVE_TIMEOUT_MS:-65000}
       HTTP_REQUEST_TIMEOUT_MS: ${HTTP_REQUEST_TIMEOUT_MS:-120000}
-      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-15000}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-25000}
+      REPORT_PDF_TIMEOUT_MS: ${REPORT_PDF_TIMEOUT_MS:-20000}
       REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-1gb}
       REDIS_MAXMEMORY_POLICY: ${REDIS_MAXMEMORY_POLICY:-noeviction}
       METRICS_ENABLED: ${METRICS_ENABLED:-true}

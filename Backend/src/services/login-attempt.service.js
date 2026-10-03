@@ -13,8 +13,8 @@ const { logger } = require("../utils/logger");
 //
 // Storage: Redis (shared by all replicas) with atomic INCR, so a burst of
 // parallel wrong-password requests cannot under-count the way a
-// GET-then-SET did. If Redis is unavailable, counters fall back to bounded
-// per-process memory rather than failing logins.
+// GET-then-SET did. Production fails closed if shared state is unavailable;
+// bounded per-process memory is development/test only.
 
 const MEMORY_MAX_KEYS = 50_000;
 const memoryCounts = new Map();
@@ -135,10 +135,19 @@ const run = async (operation, ...args) => {
       return await redisStore[operation](...args);
     } catch (error) {
       logger.throttled("warn", "login-attempt-degraded", 60_000, "login_lockout.redis_unavailable", {
-        fallback: "per-instance-memory",
-        reason: error?.message,
+        fallback: process.env.NODE_ENV === "production" ? "none" : "per-instance-memory",
+        impact: process.env.NODE_ENV === "production" ? "authentication rejected with 503" : "local development/test state used",
+        reason: error?.name || "redis command failed",
       });
+      if (process.env.NODE_ENV === "production") {
+        throw new ApiError(503, "Authentication service temporarily unavailable. Please retry shortly.", null, "LOGIN_PROTECTION_UNAVAILABLE");
+      }
     }
+  } else if (process.env.NODE_ENV === "production") {
+    logger.throttled("error", "login-attempt-redis-missing", 60_000, "login_lockout.redis_not_configured", {
+      impact: "authentication rejected with 503",
+    });
+    throw new ApiError(503, "Authentication service temporarily unavailable. Please retry shortly.", null, "LOGIN_PROTECTION_UNAVAILABLE");
   }
   return memory[operation](...args);
 };
@@ -184,7 +193,7 @@ const recordLoginFailure = async ({ scope, identifier, ip }) => {
         counter: kind,
         failedCount: count,
         lockoutSeconds: Math.ceil(lockoutMs / 1000),
-        ip: String(ip || "unknown"),
+        ipHash: crypto.createHash("sha256").update(String(ip || "unknown")).digest("hex").slice(0, 16),
       });
     }
 

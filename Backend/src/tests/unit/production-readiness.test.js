@@ -38,23 +38,31 @@ describe("access-token revocation without Redis (production)", () => {
   afterEach(() => {
     process.env.NODE_ENV = originalEnv;
     jest.resetModules();
+    jest.dontMock("../../utils/token");
   });
 
   const load = (redisClient) => {
     jest.resetModules();
     process.env.NODE_ENV = "production";
     jest.doMock("../../config/redis", () => ({ redisClient, isRedisAvailable: () => false }));
+    jest.doMock("../../utils/token", () => ({ verifyAccessToken: jest.fn() }));
     jest.doMock("../../realtime/socket", () => ({ disconnectUserSockets: jest.fn() }));
+    jest.doMock("../../utils/token", () => ({ verifyAccessToken: jest.fn() }));
     return require("../../services/access-token-revocation.service");
   };
 
-  it("does not fail authenticated requests when Redis is down, and still honours local revocations", async () => {
+  it("fails closed for token checks and logout when Redis is down", async () => {
     const { isAccessTokenRevoked, revokeAccessTokenPayload } = load({});
     const payload = { jti: "jti-1", exp: Math.floor(Date.now() / 1000) + 600 };
 
-    await expect(isAccessTokenRevoked(payload)).resolves.toBe(false);
-    await expect(revokeAccessTokenPayload(payload)).resolves.toBe(true);
-    await expect(isAccessTokenRevoked(payload)).resolves.toBe(true);
+    await expect(isAccessTokenRevoked(payload)).rejects.toMatchObject({
+      statusCode: 503,
+      code: "TOKEN_REVOCATION_UNAVAILABLE",
+    });
+    await expect(revokeAccessTokenPayload(payload)).rejects.toMatchObject({
+      statusCode: 503,
+      code: "TOKEN_REVOCATION_UNAVAILABLE",
+    });
   });
 });
 

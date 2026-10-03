@@ -114,6 +114,13 @@ const getPrometheusMetrics = async () => {
     type: "counter",
     value: rateLimits.totalBlocked,
   });
+  // This signal tracks local fallback for rate-limit telemetry only. Security
+  // counters fail closed in production when shared Redis state is unavailable.
+  appendMetric(lines, {
+    name: "lms_rate_limit_degraded",
+    help: "1 when rate-limit telemetry is using local memory because shared metrics storage is unavailable.",
+    value: rateLimits.degraded ? 1 : 0,
+  });
   appendMetric(lines, {
     name: "lms_rum_metric_count",
     help: "Real user monitoring metric samples in the rolling retention window.",

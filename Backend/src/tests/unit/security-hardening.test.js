@@ -50,6 +50,40 @@ describe("login lockout", () => {
   });
 });
 
+describe("production login lockout outage policy", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const loadService = ({ available, redisClient }) => {
+    process.env.NODE_ENV = "production";
+    jest.resetModules();
+    jest.doMock("../../config/env", () => ({
+      loginLockout: { maxAttempts: 5, accountMaxAttempts: 25, windowMs: 900_000, baseLockoutMs: 300_000, maxLockoutMs: 1_800_000 },
+    }));
+    jest.doMock("../../config/redis", () => ({ redisClient, isRedisAvailable: () => available }));
+    return require("../../services/login-attempt.service");
+  };
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    jest.resetModules();
+    jest.dontMock("../../config/env");
+    jest.dontMock("../../config/redis");
+  });
+
+  it("rejects login-protection checks when shared Redis is disconnected", async () => {
+    const service = loadService({ available: false, redisClient: {} });
+    await expect(service.assertLoginAllowed({ scope: "student", identifier: "student-1", ip: "198.51.100.2" }))
+      .rejects.toMatchObject({ statusCode: 503, code: "LOGIN_PROTECTION_UNAVAILABLE" });
+  });
+
+  it("rejects login-protection checks when a Redis command fails", async () => {
+    const redisClient = { pttl: jest.fn().mockRejectedValue(new Error("command timeout")) };
+    const service = loadService({ available: true, redisClient });
+    await expect(service.assertLoginAllowed({ scope: "student", identifier: "student-1", ip: "198.51.100.2" }))
+      .rejects.toMatchObject({ statusCode: 503, code: "LOGIN_PROTECTION_UNAVAILABLE" });
+  });
+});
+
 describe("student profile validation", () => {
   const {
     changePasswordSchema,

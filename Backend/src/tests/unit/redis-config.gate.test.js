@@ -127,7 +127,8 @@ describe("redis config gate", () => {
       const snap = await redis.getRedisHealthSnapshot();
       expect(snap.status).toBe("down");
       expect(snap.available).toBe(false);
-      expect(snap.error).toBe("connection denied");
+      expect(snap.error).toBe("Error");
+      expect(snap.error).not.toContain("connection denied");
     });
 
     it("falls back to disconnect() when quit() rejects during shutdown", async () => {

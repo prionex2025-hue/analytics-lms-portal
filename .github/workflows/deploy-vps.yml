@@ -6,13 +6,13 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
-  # Manual deploy of any branch / tag / SHA from the Actions tab.
+  # Manual dispatch is restricted to previously deployed release tags below.
   workflow_dispatch:
     inputs:
       ref:
-        description: "Git ref to deploy (branch, tag, or full SHA). Default: origin/main"
+        description: "Previously deployed release tag (release/latest or release/<timestamp>). New main commits deploy only after successful CI."
         required: false
-        default: ""
+        default: "release/latest"
 
 # A deploy must never race another deploy/rollback.
 concurrency:
@@ -48,7 +48,15 @@ jobs:
           REF_INPUT: ${{ inputs.ref }}
           CI_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          REF="${CI_SHA:-${REF_INPUT:-origin/main}}"
+          if [ -n "${CI_SHA:-}" ]; then
+            REF="$CI_SHA"
+          else
+            REF="${REF_INPUT:-release/latest}"
+            if ! printf '%s' "$REF" | grep -qE '^release/(latest|[0-9]{8}T[0-9]{6}Z)$'; then
+              echo "::error::Manual deploys must use a previously deployed release tag (release/latest or release/<timestamp>). New commits deploy only after successful main CI."
+              exit 1
+            fi
+          fi
           if ! printf '%s' "$REF" | grep -qE '^[A-Za-z0-9._/-]+$'; then
             echo "::error::Invalid ref (only alphanumeric, . _ / - allowed): $REF"
             exit 1

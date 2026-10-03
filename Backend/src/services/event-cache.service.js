@@ -3,6 +3,12 @@ const { redisClient, isRedisAvailable } = require("../config/redis");
 
 const EVENT_FEED_TTL_SECONDS = 30;
 const EVENT_FEED_PREFIX = "event_feed";
+// Index of live feed cache keys. Redis SCAN iterates the ENTIRE keyspace and only
+// filters by pattern on the way out, so invalidating `event_feed:*` on a Redis
+// shared with rate limits, sessions, queues and other caches walked every key in
+// the instance. This set makes invalidation proportional to the number of cached
+// feeds instead of the size of the keyspace.
+const EVENT_FEED_INDEX_KEY = `${EVENT_FEED_PREFIX}:index`;
 const EVENT_SEATS_PREFIX = "event_seats";
 
 const hash = (value) => crypto.createHash("sha256").update(String(value || "")).digest("hex");
@@ -31,7 +37,15 @@ const setCachedEventFeed = async (key, payload, ttlSeconds = EVENT_FEED_TTL_SECO
   }
 
   try {
-    await redisClient.set(key, JSON.stringify(payload), "EX", Math.max(5, ttlSeconds));
+    const ttl = Math.max(5, ttlSeconds);
+    const pipeline = redisClient.pipeline();
+    pipeline.set(key, JSON.stringify(payload), "EX", ttl);
+    // Track the key so invalidation can find it without scanning.
+    pipeline.sadd(EVENT_FEED_INDEX_KEY, key);
+    // The index only needs to outlive the longest-lived feed entry it tracks;
+    // refreshing it here keeps it from expiring while keys are still live.
+    pipeline.expire(EVENT_FEED_INDEX_KEY, ttl + 5);
+    await pipeline.exec();
   } catch {
     // Cache writes are best-effort.
   }
@@ -43,30 +57,22 @@ const invalidateEventFeedCache = async () => {
   }
 
   try {
-    const stream = redisClient.scanStream({
-      match: `${EVENT_FEED_PREFIX}:*`,
-      count: 200,
-    });
-
+    // Only the keys this service wrote are listed in the index, so this is O(cached
+    // feeds) rather than O(total keys in Redis).
+    const keys = await redisClient.smembers(EVENT_FEED_INDEX_KEY);
     const pipeline = redisClient.pipeline();
-    let queued = 0;
 
-    await new Promise((resolve, reject) => {
-      stream.on("data", (keys = []) => {
-        for (const key of keys) {
-          pipeline.del(key);
-          queued += 1;
-        }
-      });
-      stream.on("end", resolve);
-      stream.on("error", reject);
-    });
+    for (const key of keys) {
+      pipeline.del(key);
+    }
 
-    if (queued > 0) {
+    pipeline.del(EVENT_FEED_INDEX_KEY);
+
+    if (pipeline.length > 0) {
       await pipeline.exec();
     }
   } catch {
-    // Invalidation is fail-open; short TTL limits stale data.
+    // Invalidation is fail-open; the short feed TTL limits stale data.
   }
 };
 

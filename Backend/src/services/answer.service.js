@@ -29,7 +29,30 @@ const resolveSelectedOptions = (payload) => {
   return [];
 };
 
-const normalizeAnswerPayload = (payload, { submissionId, questionId }) => {
+// Per-question time is reported by the browser, so it is advisory data and cannot
+// be trusted. Without a ceiling a client could post an absurd value and silently
+// poison the per-question timing analytics. Clamp to the attempt's own wall-clock
+// budget, which the server owns, and fall back to a conservative ceiling when the
+// attempt has no recorded start.
+const MAX_TIME_SPENT_FALLBACK_SECONDS = 6 * 60 * 60;
+const MAX_TIME_SPENT_PER_QUESTION_SECONDS = 30 * 60;
+
+const clampTimeSpentSeconds = (raw, { submission } = {}) => {
+  const value = Number(raw ?? 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+
+  const startedAtMs = submission?.startedAt ? new Date(submission.startedAt).getTime() : NaN;
+  const elapsedSeconds = Number.isFinite(startedAtMs)
+    ? Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
+    : MAX_TIME_SPENT_FALLBACK_SECONDS;
+
+  // No single question can legitimately take longer than the whole attempt has
+  // been running, nor longer than the absolute per-question ceiling.
+  const ceiling = Math.min(elapsedSeconds, MAX_TIME_SPENT_PER_QUESTION_SECONDS);
+  return Math.min(Math.floor(value), ceiling);
+};
+
+const normalizeAnswerPayload = (payload, { submissionId, questionId, submission }) => {
   const answerBoolean = resolveAnswerBoolean(payload);
   const answerText = resolveAnswerText(payload);
 
@@ -43,7 +66,7 @@ const normalizeAnswerPayload = (payload, { submissionId, questionId }) => {
     selectedBoolean: answerBoolean,
     selectedText: answerText,
     markedForReview: Boolean(payload?.markedForReview ?? payload?.marked_for_review),
-    timeSpentSeconds: Number(payload?.timeSpentSeconds ?? payload?.time_spent_seconds ?? 0) || 0,
+    timeSpentSeconds: clampTimeSpentSeconds(payload?.timeSpentSeconds ?? payload?.time_spent_seconds, { submission }),
   };
 };
 
@@ -96,7 +119,7 @@ async function saveAnswer(payload, submissionId, collegeId) {
   // Validate answer
   const validated = await validateDocument(
     AnswerValidation,
-    normalizeAnswerPayload(payload, { submissionId, questionId: resolvedQuestionId }),
+    normalizeAnswerPayload(payload, { submissionId, questionId: resolvedQuestionId, submission }),
     "Answer save"
   );
 
@@ -189,7 +212,7 @@ async function bulkSaveAnswers(answers, submissionId, collegeId) {
     answers.map((answer) => {
       const requestedId = resolveQuestionId(answer);
       const resolvedId = idMap.get(String(requestedId));
-      return normalizeAnswerPayload(answer, { submissionId, questionId: resolvedId });
+      return normalizeAnswerPayload(answer, { submissionId, questionId: resolvedId, submission });
     }),
     "Bulk answer save"
   );
@@ -361,4 +384,6 @@ module.exports = {
   markAnswerForReview,
   getSubmissionAnswers,
   calculateAccuracy,
+  // Exported for regression coverage of the client-supplied timing clamp.
+  clampTimeSpentSeconds,
 };

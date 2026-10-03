@@ -4,16 +4,15 @@ const { verifyAccessToken } = require("../utils/token");
 const { recordRateLimitEvent } = require("../services/rate-limit-metrics.service");
 const { getClientIp } = require("../utils/client-ip");
 const { logger } = require("../utils/logger");
+const { ApiError } = require("../utils/http");
 
 // ---------------------------------------------------------------------------
 // Counter store
 //
-// Fixed-window counters. Redis is the shared store, so every API replica sees
-// the same count for a key. When Redis is configured but unreachable, the
-// limiter degrades to per-process memory counters instead of either failing
-// open (no protection) or failing closed (every API call returns 503, which
-// during an exam is an outage). With N replicas the effective ceiling becomes
-// N x max until Redis recovers - still bounded, and logged loudly.
+// Redis is the shared store, so every API replica sees the same count for a
+// key. Production limiters fail closed if Redis is missing or unavailable;
+// per-process fallback is retained only for development and tests. That keeps
+// brute-force and abuse ceilings consistent across replicas.
 // ---------------------------------------------------------------------------
 
 const MEMORY_COUNTER_MAX_KEYS = 50_000;
@@ -124,10 +123,20 @@ const releaseMemoryCounter = (key) => {
 const warnDegraded = (scope, error) => {
   logger.throttled("warn", `rate-limit-degraded:${scope}`, 60_000, "rate_limit.redis_unavailable", {
     scope,
-    fallback: "per-instance-memory",
-    reason: error?.message || "redis not ready",
+    fallback: isProduction() ? "none" : "per-instance-memory",
+    impact: isProduction() ? "rate-limited request rejected with 503" : "local test/development counter used",
+    reason: error?.name || (error ? "redis command failed" : "redis not ready"),
   });
 };
+
+const isProduction = () => String(process.env.NODE_ENV || "").trim().toLowerCase() === "production";
+
+const rateLimitStoreUnavailable = () => new ApiError(
+  503,
+  "Request protection is temporarily unavailable. Please retry shortly.",
+  null,
+  "RATE_LIMIT_STORE_UNAVAILABLE"
+);
 
 const withStore = async (scope, redisOp, memoryOp) => {
   if (redisClient && isRedisAvailable()) {
@@ -135,6 +144,7 @@ const withStore = async (scope, redisOp, memoryOp) => {
       return await redisOp();
     } catch (error) {
       warnDegraded(scope, error);
+      if (isProduction()) throw rateLimitStoreUnavailable();
       return memoryOp();
     }
   }
@@ -142,6 +152,10 @@ const withStore = async (scope, redisOp, memoryOp) => {
   if (redisClient) {
     // Configured but not connected.
     warnDegraded(scope);
+    if (isProduction()) throw rateLimitStoreUnavailable();
+  } else if (isProduction()) {
+    logger.throttled("error", `rate-limit-redis-missing:${scope}`, 60_000, "rate_limit.redis_not_configured", { scope });
+    throw rateLimitStoreUnavailable();
   }
   return memoryOp();
 };
@@ -241,7 +255,7 @@ const rejectRequest = (req, res, options, remainingMs) => {
   recordRateLimitEvent({
     scope,
     route,
-    actor,
+    actorHash: hashValue(actor),
     collegeId: req.user?.collegeId || req.admin?.collegeId || req.collegeId || null,
   }).catch(() => {});
 
@@ -280,8 +294,9 @@ const rejectRequest = (req, res, options, remainingMs) => {
  *                unit, so parallel bursts cannot exceed `max`.
  *  - skip        (req) => boolean.
  *  - failOpen    false = propagate unexpected limiter errors instead of
- *                letting the request through. (Redis outages never reach this:
- *                they degrade to memory counters.)
+ *                letting the request through. Production Redis failures return
+ *                503 before this option is considered; memory fallback is for
+ *                development and tests only.
  */
 const createRateLimiter = (options = {}) => {
   const max = toSafePositiveInt(options.max, 120);
@@ -341,6 +356,9 @@ const createRateLimiter = (options = {}) => {
 
       return next();
     } catch (error) {
+      if (error?.code === "RATE_LIMIT_STORE_UNAVAILABLE") {
+        return next(error);
+      }
       logger.error("rate_limit.internal_error", { scope, error });
       if (options.failOpen !== false) {
         return next();

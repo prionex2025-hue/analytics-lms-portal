@@ -63,7 +63,7 @@ const renderHtmlToPdfBuffer = async (html, options = {}) => {
     // surfaced to admins as "error while generating PDF".
     await page.setContent(String(html || ""), {
       waitUntil: "domcontentloaded",
-      timeout: options.timeout || 30000,
+      timeout: options.timeout || require("../config/env").reportPdfTimeoutMs,
     });
 
     await page.emulateMediaType("screen");

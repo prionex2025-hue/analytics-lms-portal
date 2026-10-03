@@ -13,18 +13,20 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 BACKUP_ROOT=${UPLOADS_BACKUP_ROOT:-${BACKUP_ROOT:-/var/backups/lms-portal}/uploads}
+umask 077
 TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
 ARCHIVE="$BACKUP_ROOT/uploads-$TIMESTAMP.tar.gz"
+TMP_ARCHIVE="$ARCHIVE.tmp.$$"
 RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
 COMPOSE_FILE=${COMPOSE_FILE:-"$PROJECT_ROOT/docker-compose.production.yml"}
 
 mkdir -p "$BACKUP_ROOT"
-umask 077
+trap 'rm -f "$TMP_ARCHIVE"' EXIT HUP INT TERM
 
 if [ "${USE_DOCKER_COMPOSE_BACKUP:-true}" = "true" ]; then
   RESOURCE_UPLOAD_ROOT=${RESOURCE_UPLOAD_ROOT:-/app/uploads/resources}
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" --project-directory "$PROJECT_ROOT" exec -T api1 \
-    tar -C "$(dirname "$RESOURCE_UPLOAD_ROOT")" -czf - "$(basename "$RESOURCE_UPLOAD_ROOT")" > "$ARCHIVE"
+    tar -C "$(dirname "$RESOURCE_UPLOAD_ROOT")" -czf - "$(basename "$RESOURCE_UPLOAD_ROOT")" > "$TMP_ARCHIVE"
 else
   RESOURCE_UPLOAD_ROOT=${RESOURCE_UPLOAD_ROOT:-uploads/resources}
   if [ ! -d "$RESOURCE_UPLOAD_ROOT" ]; then
@@ -32,8 +34,11 @@ else
     exit 1
   fi
 
-  tar -C "$(dirname "$RESOURCE_UPLOAD_ROOT")" -czf "$ARCHIVE" "$(basename "$RESOURCE_UPLOAD_ROOT")"
+  tar -C "$(dirname "$RESOURCE_UPLOAD_ROOT")" -czf "$TMP_ARCHIVE" "$(basename "$RESOURCE_UPLOAD_ROOT")"
 fi
+
+tar -tzf "$TMP_ARCHIVE" >/dev/null
+mv "$TMP_ARCHIVE" "$ARCHIVE"
 
 if [ "$RETENTION_DAYS" -gt 0 ]; then
   find "$BACKUP_ROOT" -type f -name "uploads-*.tar.gz" -mtime +"$RETENTION_DAYS" -delete

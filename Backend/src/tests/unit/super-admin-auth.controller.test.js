@@ -23,6 +23,7 @@ jest.mock("../../services/access-token-revocation.service", () => ({
 const bcrypt = require("bcrypt");
 const models = require("../../models");
 const { createRefreshToken, verifyRefreshToken } = require("../../utils/token");
+const { revokeAccessTokenFromRequest } = require("../../services/access-token-revocation.service");
 const { superAdminLogin, superAdminRefresh, superAdminLogout } = require("../../controllers/SuperAdmin/auth.controller");
 
 const invoke = async (handler, req = {}) =>
@@ -41,6 +42,7 @@ const invoke = async (handler, req = {}) =>
 
     handler(req, res, (error) => {
       if (error) {
+        error.response = res;
         reject(error);
       }
     });
@@ -210,6 +212,33 @@ describe("super-admin auth refresh", () => {
     expect(res.clearCookie).toHaveBeenCalledWith(
       "lms_super_admin_refresh_token",
       expect.objectContaining({ path: "/api/superadmin/auth" })
+    );
+  });
+
+  it("revokes the refresh session and clears cookies even when distributed access revocation is unavailable", async () => {
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    models.init.mockResolvedValue({ dbClient: { superAdminRefreshToken: { updateMany } } });
+    const redisUnavailable = Object.assign(new Error("revocation unavailable"), { statusCode: 503 });
+    revokeAccessTokenFromRequest.mockRejectedValueOnce(redisUnavailable);
+
+    let thrown;
+    try {
+      await invoke(superAdminLogout, {
+        cookies: {},
+        body: { refreshToken: "old-super-refresh-token" },
+        headers: {},
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({ statusCode: 503 });
+    expect(updateMany).toHaveBeenCalled();
+    expect(revokeAccessTokenFromRequest).toHaveBeenCalled();
+    expect(updateMany.mock.invocationCallOrder[0]).toBeLessThan(revokeAccessTokenFromRequest.mock.invocationCallOrder[0]);
+    expect(thrown.response.clearCookie).toHaveBeenCalledWith(
+      "lms_super_admin_refresh_token",
+      expect.objectContaining({ path: "/api/super-admin/auth" })
     );
   });
 });

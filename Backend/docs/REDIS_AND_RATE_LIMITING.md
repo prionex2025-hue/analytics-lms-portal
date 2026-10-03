@@ -17,18 +17,24 @@ Client -> host NGINX (TLS, overwrites X-Forwarded-For) -> frontend NGINX (append
 
 | Use | Module | Keys | If Redis is unavailable |
 |---|---|---|---|
-| Rate-limit counters (shared by all replicas) | `middleware/rate-limit.js` | `rate:<scope>:<sha256(identity)[:32]>` (TTL = window) | Per-process memory counters (bounded, 50k keys). Limits still enforced, but per replica: effective ceiling = N x max. Logged `rate_limit.redis_unavailable`. |
-| Login lockout (identifier+IP, per account) | `services/login-attempt.service.js` | `login_attempt:<scope>:...:<sha256>` + `:lock` | Per-process memory. Logged. |
-| Forgot-password per-account quota | `services/password-reset.service.js` via `consumeRateLimit` | `rate:forgot-password-account:<scope>:<hash>` | Per-process memory. |
-| Access-token logout blocklist (jti) | `services/access-token-revocation.service.js` | `auth:access:revoked:<jti>` | Per-process memory. Account-level revocation (tokenVersion in MongoDB) is unaffected; a token logged out on another replica stays valid until expiry (<= `JWT_ACCESS_EXPIRES_IN`). |
+| Rate-limit counters (shared by all replicas) | `middleware/rate-limit.js` | `rate:<scope>:<sha256(identity)[:32]>` (TTL = window) | Production requests requiring a rate limit return 503; per-process memory counters are development/test only. |
+| Login lockout (identifier+IP, per account) | `services/login-attempt.service.js` | `login_attempt:<scope>:...:<sha256>` + `:lock` | Production login protection returns HTTP 503 if Redis is unavailable; per-process memory is development/test only. |
+| Forgot-password per-account quota | `services/password-reset.service.js` via `consumeRateLimit` | `rate:forgot-password-account:<scope>:<hash>` | Production limiter returns HTTP 503 if Redis is unavailable. |
+| Access-token logout blocklist (jti) | `services/access-token-revocation.service.js` | `auth:access:revoked:<jti>` | Authentication and logout return 503 in production until shared revocation state is available. Per-process memory is development/test only. |
 | Response cache (per-principal, per-college keys) | `middleware/response-cache.js` | `resp_cache:<college or actor>:<scope>:<hash>` | Bypassed in production (served from MongoDB). |
 | Auth principal / test / exam-state / leaderboard caches | `services/*-cache.service.js`, leaderboard controller | various | Bypassed -> MongoDB. |
 | Exam start/submit/advance locks | `services/redis-lock.service.js` | lock keys | Task runs without the lock; correctness relies on atomic MongoDB guards (`updateMany({status: IN_PROGRESS})`). |
 | BullMQ report queues | `services/*report-queue.service.js` | `bull:*` | Reports cannot be enqueued/processed until Redis returns. |
-| Socket.IO adapter (cross-replica events) | `realtime/socket.js` | pub/sub | Events reach only clients on the emitting replica. Adapter reconnects automatically. |
+| Socket.IO adapter (cross-replica events) | `realtime/socket.js` | pub/sub | Production sockets on each replica are disconnected when shared Redis state drops; clients reconnect after Redis returns. |
 
-Readiness (`/api/ready`) does **not** fail on a Redis outage by default (it reports `"degraded"`), because
-every replica would leave the load balancer at once. Set `REDIS_REQUIRED_FOR_READINESS=true` to change that.
+Production readiness (`/api/ready`) requires both MongoDB and Redis. A Redis outage removes all API
+replicas from service until shared rate-limit and revocation state is available again. Set
+`REDIS_REQUIRED_FOR_READINESS=false` only in a non-production environment where weaker local state is
+acceptable.
+
+Rate-limited requests fail closed with HTTP 503 while Redis is unavailable. The rate-limit degraded
+metric tracks telemetry storage fallback only; it does not indicate that security counters switched
+to process-local memory.
 
 Redis must run with `maxmemory-policy noeviction` (BullMQ requirement). All non-queue keys carry TTLs.
 

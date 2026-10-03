@@ -99,6 +99,15 @@ const advanceModule = async ({ db, test, submission, session, fromModuleKey, now
   }
 
   const expired = isModuleExpired(session, now);
+  // The whole-test deadline is absolute and is NOT the same as the module
+  // deadline. Without this check a student who let the clock run out could keep
+  // clicking "Submit Section & Continue"; on the final module that reached
+  // completeSubmission({ autoSubmitted: false }) and recorded the attempt as
+  // MANUAL instead of AUTO_SUBMIT, granting time past the hard cap.
+  const hardCapExpired = Boolean(
+    session?.expiresAt && now.getTime() > new Date(session.expiresAt).getTime()
+  );
+  const shouldAutoSubmit = autoSubmitted || hardCapExpired;
   const existingModuleState = Array.isArray(submission.moduleState) ? submission.moduleState : [];
 
   const finalizedModuleState = existingModuleState.map((ms) => {
@@ -108,11 +117,13 @@ const advanceModule = async ({ db, test, submission, session, fromModuleKey, now
       ...ms,
       endedAt: now,
       timeTakenSeconds: Math.max(0, Math.floor((now.getTime() - startedAtMs) / 1000)),
-      status: expired ? MODULE_STATUS.EXPIRED : autoSubmitted ? MODULE_STATUS.AUTO_SUBMIT : MODULE_STATUS.MANUAL_SUBMIT,
+      status: expired || hardCapExpired ? MODULE_STATUS.EXPIRED : shouldAutoSubmit ? MODULE_STATUS.AUTO_SUBMIT : MODULE_STATUS.MANUAL_SUBMIT,
     };
   });
 
-  const next = getNextModule(test, currentKey);
+  // Once the hard cap is gone there is no next module to hand out a deadline to;
+  // finalize the attempt instead of advancing into an already-expired module.
+  const next = hardCapExpired ? null : getNextModule(test, currentKey);
 
   if (next) {
     const nextExpiresAt = clampToHardCap(now.getTime() + (Number(next.durationMins) || 0) * 60000, session);
@@ -155,7 +166,7 @@ const advanceModule = async ({ db, test, submission, session, fromModuleKey, now
     return { status: "IDEMPOTENT", currentModuleKey: fresh?.currentModuleKey || currentKey };
   }
 
-  const completed = (await completeSubmission({ submissionId: submission.id, autoSubmitted, withSummary: true })) || {};
+  const completed = (await completeSubmission({ submissionId: submission.id, autoSubmitted: shouldAutoSubmit, withSummary: true })) || {};
   return { status: "COMPLETED", submission: completed.submission, summary: completed.summary };
 };
 

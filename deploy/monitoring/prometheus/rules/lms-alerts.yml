@@ -28,6 +28,18 @@ groups:
           summary: Redis is configured but unavailable
           description: Caching, rate limiting, queues, and Socket.IO scaling are at risk.
 
+      - alert: LmsRateLimitDegraded
+        expr: max(lms_rate_limit_degraded) == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Rate-limit telemetry has fallen back to local memory
+          description: >-
+            Rate-limit event telemetry is incomplete or local on this API replica.
+            Security counters fail closed in production when shared Redis state is
+            unavailable; inspect LmsRedisUnavailable and API readiness as well.
+
       - alert: LmsApiHighErrorRate
         expr: lms_api_error_rate_percent > 5
         for: 5m

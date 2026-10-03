@@ -300,11 +300,9 @@ const checkMongo = async () => {
 
 // Readiness: can this instance serve traffic right now?
 //  - MongoDB is required (nothing works without it).
-//  - Redis is optional by default: rate limits/lockouts fall back to
-//    per-instance memory, caches fall back to MongoDB, exam locks fall back
-//    to atomic DB guards. Failing readiness on a Redis blip would pull EVERY
-//    replica out of the load balancer at once. REDIS_REQUIRED_FOR_READINESS
-//    opts into strict behaviour.
+//  - Redis is required in production: shared rate limits and access-token
+//    revocation fail closed when Redis is unavailable. Keep every API replica
+//    out of service until the shared security state is available again.
 //  - During graceful shutdown the instance reports not-ready so it drains.
 const buildCoreHealthSnapshot = async () => {
   if (isShuttingDown()) {
@@ -313,7 +311,7 @@ const buildCoreHealthSnapshot = async () => {
 
   const [mongodb, redisHealth] = await Promise.all([checkMongo(), getRedisHealthSnapshot()]);
   const redis = redisHealth.configured ? (redisHealth.available ? "ok" : "down") : "disabled";
-  const redisBlocksReadiness = env.redis.requiredForReadiness && redisHealth.configured && redis !== "ok";
+  const redisBlocksReadiness = env.redis.requiredForReadiness && redis !== "ok";
   const ready = mongodb === "ok" && !redisBlocksReadiness;
   const degraded = ready && redis === "down";
 

@@ -86,6 +86,10 @@ const getExamCollegeBucket = (collegeId) => {
 const createSnapshot = ({ source, totalBlocked, topRoutes, topActors, topScopes, extra = {} }) => ({
   generatedAt: new Date().toISOString(),
   source,
+  // Anything other than the shared Redis store means every limiter on this
+  // replica is counting locally, so the effective cluster ceiling is multiplied
+  // by the replica count. Surfaced as lms_rate_limit_degraded.
+  degraded: source !== "redis",
   totalBlocked,
   topRoutes,
   topActors,
@@ -246,6 +250,7 @@ const getRateLimitMetricsSnapshot = async ({ limit = 10 } = {}) => {
     });
   } catch {
     return createSnapshot({
+      // Observability fallback only; security counters remain Redis-backed or fail closed.
       source: "memory-fallback",
       totalBlocked: memoryMetrics.totalBlocked,
       topRoutes: topFromMap(memoryMetrics.routes, safeLimit),

@@ -531,13 +531,73 @@ async function ensureConnected() {
   return connectPromise;
 }
 
-function getCollection(modelName) {
+// Position of the trailing `options` argument for each native driver method we
+// use. The driver accepts `{ session }` there, which is what makes an operation
+// actually participate in a transaction. Methods not listed are passed through
+// untouched rather than guessed at.
+const DRIVER_OPTIONS_ARG_INDEX = {
+  find: 1,
+  findOne: 1,
+  aggregate: 1,
+  distinct: 1,
+  insertMany: 1,
+  bulkWrite: 1,
+  deleteOne: 1,
+  deleteMany: 1,
+  countDocuments: 1,
+  updateOne: 2,
+  updateMany: 2,
+  replaceOne: 2,
+  findOneAndUpdate: 2,
+  findOneAndReplace: 2,
+  findOneAndDelete: 2,
+};
+
+/**
+ * Return a view of a collection whose read/write methods transparently join the
+ * supplied session. Without this the model shim talks to the global connection,
+ * so `session.withTransaction()` would commit an empty transaction while the
+ * caller's writes applied individually and non-atomically.
+ *
+ * When `session` is falsy the original collection is returned unchanged, so the
+ * non-transactional path behaves exactly as before.
+ */
+function withSessionCollection(collection, session) {
+  if (!session || !collection) return collection;
+
+  return new Proxy(collection, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== "function") return value;
+
+      const optionsIndex = DRIVER_OPTIONS_ARG_INDEX[property];
+      // Unknown methods (index helpers, cursor accessors) pass straight through.
+      if (optionsIndex === undefined) return value.bind(target);
+
+      return (...args) => {
+        const next = args.slice();
+        const existing = next[optionsIndex];
+        // Merge into an existing options object rather than clobbering it, so
+        // things like `projection` or `{ ordered: false }` survive.
+        if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+          next[optionsIndex] = { ...existing, session };
+        } else {
+          while (next.length < optionsIndex) next.push(undefined);
+          next[optionsIndex] = { session };
+        }
+        return value.apply(target, next);
+      };
+    },
+  });
+}
+
+function getCollection(modelName, session = null) {
   const collectionName = MODEL_TO_COLLECTION[modelName] || modelName;
   const activeDb = db || mongoose.connection?.db;
   if (!activeDb) {
     throw new Error(`MongoDB is not connected. Unable to access collection ${collectionName}`);
   }
-  return activeDb.collection(collectionName);
+  return withSessionCollection(activeDb.collection(collectionName), session);
 }
 
 // ---------------------------------------------------------------------------
@@ -1224,7 +1284,11 @@ function buildScalarProjection(modelName, select) {
   return projection;
 }
 
-function modelClient(modelName) {
+function modelClient(modelName, options = {}) {
+  // When a session is supplied every collection handle used below joins that
+  // session, so the operation genuinely participates in the transaction.
+  const session = options.session || null;
+
   return {
     // Compatibility helper: some controllers expect a Mongoose-like
     // `findOne(...).lean()` chain. Provide a minimal shim so existing
@@ -1239,7 +1303,7 @@ function modelClient(modelName) {
     },
     async findMany(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const mongoFilter = toMongoFilter(modelName, args.where);
       const resolvedFilter = await resolveRelationFilters(modelName, mongoFilter);
       const { cleanFilter, relations } = extractRelationFilters(resolvedFilter);
@@ -1293,7 +1357,7 @@ function modelClient(modelName) {
 
     async findUnique(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const normalizedWhere = normalizeCompoundWhere(modelName, args.where || {});
       const mongoFilter = toMongoFilter(modelName, normalizedWhere);
       const resolvedFilter = await resolveRelationFilters(modelName, mongoFilter);
@@ -1309,7 +1373,7 @@ function modelClient(modelName) {
 
     async create(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const now = new Date();
       const data = normalizeDocumentForWrite(args.data || {});
       const doc = {
@@ -1335,7 +1399,7 @@ function modelClient(modelName) {
 
     async createMany(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const rows = Array.isArray(args.data) ? args.data : [];
       if (rows.length === 0) {
         return { count: 0 };
@@ -1373,7 +1437,7 @@ function modelClient(modelName) {
 
     async update(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const normalizedWhere = normalizeCompoundWhere(modelName, args.where || {});
       const mongoFilter = toMongoFilter(modelName, normalizedWhere);
       const resolvedFilter = await resolveRelationFilters(modelName, mongoFilter);
@@ -1405,7 +1469,7 @@ function modelClient(modelName) {
 
     async updateMany(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const mongoFilter = toMongoFilter(modelName, args.where);
       const resolvedFilter = await resolveRelationFilters(modelName, mongoFilter);
       const { cleanFilter, relations } = extractRelationFilters(resolvedFilter);
@@ -1438,7 +1502,7 @@ function modelClient(modelName) {
 
     async delete(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const normalizedWhere = normalizeCompoundWhere(modelName, args.where || {});
       const mongoFilter = toMongoFilter(modelName, normalizedWhere);
       const resolvedFilter = await resolveRelationFilters(modelName, mongoFilter);
@@ -1455,7 +1519,7 @@ function modelClient(modelName) {
 
     async deleteMany(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const mongoFilter = toMongoFilter(modelName, args.where);
       const resolvedFilter = await resolveRelationFilters(modelName, mongoFilter);
       const { cleanFilter, relations } = extractRelationFilters(resolvedFilter);
@@ -1481,7 +1545,7 @@ function modelClient(modelName) {
 
     async upsert(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const normalizedWhere = normalizeCompoundWhere(modelName, args.where || {});
 
       const mongoFilter = toMongoFilter(modelName, normalizedWhere);
@@ -1565,7 +1629,7 @@ function modelClient(modelName) {
 
     async count(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const mongoFilter = toMongoFilter(modelName, args.where);
       const resolvedFilter = await resolveRelationFilters(modelName, mongoFilter);
       const { cleanFilter, relations } = extractRelationFilters(resolvedFilter);
@@ -1585,7 +1649,7 @@ function modelClient(modelName) {
 
     async groupBy(args = {}) {
       await ensureConnected();
-      const collection = getCollection(modelName);
+      const collection = getCollection(modelName, session);
       const mongoFilter = toMongoFilter(modelName, args.where);
       const resolvedFilter = await resolveRelationFilters(modelName, mongoFilter);
       const { cleanFilter } = extractRelationFilters(resolvedFilter);
@@ -1656,47 +1720,66 @@ dbClient.$disconnect = async () => {
   db = null;
 };
 
-let warnedAboutUnboundTransaction = false;
+// Standalone mongod cannot start a transaction. Remember that after the first
+// failure so dev environments stop paying for a doomed session + error on every
+// $transaction call.
+let transactionsSupported = true;
+
+/**
+ * Build a client whose model operations all run inside `session`. Each call
+ * gets its own isolated client, so concurrent transactions cannot share session
+ * state (which a single module-level "current session" variable would do).
+ */
+const SESSION_BOUND_MODEL_NAMES = new Set(MODEL_NAMES);
+
+const createSessionBoundClient = (session) => {
+  const boundModels = new Map();
+
+  return new Proxy(dbClient, {
+    get(target, property, receiver) {
+      if (property === "$transaction" || property === "$disconnect") {
+        return Reflect.get(target, property, receiver);
+      }
+      if (!SESSION_BOUND_MODEL_NAMES.has(property)) {
+        return Reflect.get(target, property, receiver);
+      }
+      if (!boundModels.has(property)) {
+        boundModels.set(property, modelClient(property, { session }));
+      }
+      return boundModels.get(property);
+    },
+  });
+};
 
 dbClient.$transaction = async (payload) => {
   if (typeof payload === "function") {
-    // Use MongoDB client sessions for real transaction support
-    const session = await mongoose.connection.startSession();
-
-    // IMPORTANT: the model shim (modelClient) has no session plumbing - every
-    // operation resolves its collection from the global connection. Handing the
-    // callback `dbClient` therefore runs its reads/writes OUTSIDE the session,
-    // so `withTransaction` commits an empty transaction and the caller's writes
-    // commit individually and non-atomically. On a replica set this fails
-    // silently; on a standalone mongod it throws and falls through to the
-    // dev-only branch below. Until session support is threaded through the model
-    // shim, treat $transaction as best-effort and do not rely on it for
-    // atomicity of multi-write flows (bulk batch/student create, answer bulk
-    // upsert, test cloning).
-    if (!warnedAboutUnboundTransaction) {
-      warnedAboutUnboundTransaction = true;
-      console.warn(
-        "[db] $transaction is running WITHOUT session-bound operations: the model shim does not " +
-          "pass the session to queries, so these writes are not atomic. Tracked as a known " +
-          "data-integrity issue; see the production audit."
-      );
+    // Transactions require a replica set. On a standalone mongod (dev/CI) run
+    // the callback directly rather than opening a session that is guaranteed to
+    // fail.
+    if (!transactionsSupported) {
+      return payload(dbClient);
     }
 
+    const session = await mongoose.connection.startSession();
     try {
       let result;
       await session.withTransaction(async () => {
-        result = await payload(dbClient);
+        // Pass a client bound to THIS session. Handing the unbound dbClient
+        // would run every read/write outside the transaction.
+        result = await payload(createSessionBoundClient(session));
       });
       return result;
     } catch (error) {
-      // If transactions are not supported (standalone MongoDB), fall back to
-      // running the callback without a session. This preserves backward
-      // compatibility for dev environments that use standalone mongod.
-      if (
+      const unsupported =
         error.codeName === "IllegalOperation" ||
         error.message?.includes("Transaction numbers") ||
-        error.message?.includes("replica set")
-      ) {
+        error.message?.includes("replica set") ||
+        error.code === 20;
+
+      // Transactions are unsupported on standalone mongod. That is fine for dev
+      // and CI; in production it must fail loudly rather than silently degrade.
+      if (unsupported) {
+        transactionsSupported = false;
         if (env.nodeEnv === "production") {
           throw error;
         }

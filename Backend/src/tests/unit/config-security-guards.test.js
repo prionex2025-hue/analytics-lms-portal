@@ -36,9 +36,15 @@ const loadEnv = (overrides = {}) => {
 
 const baseEnv = {
   NODE_ENV: "production",
-  MONGODB_URI: "mongodb://localhost:27017/lms_portal",
-  JWT_ACCESS_SECRET: "a".repeat(48),
-  JWT_REFRESH_SECRET: "b".repeat(48),
+  MONGODB_URI: "mongodb://lms_app:9N!sR2kB7xP4vD8mQ3cL6wF1hJ5tA0eU@localhost:27017/lms_portal?authSource=admin&replicaSet=rs0",
+  REDIS_URL: "redis://:4kZ9!pM2wD7rA5xC8vL3nF6hJ1sQ0bT@localhost:6379",
+  REDIS_ENABLED: "true",
+  FRONTEND_ORIGIN: "https://lms.example.com",
+  AUTH_COOKIE_SECURE: "true",
+  AUTH_COOKIE_SAMESITE: "strict",
+  METRICS_TOKEN: "5rG!p9Dk2Wv8xJ3hQ6bL1sF4mT0aN7cE",
+  JWT_ACCESS_SECRET: "aB3$kLm9!qR2xY7pN5vC8dF1hJ6sW4tG0uE3iO9z",
+  JWT_REFRESH_SECRET: "C7!qP4vM9xR2sD6nK1bW8yF3hJ5tA0eU4iG7zL2",
 };
 
 describe("password reset delivery mode guard", () => {
@@ -72,6 +78,61 @@ describe("password reset delivery mode guard", () => {
     expect(env.passwordReset.deliveryMode).toBe("resend");
   });
 
+  it("rejects production password-reset delivery without its provider key", () => {
+    const { error } = loadEnv({
+      ...baseEnv,
+      PASSWORD_RESET_DELIVERY_MODE: "resend",
+      RESEND_API_KEY: "",
+    });
+    expect(error?.message).toMatch(/RESEND_API_KEY is required/);
+  });
+
+  it("rejects an unsupported webhook password-reset mode rather than silently disabling delivery", () => {
+    const { error } = loadEnv({
+      ...baseEnv,
+      PASSWORD_RESET_DELIVERY_MODE: "webhook",
+      RESEND_API_KEY: "",
+    });
+    expect(error?.message).toMatch(/webhook delivery is not implemented/);
+  });
+
+  it("allows loopback origins and reset-token responses only in the isolated local production smoke mode", () => {
+    const { env, error } = loadEnv({
+      ...baseEnv,
+      ALLOW_LOCAL_PRODUCTION_SMOKE: "true",
+      FRONTEND_ORIGIN: "http://127.0.0.1:18080",
+      PASSWORD_RESET_DELIVERY_MODE: "response",
+      PASSWORD_RESET_RETURN_TOKEN: "true",
+      RESEND_API_KEY: undefined,
+    });
+    expect(error).toBeNull();
+    expect(env.passwordReset.returnToken).toBe(true);
+  });
+
+  it("rejects production when shared Redis security state is disabled", () => {
+    const { error } = loadEnv({ ...baseEnv, REDIS_ENABLED: "false", RESEND_API_KEY: "re_test_key" });
+    expect(error?.message).toMatch(/REDIS_ENABLED must be true/);
+  });
+
+  it("rejects long but low-entropy or placeholder production JWT secrets", () => {
+    const { error } = loadEnv({
+      ...baseEnv,
+      JWT_ACCESS_SECRET: "a".repeat(48),
+      RESEND_API_KEY: "re_test_key",
+    });
+    expect(error?.message).toMatch(/strong, unique production secrets/);
+  });
+
+  it("rejects production MongoDB URIs without credentials or replica set", () => {
+    const { error } = loadEnv({ ...baseEnv, MONGODB_URI: "mongodb://localhost:27017/lms_portal", RESEND_API_KEY: "re_test_key" });
+    expect(error?.message).toMatch(/authenticated MongoDB/);
+  });
+
+  it("rejects insecure production frontend origins", () => {
+    const { error } = loadEnv({ ...baseEnv, FRONTEND_ORIGIN: "http://lms.example.com", RESEND_API_KEY: "re_test_key" });
+    expect(error?.message).toMatch(/HTTPS origins/);
+  });
+
   it("keeps response mode available to developers without an email provider", () => {
     const { env, error } = loadEnv({
       ...baseEnv,
@@ -102,6 +163,7 @@ describe("rate limit kill switch guard", () => {
     jest.doMock("../../services/rate-limit-metrics.service", () => ({
       recordRateLimitEvent: jest.fn().mockResolvedValue(undefined),
     }));
+    jest.doMock("../../utils/token", () => ({ verifyAccessToken: jest.fn() }));
 
      
     const mod = require("../../middleware/rate-limit");
@@ -113,6 +175,7 @@ describe("rate limit kill switch guard", () => {
           else process.env[key] = value;
         }
         jest.resetModules();
+        jest.dontMock("../../utils/token");
       },
     };
   };
@@ -131,6 +194,7 @@ describe("rate limit kill switch guard", () => {
       user: { id: "student-1", role: "STUDENT", collegeId: "college-1" },
     };
     let statusCode = null;
+    let nextError = null;
     let nextCalled = false;
     const res = {
       headersSent: false,
@@ -138,18 +202,17 @@ describe("rate limit kill switch guard", () => {
       status(code) { statusCode = code; return this; },
       json() { return this; },
     };
-    await limiter(req, res, () => { nextCalled = true; });
-    return { statusCode, nextCalled };
+    await limiter(req, res, (error) => { nextCalled = true; nextError = error || null; });
+    return { statusCode, nextCalled, nextError };
   };
 
-  it("ignores RATE_LIMIT_DISABLED in production so brute-force limits stay on", async () => {
+  it("ignores RATE_LIMIT_DISABLED and fails closed when Redis is unavailable in production", async () => {
     const { mod, restore } = loadRateLimit("production");
     try {
       const limiter = mod.createRateLimiter({ scope: "guard-prod", windowMs: 60_000, max: 1 });
-      // First call consumes the single allowance, the second must be blocked.
-      await runLimiter(limiter, "203.0.113.9");
-      const second = await runLimiter(limiter, "203.0.113.9");
-      expect(second.statusCode).toBe(429);
+      const result = await runLimiter(limiter, "203.0.113.9");
+      expect(result.nextCalled).toBe(true);
+      expect(result.nextError).toMatchObject({ statusCode: 503, code: "RATE_LIMIT_STORE_UNAVAILABLE" });
     } finally {
       restore();
     }

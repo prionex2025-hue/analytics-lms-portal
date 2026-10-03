@@ -17,7 +17,13 @@ const resolveEnvFile = () => {
 const envFile = resolveEnvFile();
 dotenv.config(envFile ? { path: envFile } : undefined);
 
-const env = require("../src/config/env");
+let env;
+try {
+  env = require("../src/config/env");
+} catch (error) {
+  console.error(`Production configuration invalid: ${error?.message || "unknown validation error"}`);
+  process.exit(1);
+}
 const { getRedisHealthSnapshot, redisClient, shutdownRedis } = require("../src/config/redis");
 const { pingClamAV } = require("../src/services/clamav.service");
 
@@ -276,6 +282,30 @@ const shouldCheckDeploymentArtifacts = () => {
   return fs.existsSync(path.join(repoRoot, ".git")) || fs.existsSync(path.join(repoRoot, "docker-compose.production.yml"));
 };
 
+const validateStopGracePeriod = () => {
+  if (!shouldCheckDeploymentArtifacts()) return [];
+
+  const repoRoot = path.resolve(__dirname, "..", "..");
+  const composePath = path.join(repoRoot, "docker-compose.production.yml");
+  try {
+    const compose = fs.readFileSync(composePath, "utf8");
+    const match = compose.match(/stop_grace_period:\s*([0-9]+)s/);
+    if (!match) return ["docker-compose.production.yml must set stop_grace_period for the API service."];
+
+    const graceSeconds = Number(match[1]);
+    if (graceSeconds * 1000 <= env.httpServer.shutdownTimeoutMs) {
+      return [
+        `docker-compose.production.yml stop_grace_period (${graceSeconds}s) must exceed ` +
+        `SHUTDOWN_TIMEOUT_MS (${env.httpServer.shutdownTimeoutMs}ms), otherwise Docker ` +
+        "SIGKILLs the API before the graceful drain completes."
+      ];
+    }
+    return [];
+  } catch (error) {
+    return [`Could not read docker-compose.production.yml to verify stop_grace_period: ${error.message}`];
+  }
+};
+
 const validateDeploymentArtifacts = () => {
   if (!shouldCheckDeploymentArtifacts()) {
     return [];
@@ -368,11 +398,45 @@ const run = async () => {
 
   findings.push(...warnIfDevelopmentSecret("JWT_ACCESS_SECRET", env.jwtAccessSecret));
   findings.push(...warnIfDevelopmentSecret("JWT_REFRESH_SECRET", env.jwtRefreshSecret));
+  // config/env.js already throws on a missing/short JWT secret at startup, so the
+  // length check here is only a clearer pre-deploy message. The distinctness
+  // check is also enforced at startup but is repeated so operators see it before
+  // the deploy rather than after a crash-looping container.
+  findings.push(...warnIfShortSecret("JWT_ACCESS_SECRET", env.jwtAccessSecret, 32));
+  findings.push(...warnIfShortSecret("JWT_REFRESH_SECRET", env.jwtRefreshSecret, 32));
   findings.push(...validateDeploymentArtifacts());
 
   if (env.nodeEnv === "production" && !env.redis.enabled) {
     findings.push("Redis should be enabled for production traffic.");
   }
+
+  // config/env.js throws at startup if the two JWT secrets are identical (access
+  // and refresh tokens would be interchangeable). Repeated here so the operator
+  // sees it before the deploy rather than as a crash-looping container.
+  if (
+    env.jwtAccessSecret
+    && env.jwtRefreshSecret
+    && String(env.jwtAccessSecret) === String(env.jwtRefreshSecret)
+  ) {
+    findings.push("JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be different values.");
+  }
+
+  // A Puppeteer render budget longer than the drain window guarantees that a
+  // deploy or restart landing mid-render force-exits the process and the admin
+  // gets a failed report. Require headroom rather than equality so a render that
+  // is nearly finished still completes.
+  if (env.reportPdfTimeoutMs >= env.httpServer.shutdownTimeoutMs) {
+    findings.push(
+      `REPORT_PDF_TIMEOUT_MS (${env.reportPdfTimeoutMs}) must be lower than ` +
+      `SHUTDOWN_TIMEOUT_MS (${env.httpServer.shutdownTimeoutMs}); otherwise a restart ` +
+      "during report generation kills the render mid-flight."
+    );
+  }
+
+  // stop_grace_period must exceed the drain window, otherwise Docker SIGKILLs the
+  // API before its own force-exit timer fires and in-flight submissions are lost.
+  // Read the real value from the compose file rather than trusting documentation.
+  findings.push(...validateStopGracePeriod());
 
   if (env.nodeEnv === "production" && !hasUriCredentials(env.mongoUri)) {
     findings.push("MONGODB_URI should include database credentials in production.");

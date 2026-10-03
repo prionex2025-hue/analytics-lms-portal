@@ -177,24 +177,34 @@ const adminRefresh = asyncHandler(async (req, res) => {
 });
 
 const adminLogout = asyncHandler(async (req, res) => {
-  const m = await models.init();
-  const db = m.dbClient;
   const refreshToken = req.cookies?.[ADMIN_REFRESH_COOKIE] || req.body?.refreshToken;
-  await revokeAccessTokenFromRequest(req);
+  let logoutError = null;
 
   if (refreshToken) {
-    await revokeRefreshTokenValue({
-      db,
-      modelName: "adminRefreshToken",
-      scope: "admin",
-      refreshToken,
-      reason: "logout",
-    });
+    try {
+      const db = (await models.init()).dbClient;
+      await revokeRefreshTokenValue({
+        db,
+        modelName: "adminRefreshToken",
+        scope: "admin",
+        refreshToken,
+        reason: "logout",
+      });
+    } catch (error) {
+      logoutError = error;
+    }
+  }
+
+  try {
+    await revokeAccessTokenFromRequest(req);
+  } catch (error) {
+    logoutError ||= error;
   }
 
   ["/api/admin/auth", "/api/college-admin/auth"].forEach((path) => {
     res.clearCookie(ADMIN_REFRESH_COOKIE, getRefreshCookieOptions(path));
   });
+  if (logoutError) throw logoutError;
   res.status(200).json({ message: "Logged out" });
 });
 

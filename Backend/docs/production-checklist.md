@@ -16,6 +16,14 @@ This project is deployment-capable only after the production checks below pass a
 
 **First Deploy**
 
+New commits on `main` are deployed by the successful-CI workflow. Manual deploy dispatches are
+restricted to previously deployed `release/<timestamp>` tags or `release/latest`, so an untested
+branch or arbitrary commit cannot bypass CI. To roll back application code, manually dispatch this
+same workflow with a prior `release/<timestamp>` tag after confirming compatibility with the current
+database schema. The workflow reapplies forward migrations and has no automatic database rollback;
+restore from a verified backup only through the documented guarded restore procedure and only into
+a separately approved recovery target.
+
 1. Copy `Backend/.env.production.example` to `Backend/.env.production`.
 2. Replace `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `MONGO_INITDB_ROOT_PASSWORD`, `MONGO_APP_PASSWORD`, `MONGO_REPLICA_SET_KEY`, `REDIS_PASSWORD`, and all domain placeholders.
 3. Set `METRICS_TOKEN` to a strong random value or explicitly set `METRICS_ENABLED=false`.

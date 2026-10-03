@@ -4,7 +4,9 @@ const { redisClient, isRedisAvailable } = require("../config/redis");
 // long enough to absorb thundering-herd load during exams.
 const AUTH_CACHE_TTL_SECONDS = 120;
 
-// In-memory fallback when Redis is unavailable.
+// In-memory fallback is limited to development/test. Production bypasses cache
+// reads and writes if Redis is unavailable so stale authorization data is not
+// replica-local.
 const memoryCache = new Map();
 const MEMORY_MAX_ENTRIES = 2000;
 

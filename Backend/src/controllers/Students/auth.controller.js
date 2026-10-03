@@ -228,23 +228,35 @@ const refresh = asyncHandler(async (req, res) => {
 
 const logout = asyncHandler(async (req, res) => {
   const refreshToken = req.cookies?.[STUDENT_REFRESH_COOKIE] || req.body?.refreshToken;
-  await revokeAccessTokenFromRequest(req);
+  let logoutError = null;
 
   if (refreshToken) {
-    const db = (await models.init()).dbClient;
-    await revokeRefreshTokenValue({
-      db,
-      modelName: "studentRefreshToken",
-      scope: "student",
-      refreshToken,
-      reason: "logout",
-    });
+    try {
+      const db = (await models.init()).dbClient;
+      await revokeRefreshTokenValue({
+        db,
+        modelName: "studentRefreshToken",
+        scope: "student",
+        refreshToken,
+        reason: "logout",
+      });
+    } catch (error) {
+      logoutError = error;
+    }
+  }
+
+  try {
+    await revokeAccessTokenFromRequest(req);
+  } catch (error) {
+    logoutError ||= error;
   }
 
   res.clearCookie(STUDENT_REFRESH_COOKIE, {
     ...getRefreshCookieOptions(),
     maxAge: undefined,
   });
+
+  if (logoutError) throw logoutError;
 
   res.status(200).json({ message: "Logged out" });
 });

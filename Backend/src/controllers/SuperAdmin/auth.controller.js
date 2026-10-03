@@ -171,20 +171,31 @@ const superAdminRefresh = asyncHandler(async (req, res) => {
 
 const superAdminLogout = asyncHandler(async (req, res) => {
   const refreshToken = req.cookies?.[SUPER_ADMIN_REFRESH_COOKIE] || req.body?.refreshToken;
-  await revokeAccessTokenFromRequest(req);
+  let logoutError = null;
 
   if (refreshToken) {
-    const db = (await models.init()).dbClient;
-    await revokeRefreshTokenValue({
-      db,
-      modelName: "superAdminRefreshToken",
-      scope: "super-admin",
-      refreshToken,
-      reason: "logout",
-    });
+    try {
+      const db = (await models.init()).dbClient;
+      await revokeRefreshTokenValue({
+        db,
+        modelName: "superAdminRefreshToken",
+        scope: "super-admin",
+        refreshToken,
+        reason: "logout",
+      });
+    } catch (error) {
+      logoutError = error;
+    }
+  }
+
+  try {
+    await revokeAccessTokenFromRequest(req);
+  } catch (error) {
+    logoutError ||= error;
   }
 
   clearRefreshCookie(res);
+  if (logoutError) throw logoutError;
   res.status(200).json({ message: "Logged out" });
 });
 

@@ -27,6 +27,16 @@ if (!jwtRefreshSecret || jwtRefreshSecret.length < 32) {
   );
 }
 
+// Identical secrets would make access and refresh tokens interchangeable: any
+// stolen refresh token would verify as an access token, defeating the rotation
+// and revocation model. Fail fast rather than run in that state.
+if (jwtAccessSecret === jwtRefreshSecret) {
+  throw new Error(
+    "JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be different values. " +
+    "Reusing one secret makes access and refresh tokens interchangeable."
+  );
+}
+
 const parseOrigins = (value) =>
   String(value || "")
     .split(",")
@@ -53,6 +63,13 @@ const toBoolean = (value, fallback) => {
     return false;
   }
   return fallback;
+};
+
+const isWeakProductionSecret = (value, minimumLength = 32) => {
+  const text = String(value || "");
+  const normalized = text.toLowerCase();
+  const placeholders = ["change-this", "changeme", "replace-me", "example", "default", "password", "your-secret"];
+  return text.length < minimumLength || new Set(text).size < 12 || placeholders.some((marker) => normalized.includes(marker));
 };
 
 // Express `trust proxy` setting. Must equal the number of reverse proxies in
@@ -126,6 +143,7 @@ const rateLimit = {
   generalApiMax: toPositiveInt(process.env.RATE_LIMIT_GENERAL_API_MAX, 240),
   superAdminApiWindowMs: toPositiveInt(process.env.RATE_LIMIT_SUPER_ADMIN_API_WINDOW_MS, 60 * 1000),
   superAdminApiMax: toPositiveInt(process.env.RATE_LIMIT_SUPER_ADMIN_API_MAX, 600),
+
   reportGenerationWindowMs: toPositiveInt(process.env.RATE_LIMIT_REPORT_GENERATION_WINDOW_MS, 60 * 1000),
   reportGenerationMax: toPositiveInt(process.env.RATE_LIMIT_REPORT_GENERATION_MAX, 10),
   adminReportReadWindowMs: toPositiveInt(process.env.RATE_LIMIT_ADMIN_REPORT_READ_WINDOW_MS, 30 * 1000),
@@ -220,10 +238,10 @@ const redis = {
   // Upper bound for a single command on the shared client (rate limits, cache,
   // locks). A stalled Redis must not stall API requests.
   commandTimeoutMs: toPositiveInt(process.env.REDIS_COMMAND_TIMEOUT_MS, 1_000),
-  // Readiness normally tolerates a Redis outage (features degrade, see
-  // docs/REDIS_AND_RATE_LIMITING.md). Set true to pull instances out of the load
-  // balancer while Redis is down instead.
-  requiredForReadiness: toBoolean(process.env.REDIS_REQUIRED_FOR_READINESS, false),
+  // Production readiness requires Redis: rate limiting and access-token revocation use
+  // Redis as shared security state, so the instance must not receive traffic
+  // while Redis is unavailable.
+  requiredForReadiness: nodeEnv === "production" || toBoolean(process.env.REDIS_REQUIRED_FOR_READINESS, false),
   keepAliveMs: toPositiveInt(process.env.REDIS_KEEP_ALIVE_MS, 30_000),
   maxRetryDelayMs: toPositiveInt(process.env.REDIS_MAX_RETRY_DELAY_MS, 2_000),
   maxMemory: process.env.REDIS_MAXMEMORY || "",
@@ -234,11 +252,15 @@ const redis = {
 // HTTP server timeouts. keepAliveTimeout must exceed the upstream keepalive
 // timeout of the NGINX in front (60s default) or NGINX reuses sockets Node has
 // already closed and returns sporadic 502s under load.
+// Report rendering budget. Compared against httpServer.shutdownTimeoutMs by
+// prod-readiness-check.js so a deploy cannot force-exit a Puppeteer render.
+const reportPdfTimeoutMs = toPositiveInt(process.env.REPORT_PDF_TIMEOUT_MS, 20_000);
+
 const httpServer = {
   keepAliveTimeoutMs: toPositiveInt(process.env.HTTP_KEEP_ALIVE_TIMEOUT_MS, 65_000),
   headersTimeoutMs: toPositiveInt(process.env.HTTP_HEADERS_TIMEOUT_MS, 66_000),
   requestTimeoutMs: toPositiveInt(process.env.HTTP_REQUEST_TIMEOUT_MS, 120_000),
-  shutdownTimeoutMs: toPositiveInt(process.env.SHUTDOWN_TIMEOUT_MS, 15_000),
+  shutdownTimeoutMs: toPositiveInt(process.env.SHUTDOWN_TIMEOUT_MS, 25_000),
 };
 
 const metrics = {
@@ -301,10 +323,11 @@ const getUrlOrigin = (value) => {
   }
 };
 
-// Reset tokens may only be echoed in HTTP responses on a developer machine or
-// in tests - never on staging/production. NODE_ENV must be set explicitly for
-// this (an unset NODE_ENV counts as non-dev here).
-const isLocalDevEnv = ["development", "test"].includes(String(process.env.NODE_ENV || "").trim());
+// Reset tokens may be echoed only in development, tests, or the isolated local
+// production smoke stack, which uses generated secrets and disposable data.
+const allowLocalProductionSmoke = String(nodeEnv).trim().toLowerCase() === "production" &&
+  toBoolean(process.env.ALLOW_LOCAL_PRODUCTION_SMOKE, false);
+const isLocalDevEnv = ["development", "test"].includes(String(process.env.NODE_ENV || "").trim()) || allowLocalProductionSmoke;
 
 const configuredPasswordResetMode = String(process.env.PASSWORD_RESET_DELIVERY_MODE || "").trim().toLowerCase();
 const normalizedPasswordResetMode =
@@ -317,12 +340,12 @@ const resolvedPasswordResetMode =
 // "response" mode hands the raw reset token back in the HTTP response body, so
 // anyone who can trigger a reset for a victim's address walks straight into a
 // full account takeover. It exists purely so a developer without an email
-// provider can test the flow, and must never be reachable in production -
-// otherwise one copied `.env.sample` line silently disables the control.
+// provider can test the flow. It is allowed in production mode only for the
+// isolated local smoke stack explicitly marked above.
 if (resolvedPasswordResetMode === "response" && !isLocalDevEnv) {
   throw new Error(
     "PASSWORD_RESET_DELIVERY_MODE=response returns password-reset tokens in the " +
-      `API response and is only allowed when NODE_ENV is development or test (current: "${nodeEnv}"). ` +
+      `API response and is only allowed in development, test, or an explicitly enabled local production smoke run (current: "${nodeEnv}"). ` +
       "Configure PASSWORD_RESET_DELIVERY_MODE=resend (or webhook) and set RESEND_API_KEY."
   );
 }
@@ -347,6 +370,50 @@ const passwordReset = {
   },
   returnToken: toBoolean(process.env.PASSWORD_RESET_RETURN_TOKEN, isLocalDevEnv),
 };
+
+// Production must not start with settings that disable shared security state or
+// serve authentication cookies over an insecure origin. Keep errors generic;
+// never echo configured URLs, usernames, or secrets into startup logs.
+if (String(nodeEnv).trim().toLowerCase() === "production") {
+  if (!redis.enabled || redis.explicitlyDisabled) throw new Error("REDIS_ENABLED must be true in production");
+  let mongoUrl;
+  try { mongoUrl = new URL(process.env.MONGODB_URI); } catch { mongoUrl = null; }
+  if (!mongoUrl || !["mongodb:", "mongodb+srv:"].includes(mongoUrl.protocol) || !mongoUrl.username || !mongoUrl.password) {
+    throw new Error("MONGODB_URI must be a valid authenticated MongoDB connection string in production");
+  }
+  if (isWeakProductionSecret(jwtAccessSecret) || isWeakProductionSecret(jwtRefreshSecret)) {
+    throw new Error("JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be strong, unique production secrets");
+  }
+  if (isWeakProductionSecret(mongoUrl.password, 24)) throw new Error("MONGODB_URI must use a strong production password");
+  if (!mongoUrl.searchParams.get("replicaSet")) throw new Error("MONGODB_URI must specify replicaSet in production");
+  let redisUrl;
+  try { redisUrl = new URL(process.env.REDIS_URL || ""); } catch { redisUrl = null; }
+  if (!redisUrl || !["redis:", "rediss:"].includes(redisUrl.protocol) || !redisUrl.password) {
+    throw new Error("REDIS_URL must be authenticated and use redis:// or rediss:// in production");
+  }
+  if (isWeakProductionSecret(redisUrl.password, 24)) throw new Error("REDIS_URL must use a strong production password");
+  if (metrics.enabled && isWeakProductionSecret(metrics.token)) {
+    throw new Error("METRICS_TOKEN must be set and at least 32 characters when metrics are enabled in production");
+  }
+  if (frontendOrigins.length === 0 || frontendOrigins.some((origin) => {
+    try {
+      const parsed = new URL(origin);
+      const localHost = ["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname);
+      return allowLocalProductionSmoke
+        ? (!localHost && parsed.protocol !== "https:")
+        : (parsed.protocol !== "https:" || localHost);
+    } catch { return true; }
+  })) throw new Error("FRONTEND_ORIGIN must contain valid HTTPS origins in production");
+  if (process.env.AUTH_COOKIE_SECURE !== "true") throw new Error("AUTH_COOKIE_SECURE=true is required in production");
+  const sameSite = String(process.env.AUTH_COOKIE_SAMESITE || "strict").trim().toLowerCase();
+  if (!["strict", "lax", "none"].includes(sameSite)) throw new Error("AUTH_COOKIE_SAMESITE must be strict, lax, or none in production");
+  if (!allowLocalProductionSmoke && passwordReset.deliveryMode !== "resend") {
+    throw new Error("PASSWORD_RESET_DELIVERY_MODE must be resend in production; webhook delivery is not implemented");
+  }
+  if (passwordReset.deliveryMode === "resend" && !email.resendApiKey) {
+    throw new Error("RESEND_API_KEY is required when production password reset delivery uses resend");
+  }
+}
 
 module.exports = {
   port: Number(process.env.PORT || 5000),
@@ -378,5 +445,6 @@ module.exports = {
   responseCache,
   database,
   httpServer,
+  reportPdfTimeoutMs,
   worker,
 };
