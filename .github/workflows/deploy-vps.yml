@@ -278,6 +278,52 @@ jobs:
           EOF
 
       # ------------------------------------------------------------
+      # 4b. Capture diagnostics when the deploy itself fails
+      # ------------------------------------------------------------
+      # `docker compose up -d` failing (e.g. "dependency api2 failed to start")
+      # otherwise leaves zero evidence: this step preserves container states,
+      # health, and recent logs so the next run can be diagnosed.
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          set -euo pipefail
+
+          ssh -i ~/.ssh/lms_key \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "APP_URL='$APP_URL' bash -s" << 'EOF'
+
+          set -euo pipefail
+
+          cd "${{ secrets.VPS_PATH }}"
+
+          CF="--env-file Backend/.env.production -f docker-compose.production.yml"
+
+          echo "=========================================="
+          echo "Container status:"
+          echo "=========================================="
+          docker compose $CF ps || true
+
+          for service in api1 api2 api3 mongo-init mongo redis frontend; do
+            echo "=========================================="
+            echo "Logs: ${service} (last 200 lines)"
+            echo "=========================================="
+            docker compose $CF logs --tail=200 "$service" || true
+          done
+
+          echo "=========================================="
+          echo "Unhealthy container inspection:"
+          echo "=========================================="
+          for container in $(docker compose $CF ps -q || true); do
+            health="$(docker inspect --format '{{.Name}} {{.State.Health.Status}} {{.State.ExitCode}}' "$container" 2>/dev/null || true)"
+            echo "$health"
+            if printf '%s' "$health" | grep -q unhealthy; then
+              docker inspect --format '{{json .State.Health}}' "$container" 2>/dev/null || true
+            fi
+          done
+
+          EOF
+
+      # ------------------------------------------------------------
       # 5. Tag successful deployment
       # ------------------------------------------------------------
       - name: Tag release

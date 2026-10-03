@@ -313,12 +313,17 @@ services:
     cpus: ${FRONTEND_CPU_LIMIT:-0.5}
     pids_limit: 128
     depends_on:
+      # Order startup after the APIs, but do NOT gate on all three being healthy:
+      # nginx tolerates downed upstreams and retries, while a health gate here turns
+      # one flaky replica (e.g. api2 failing its healthcheck) into a total deploy
+      # failure. API health itself is enforced by the deploy workflow's /api/ready
+      # gate, which runs after `up -d`.
       api1:
-        condition: service_healthy
+        condition: service_started
       api2:
-        condition: service_healthy
+        condition: service_started
       api3:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "127.0.0.1:${FRONTEND_BIND_PORT:-8080}:80"
     healthcheck:
