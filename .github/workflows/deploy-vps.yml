@@ -6,7 +6,8 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
-  # Manual dispatch is restricted to previously deployed release tags below.
+
+  # Manual dispatch is restricted to previously deployed release tags.
   workflow_dispatch:
     inputs:
       ref:
@@ -25,119 +26,266 @@ permissions:
 jobs:
   deploy:
     name: Deploy to Production VPS
+
     # Auto-deploy only when CI succeeded for a push (not for a PR build).
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push'
+      )
+
     runs-on: ubuntu-latest
+
     # Add required reviewers to this environment in repo Settings to gate deploys.
     environment: production
+
     env:
       APP_URL: ${{ vars.APP_URL || 'https://lms.analyticsedify.com' }}
 
     steps:
-      - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------
+      # 1. Checkout repository
+      # ------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ------------------------------------------------------------
+      # 2. Resolve exact commit to deploy
+      # ------------------------------------------------------------
       - name: Resolve deploy commit
         id: ref
         env:
-          # Passed via env (not ${{ }} in the script) so the input can't inject shell.
           REF_INPUT: ${{ inputs.ref }}
           CI_SHA: ${{ github.event.workflow_run.head_sha }}
+
         run: |
+          set -euo pipefail
+
           if [ -n "${CI_SHA:-}" ]; then
             REF="$CI_SHA"
+
+            echo "CI workflow completed successfully."
+            echo "CI commit: ${REF}"
+
+            # The workflow_run event belongs to the Deploy workflow,
+            # so explicitly fetch the exact commit that passed CI.
+            echo "Fetching CI commit ${REF}..."
+            git fetch origin "$REF"
+
           else
             REF="${REF_INPUT:-release/latest}"
+
+            echo "Manual deployment requested."
+            echo "Requested ref: ${REF}"
+
             if ! printf '%s' "$REF" | grep -qE '^release/(latest|[0-9]{8}T[0-9]{6}Z)$'; then
               echo "::error::Manual deploys must use a previously deployed release tag (release/latest or release/<timestamp>). New commits deploy only after successful main CI."
               exit 1
             fi
           fi
+
+          # Only allow safe Git ref characters.
           if ! printf '%s' "$REF" | grep -qE '^[A-Za-z0-9._/-]+$'; then
             echo "::error::Invalid ref (only alphanumeric, . _ / - allowed): $REF"
             exit 1
           fi
+
+          # Resolve the requested ref to an actual commit.
           SHA="$(git rev-parse --verify "${REF}^{commit}")"
-          echo "Deploying ${REF} -> ${SHA}"
+
+          if [ -z "$SHA" ]; then
+            echo "::error::Could not resolve deploy ref: ${REF}"
+            exit 1
+          fi
+
+          echo "Deploying:"
+          echo "  Ref: ${REF}"
+          echo "  SHA: ${SHA}"
+
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
 
+      # ------------------------------------------------------------
+      # 3. Configure SSH
+      # ------------------------------------------------------------
       - name: Configure SSH
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+
         run: |
+          set -euo pipefail
+
           mkdir -p ~/.ssh
+
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/lms_key
+
           chmod 600 ~/.ssh/lms_key
+
           ssh-keyscan -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
+      # ------------------------------------------------------------
+      # 4. Deploy to VPS
+      # ------------------------------------------------------------
       - name: Deploy to VPS
         env:
           DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
+
         run: |
-          ssh -i ~/.ssh/lms_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+          set -euo pipefail
+
+          ssh -i ~/.ssh/lms_key \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             "DEPLOY_SHA='$DEPLOY_SHA' APP_URL='$APP_URL' bash -s" << 'EOF'
+
           set -euo pipefail
 
           cd "${{ secrets.VPS_PATH }}"
+
           CF="--env-file Backend/.env.production -f docker-compose.production.yml"
 
-          echo "Fetching repo..."
+          echo "=========================================="
+          echo "Fetching repository..."
+          echo "=========================================="
+
           git fetch origin --prune
+
+          # Make sure the exact CI-approved commit exists locally.
           if ! git cat-file -e "${DEPLOY_SHA}^{commit}" 2>/dev/null; then
+            echo "Commit ${DEPLOY_SHA} is not available locally."
+            echo "Fetching exact deployment commit..."
+
             git fetch origin "$DEPLOY_SHA"
           fi
 
-          echo "Pinning build to ${DEPLOY_SHA}"
+          # Verify that the commit now exists.
+          if ! git cat-file -e "${DEPLOY_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::Deployment commit ${DEPLOY_SHA} could not be fetched."
+            exit 1
+          fi
+
+          echo "=========================================="
+          echo "Pinning deployment to:"
+          echo "${DEPLOY_SHA}"
+          echo "=========================================="
+
           git checkout --detach "$DEPLOY_SHA"
 
+          echo "Current deployed commit:"
+          git rev-parse HEAD
+
+          echo "=========================================="
           echo "Rebuilding Docker stack..."
+          echo "=========================================="
+
           docker compose $CF build
+
+          echo "=========================================="
+          echo "Starting Docker stack..."
+          echo "=========================================="
+
           docker compose $CF up -d
 
+          echo "=========================================="
           echo "Running database migrations..."
+          echo "=========================================="
+
           docker compose $CF exec -T api1 npm run db:migrate:objectid-ids
+
           docker compose $CF exec -T api1 npm run db:migrate:admin-access-profiles
+
           docker compose $CF exec -T api1 npm run db:migrate:refresh-token-hashes
+
           docker compose $CF exec -T api1 npm run db:migrate:violations
+
           docker compose $CF exec -T api1 npm run db:create-indexes
 
+          echo "=========================================="
           echo "Running production readiness check..."
+          echo "=========================================="
+
           docker compose $CF exec -T api1 npm run prod:check
 
-          echo "Waiting for ${APP_URL}/api/ready to come up healthy..."
+          echo "=========================================="
+          echo "Waiting for ${APP_URL}/api/ready..."
+          echo "=========================================="
+
           READY=0
+
           for i in $(seq 1 30); do
+            echo "Health check attempt ${i}/30..."
+
             if curl -fsS "${APP_URL}/api/ready" > /dev/null 2>&1; then
               READY=1
               break
             fi
+
             sleep 10
           done
+
           if [ "$READY" -ne 1 ]; then
             echo "::error::API did not become ready within 5 minutes after deploy"
+
+            echo "=========================================="
+            echo "Docker container status:"
+            echo "=========================================="
+
+            docker compose $CF ps
+
+            echo "=========================================="
+            echo "API logs:"
+            echo "=========================================="
+
+            docker compose $CF logs --tail=100 api1 || true
+
             exit 1
           fi
+
           echo "API is ready."
+
+          echo "=========================================="
+          echo "Cleaning unused Docker images..."
+          echo "=========================================="
 
           # Keep the disk from filling up with old image layers.
           docker image prune -f > /dev/null
 
+          echo "=========================================="
           echo "Deployment completed successfully."
+          echo "Commit: ${DEPLOY_SHA}"
+          echo "=========================================="
+
           EOF
 
-      # Tags are pushed from the runner (GITHUB_TOKEN), so the VPS only needs
-      # a read-only deploy key.
+      # ------------------------------------------------------------
+      # 5. Tag successful deployment
+      # ------------------------------------------------------------
       - name: Tag release
         env:
           DEPLOY_SHA: ${{ steps.ref.outputs.sha }}
+
         run: |
+          set -euo pipefail
+
           RELEASE_TAG="release/$(date -u +%Y%m%dT%H%M%SZ)"
+
+          echo "Creating release tag:"
+          echo "${RELEASE_TAG}"
+
           git tag -f "$RELEASE_TAG" "$DEPLOY_SHA"
+
           git tag -f release/latest "$DEPLOY_SHA"
-          git push origin "refs/tags/$RELEASE_TAG" "refs/tags/release/latest" --force
-          echo "Tagged ${DEPLOY_SHA} as ${RELEASE_TAG}"
+
+          git push origin \
+            "refs/tags/$RELEASE_TAG" \
+            "refs/tags/release/latest" \
+            --force
+
+          echo "=========================================="
+          echo "Release tagged successfully."
+          echo "Commit: ${DEPLOY_SHA}"
+          echo "Tag: ${RELEASE_TAG}"
+          echo "=========================================="
