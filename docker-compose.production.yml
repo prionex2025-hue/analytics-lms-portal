@@ -115,8 +115,12 @@ services:
       # SPA and API share lms.analyticsedify.com, so the refresh cookie never needs
       # to be sent cross-site. "strict" blocks it from all cross-site requests (CSRF).
       AUTH_COOKIE_SAMESITE: ${AUTH_COOKIE_SAMESITE:-strict}
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-}
+      # `:?` makes an unset/empty secret abort `docker compose up` with a clear
+      # message. `:-` silently passed an empty value through, so the API crash-
+      # looped on env.js's length check and every later `docker compose exec`
+      # step in deploy-vps.yml failed opaquely instead of naming the cause.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required (min 32 chars)}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required (min 32 chars)}
       JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
       JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-30d}
       RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY is required}

@@ -53,13 +53,21 @@ const runShutdown = async (signal) => {
   stopTestLifecycleSweep();
   disconnectAllSockets();
 
+  // Stop the report workers BEFORE draining HTTP. Closing them afterwards left
+  // the worker free to pull brand-new report jobs while in-flight requests were
+  // still finishing, which lengthened the drain window and made the 15s
+  // shutdown-timeout force-exit more likely to kill a Puppeteer job mid-render.
+  // Any request that enqueues after this point falls back to synchronous
+  // rendering (a closed BullMQ queue rejects, and enqueueReportJob catches it).
+  const reportQueuesClosing = Promise.allSettled([closeReportQueue(), closeSuperReportQueue()]);
+
   // 3. Stop accepting connections and let in-flight HTTP requests finish
   //    (they still need MongoDB/Redis, so those close afterwards).
   await closeHttpServer();
   logger.info("server.http_closed");
 
-  // 4. Let active report jobs finish, then release dependencies.
-  await Promise.allSettled([closeReportQueue(), closeSuperReportQueue()]);
+  // 4. Let already-running report jobs finish, then release dependencies.
+  await reportQueuesClosing;
 
   try {
     await shutdownSocket();

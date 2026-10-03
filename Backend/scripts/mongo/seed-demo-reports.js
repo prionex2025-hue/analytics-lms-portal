@@ -16,6 +16,10 @@
  *
  * The run is deterministic (fixed PRNG seed), so the same numbers come out
  * every time and the generated reports are reproducible.
+ *
+ * SECURITY: the seeded accounts use fixed, publicly known passwords. Running
+ * this against a production database would create a usable backdoor, so the
+ * script refuses to do so (see assertNotProduction below).
  */
 
 require("dotenv").config();
@@ -25,6 +29,36 @@ const dbClient = require("../../src/config/db");
 
 const DRY_RUN = process.argv.includes("--dry-run");
 const RESET = process.argv.includes("--reset");
+const FORCE = process.argv.includes("--i-know-this-is-not-production");
+
+// These accounts have hardcoded passwords that are in version control, so this
+// script must never be able to run against a real production database.
+const assertNotProduction = () => {
+  const nodeEnv = String(process.env.NODE_ENV || "").toLowerCase();
+  const uri = String(process.env.MONGODB_URI || "");
+  const pointsAtProduction =
+    nodeEnv === "production" || /(^|[^a-z])(prod|production)([^a-z]|$)/i.test(uri);
+
+  if (!pointsAtProduction) return;
+
+  if (FORCE) {
+    console.warn(
+      "[seed-demo-reports] WARNING: --i-know-this-is-not-production was passed; " +
+        "seeding accounts with publicly known passwords into a production database."
+    );
+    return;
+  }
+
+  console.error(
+    "[seed-demo-reports] REFUSING TO RUN.\n" +
+      "This script creates accounts with fixed, publicly known passwords " +
+      `(college admin: ${DEMO_ADMIN_EMAIL}).\n` +
+      `NODE_ENV=${nodeEnv || "(unset)"} and MONGODB_URI look like production.\n` +
+      "Set NODE_ENV=development, or pass --i-know-this-is-not-production if this " +
+      "is a genuine, isolated non-production database."
+  );
+  process.exit(1);
+};
 
 const DEMO_COLLEGE_CODE = "DEMO-RPT";
 const DEMO_COLLEGE_NAME = "Demo Reports College";
@@ -519,6 +553,7 @@ const seed = async () => {
 };
 
 if (require.main === module) {
+  assertNotProduction();
   seed()
     .then(async (result) => {
       console.log(JSON.stringify(result, null, 2));

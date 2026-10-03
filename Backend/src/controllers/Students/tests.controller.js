@@ -1376,6 +1376,21 @@ const saveAnswer = asyncHandler(async (req, res) => {
     markedForReview: Boolean(markedForReview),
   };
 
+  // Re-assert the precondition atomically as late as possible before mutating.
+  // The status was checked above, but resolving the question and validating the
+  // module are several awaits wide, so a concurrent submit or auto-submit can
+  // close the attempt in that window. An answer written into an already-graded
+  // attempt is never scored, which silently costs the student marks for an
+  // answer they saved in time, so the write is conditional on IN_PROGRESS.
+  // This also doubles as the lastAutoSavedAt touch.
+  const stillOpen = await db.submission.updateMany({
+    where: { id: submissionId, userId: req.user.id, status: "IN_PROGRESS" },
+    data: { lastAutoSavedAt: new Date() },
+  });
+  if (!stillOpen || stillOpen.count === 0) {
+    throw new ApiError(409, "Submission already completed", null, "SUBMISSION_ALREADY_COMPLETED");
+  }
+
   let answer = null;
   if (!isAnswerProvided(normalizedAnswer) && !normalizedAnswer.markedForReview) {
     const existing = await db.answer.findFirst({
@@ -1407,12 +1422,6 @@ const saveAnswer = asyncHandler(async (req, res) => {
     });
   }
 
-  await db.submission.update({
-    where: { id: submissionId },
-    data: {
-      lastAutoSavedAt: new Date(),
-    },
-  });
 
   const [answersForProgress, questionCount, violationCount] = await Promise.all([
     db.answer.findMany({

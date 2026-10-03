@@ -52,11 +52,61 @@ describe("buildAggregateReportResponse", () => {
     expect(result.distributionStats).toMatchObject({ count: 2, median: 70, min: 60, max: 80, stdDev: 10 });
   });
 
-  it("joins department comparatives and zero-fills departments with no submissions", () => {
+  it("joins department comparatives and keeps score metrics null for departments with no submissions", () => {
     const cse = result.departmentRows.find((d) => d.department === "CSE");
     const ece = result.departmentRows.find((d) => d.department === "ECE");
     expect(cse).toMatchObject({ students: 2, submissions: 4, passRate: 75, participation: 100, violations: 2 });
-    expect(ece).toMatchObject({ students: 1, submissions: 0, avgScore: 0, passRate: 0, violations: 0 });
+    // ECE has a registered student who never attempted. "No attempt" is not
+    // "scored zero" (NO ATTEMPT != ZERO SCORE), and a pass rate over an empty
+    // set of graded submissions is unavailable rather than 0%. Both stay null so
+    // department ranking never reports a real 0 for a metric that was never
+    // measured. Participation is a genuine 0% because its denominator (the
+    // registered students) is non-empty.
+    expect(ece).toMatchObject({ students: 1, submissions: 0, avgScore: null, passRate: null, participation: 0, violations: 0 });
+  });
+
+  it("nulls participation only when a department has no registered students at all", () => {
+    const empty = buildAggregateReportResponse({
+      facet,
+      students: [],
+      tests,
+      departments: [{ id: "d9", name: "MECH", collegeId: "c1", college: { name: "CollA" } }],
+      filters: { collegeId: "c1" },
+    });
+    const mech = empty.departmentRows.find((d) => d.department === "MECH");
+    expect(mech).toMatchObject({ students: 0, submissions: 0, avgScore: null, passRate: null, participation: null, violations: 0 });
+  });
+
+  it("keeps real zero metrics when students attempt but score zero", () => {
+    const zeroFacet = {
+      ...facet,
+      overall: [{ totalSubmissions: 2, avgScore: 0, passing: 0, violations: 0, attemptedCount: 1 }],
+      byDepartment: [{ _id: "d1", submissions: 2, avgScore: 0, passing: 0, violations: 0, attemptedCount: 1 }],
+      byStudent: [{ _id: "s1", attempts: 1, avgScore: 0, violations: 0 }],
+    };
+    const zeros = buildAggregateReportResponse({
+      facet: zeroFacet,
+      students,
+      tests,
+      departments,
+      filters: { collegeId: "c1" },
+    });
+    const cse = zeros.departmentRows.find((d) => d.department === "CSE");
+    // A measured zero must stay a real 0, never be collapsed into "no data".
+    expect(cse).toMatchObject({ students: 2, submissions: 2, avgScore: 0, passRate: 0 });
+    expect(zeros.metrics).toMatchObject({ avgScore: 0, passRate: 0 });
+  });
+
+  it("tolerates departments missing from the aggregation facet", () => {
+    const partial = buildAggregateReportResponse({
+      facet,
+      students,
+      tests,
+      departments: [...departments, { id: "d7", name: "CIVIL", collegeId: "c1", college: { name: "CollA" } }],
+      filters: { collegeId: "c1" },
+    });
+    const civil = partial.departmentRows.find((d) => d.department === "CIVIL");
+    expect(civil).toMatchObject({ students: 0, submissions: 0, avgScore: null, passRate: null, participation: null, violations: 0 });
   });
 
   it("passes through trend and sorts subjects by score desc", () => {

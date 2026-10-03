@@ -36,7 +36,7 @@ import { moduleColumnDefs, moduleMarksFor, moduleShortLabel, overallModuleMarks 
 import ReportBuilderDialog, { toReportTestFilters } from "@/components/Admin/Reports/ReportBuilderDialog";
 import ViolationReviewDialog from "@/components/Reports/ViolationReviewDialog";
 import { ADMIN_REVIEW_ACTIONS } from "@/components/Reports/reviewActions";
-import { clampPercent, formatDateLabel, formatPercent, toExportErrorMessage, toQueryString } from "@/components/Reports/utils";
+import { clampPercent, comparePercentDesc, formatDateLabel, formatPercent, percentOrNull, toExportErrorMessage, toQueryString } from "@/components/Reports/utils";
 
 // Same mode set as the Super-Admin reports page; the Departments tab is only
 // offered to college-level admins (a department admin's scope is one
@@ -422,27 +422,33 @@ export default function ReportsPage({ basePathOverride = null, showStudentDepart
     score: toNumber(item.score || item.avgScore),
   }));
 
+  // The API answers `null` for a percentage it has no data for (a department or
+  // batch where nobody attempted). `percentOrNull` keeps that missing instead of
+  // collapsing it into a real 0%, which would claim students scored zero.
   const departmentRows = (analytics.departmentComparative || []).map((item) => ({
     departmentId: item.departmentId,
     department: item.departmentName || item.department || "-",
     students: toNumber(item.students),
     submissions: toNumber(item.submissions),
-    avgScore: clampPercent(item.avgScore),
-    passRate: clampPercent(item.passRate),
-    participation: toNumber(item.participationRate ?? item.participation),
+    avgScore: percentOrNull(item.avgScore),
+    passRate: percentOrNull(item.passRate),
+    participation: percentOrNull(item.participationRate ?? item.participation),
     violations: toNumber(item.violations),
   }));
 
   const batchComparative = (analytics.batchComparative || []).map((item) => ({
     batch: item.batchName || item.batch || "-",
-    avgScore: clampPercent(item.avgScore),
-    passRate: clampPercent(item.passRate),
-    participation: toNumber(item.participationRate),
+    avgScore: percentOrNull(item.avgScore),
+    passRate: percentOrNull(item.passRate),
+    participation: percentOrNull(item.participationRate),
   }));
 
+  // Highest first, with departments/batches that have no data ranked last rather
+  // than as a real 0 (a plain subtraction would coerce `null` to 0 and let
+  // "no data" masquerade as the worst performer).
   const comparativeChartRows = (isCollegeScope ? departmentRows : batchComparative)
     .slice()
-    .sort((a, b) => b.avgScore - a.avgScore)
+    .sort((a, b) => comparePercentDesc(a.avgScore, b.avgScore))
     .slice(0, 12);
 
   const studentLogRows = (analytics.tableRows || []).map((row, index) => ({

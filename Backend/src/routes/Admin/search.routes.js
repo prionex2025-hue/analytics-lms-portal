@@ -10,6 +10,10 @@ const router = express.Router();
 const adminSearchCache = createResponseCache({
 	scope: "admin-search",
 	ttlSeconds: env.responseCache.adminSearchTtlSeconds,
+	// createResponseCache defaults `enabled` to true, so omitting this made this
+	// the one cache that ignored RESPONSE_CACHE_ENABLED and kept serving results
+	// even when an operator turned the response cache off.
+	enabled: env.responseCache.enabled,
 	keyBuilder: (req) => JSON.stringify({
 		q: String(req.query.q || "").trim().toLowerCase(),
 		adminId: req.admin?.id || null,

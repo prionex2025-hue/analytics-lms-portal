@@ -22,6 +22,20 @@ let reportWorker = null;
 const queueConnection = getRedisQueueConnection();
 const DEFAULT_RECOVERY_LIMIT = 25;
 const STALE_PROCESSING_MS = 15 * 60 * 1000;
+// Queue connections deliberately run without a command timeout (BullMQ's
+// blocking commands never return), and ioredis is configured with
+// `maxRetriesPerRequest: null` + `enableOfflineQueue: true`. That combination
+// means `queue.add()` neither resolves nor rejects while Redis is unreachable,
+// so awaiting it hangs the request forever and the synchronous fallback below is
+// unreachable. Racing it against a bounded timer keeps "Generate report" working
+// (degraded to in-process processing) instead of hanging until nginx 504s.
+const ENQUEUE_TIMEOUT_MS = (() => {
+  const parsed = Number(process.env.REPORT_QUEUE_ENQUEUE_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 5000;
+})();
+const ENQUEUE_ATTEMPTS = 3;
+const ENQUEUE_BACKOFF_MS = 1000;
+const ENQUEUE_FAILED_JOB_RETENTION = 500;
 
 const getDbClient = async () => {
   const m = await models.init();
@@ -137,11 +151,69 @@ const enqueueReportJob = async (reportJobId) => {
   }
 
   try {
-    await reportQueue.add("generate", { reportJobId }, { jobId: reportJobId, removeOnComplete: true, removeOnFail: false });
-  } catch (_error) {
+    await addReportJobWithDeadline(reportJobId);
+  } catch (error) {
+    logger.warn("report_queue.enqueue_failed", {
+      reportJobId,
+      reason: error?.code === "ENQUEUE_TIMEOUT" ? "timeout" : "error",
+      // Degrade to in-process rendering rather than leaving the job QUEUED
+      // forever and the HTTP request hanging.
+      fallback: "synchronous",
+    });
     await processReportSynchronously(reportJobId);
   }
 };
+
+/**
+ * Enqueue with a bounded deadline. BullMQ uses the same connection settings as
+ * the rest of the queue for blocking commands, so the underlying `add()` may
+ * never settle; the timer guarantees this function always does.
+ */
+const addReportJobWithDeadline = (reportJobId) =>
+  new Promise((resolve, reject) => {
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const error = new Error("Timed out enqueueing report job");
+      error.code = "ENQUEUE_TIMEOUT";
+      reject(error);
+    }, ENQUEUE_TIMEOUT_MS);
+
+    // Never hold the event loop open for this timer.
+    if (typeof timer.unref === "function") timer.unref();
+
+    reportQueue
+      .add(
+        "generate",
+        { reportJobId },
+        {
+          jobId: reportJobId,
+          removeOnComplete: true,
+          // Retry transient Redis/Puppeteer failures instead of failing the job on
+          // the first attempt, but cap retention so failed jobs cannot grow the
+          // Redis keyspace without bound.
+          attempts: ENQUEUE_ATTEMPTS,
+          backoff: { type: "exponential", delay: ENQUEUE_BACKOFF_MS },
+          removeOnFail: { count: ENQUEUE_FAILED_JOB_RETENTION },
+        }
+      )
+      .then(
+        () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        },
+        (error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+  });
 
 const recoverPendingReportJobs = async ({ limit = DEFAULT_RECOVERY_LIMIT, staleAfterMs = STALE_PROCESSING_MS } = {}) => {
   const db = await getDbClient();

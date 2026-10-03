@@ -311,6 +311,22 @@ const normalizedPasswordResetMode =
   configuredPasswordResetMode === "webhook" && email.resendApiKey
     ? "resend"
     : configuredPasswordResetMode;
+const resolvedPasswordResetMode =
+  normalizedPasswordResetMode || (email.resendApiKey ? "resend" : (isLocalDevEnv ? "response" : "resend"));
+
+// "response" mode hands the raw reset token back in the HTTP response body, so
+// anyone who can trigger a reset for a victim's address walks straight into a
+// full account takeover. It exists purely so a developer without an email
+// provider can test the flow, and must never be reachable in production -
+// otherwise one copied `.env.sample` line silently disables the control.
+if (resolvedPasswordResetMode === "response" && !isLocalDevEnv) {
+  throw new Error(
+    "PASSWORD_RESET_DELIVERY_MODE=response returns password-reset tokens in the " +
+      `API response and is only allowed when NODE_ENV is development or test (current: "${nodeEnv}"). ` +
+      "Configure PASSWORD_RESET_DELIVERY_MODE=resend (or webhook) and set RESEND_API_KEY."
+  );
+}
+
 const legacyPasswordResetUrl = process.env.PASSWORD_RESET_FRONTEND_URL || "";
 const passwordResetBaseUrl = normalizeUrlBase(
   process.env.PASSWORD_RESET_FRONTEND_BASE_URL ||
@@ -321,7 +337,7 @@ const passwordResetBaseUrl = normalizeUrlBase(
 
 const passwordReset = {
   tokenTtlMinutes: toPositiveInt(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES, 30),
-  deliveryMode: normalizedPasswordResetMode || (email.resendApiKey ? "resend" : (isLocalDevEnv ? "response" : "resend")),
+  deliveryMode: resolvedPasswordResetMode,
   frontendUrl: legacyPasswordResetUrl || `${passwordResetBaseUrl}/reset-password`,
   resetUrls: {
     student: process.env.PASSWORD_RESET_STUDENT_FRONTEND_URL || legacyPasswordResetUrl || `${passwordResetBaseUrl}/reset-password`,

@@ -41,6 +41,14 @@ const isRateLimitDisabled = () => {
     return false;
   }
 
+  // This kill switch turns off *every* limiter, including the login,
+  // forgot-password and reset-password brute-force protections. That is a
+  // sensible local debugging aid and a serious production exposure, so it is
+  // honoured only outside production.
+  if (String(process.env.NODE_ENV || "").trim().toLowerCase() === "production") {
+    return false;
+  }
+
   const value = String(process.env.RATE_LIMIT_DISABLED || "").trim().toLowerCase();
   return value === "true" || value === "1" || value === "yes" || value === "on";
 };

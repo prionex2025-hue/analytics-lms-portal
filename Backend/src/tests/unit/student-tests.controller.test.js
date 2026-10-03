@@ -1,6 +1,7 @@
 const models = require("../../models");
 const {
   listUpcomingTests,
+  saveAnswer,
   startTest,
 } = require("../../controllers/Students/tests.controller");
 const { withRedisLock } = require("../../services/redis-lock.service");
@@ -41,6 +42,12 @@ jest.mock("../../services/test-cache.service", () => ({
 
 jest.mock("../../services/test-config.service", () => ({
   attachResolvedTestConfiguration: jest.fn((test) => test),
+  // Real implementations: saveAnswer consults these to enforce the
+  // active-module/deadline rules, and a stub returning undefined would make
+  // `isModuleAttempt` throw rather than short-circuit.
+  isModuleTest: (test) => String(test?.assessmentFormat || "").toUpperCase() === "MODULE_TEST",
+  normalizeQuestionCategory: (value) =>
+    value == null ? null : String(value).trim().toLowerCase().replace(/[\s-]+/g, "_") || null,
 }));
 
 jest.mock("../../services/exam-violation.service", () => ({
@@ -243,5 +250,179 @@ describe("student tests controller", () => {
     });
     expect(db.submission.findFirst).not.toHaveBeenCalled();
     expect(db.submission.create).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("saveAnswer closes the submit/answer-write race", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    withRedisLock.mockImplementation(async ({ task }) => task({ lockAcquired: false }));
+    isStudentAssignedToTest.mockReturnValue(true);
+  });
+
+  const buildSaveAnswerRequest = () => ({
+    params: { testId: "test-1", questionId: "question-1" },
+    body: { submissionId: "submission-1", questionId: "question-1", selectedOption: "option-a" },
+    headers: {},
+    query: {},
+    user: {
+      id: "student-1",
+      collegeId: "college-1",
+      departmentId: "department-1",
+      batchIds: [],
+      year: 1,
+      status: "ACTIVE",
+    },
+  });
+
+  // The attempt still reads IN_PROGRESS at the top of the handler, but a
+  // concurrent submit/auto-submit closes it before the answer is written.
+  // Writing anyway stores an answer in an already-graded attempt, which is never
+  // scored and silently costs the student marks.
+  it("refuses to write an answer once the attempt has closed", async () => {
+    const updateMany = jest.fn(async () => ({ count: 0 }));
+    const answerUpsert = jest.fn(async () => ({ id: "answer-1" }));
+
+    const db = {
+      submission: {
+        findUnique: jest.fn(async () => ({
+          id: "submission-1",
+          userId: "student-1",
+          testId: "test-1",
+          status: "IN_PROGRESS",
+          startedAt: new Date(Date.now() - 60_000),
+          timeSpentSeconds: 60,
+          test: {
+            id: "test-1",
+            title: "T",
+            durationMins: 60,
+            assessmentFormat: "OPEN_TEST",
+            violationLimit: 5,
+            questions: [],
+          },
+        })),
+        // Attempt already closed: the conditional touch matches no rows.
+        updateMany,
+        update: jest.fn(async () => ({ id: "submission-1" })),
+      },
+      answer: {
+        findFirst: jest.fn(async () => null),
+        findMany: jest.fn(async () => [{ questionId: "question-1", isCorrect: true }]),
+        upsert: answerUpsert,
+      },
+      violation: {
+        count: jest.fn(async () => 0),
+      },
+      violation: {
+        count: jest.fn(async () => 0),
+      },
+      question: {
+        count: jest.fn(async () => 1),
+        findUnique: jest.fn(async () => ({
+          id: "question-1",
+          testId: "test-1",
+          type: "SINGLE",
+          category: null,
+          order: 1,
+          options: [{ id: "option-a", isCorrect: true }],
+        })),
+      },
+
+      testSession: {
+        findFirst: jest.fn(async () => null),
+        findUnique: jest.fn(async () => ({
+          id: "session-1",
+          userId: "student-1",
+          testId: "test-1",
+          submissionId: "submission-1",
+          endedAt: null,
+        })),
+        upsert: jest.fn(async () => ({ id: "session-1" })),
+        updateMany: jest.fn(async () => ({ count: 1 })),
+      },
+    };
+    models.init.mockResolvedValue({ dbClient: db });
+
+    await expect(invoke(saveAnswer, buildSaveAnswerRequest())).rejects.toMatchObject({
+      statusCode: 409,
+      code: "SUBMISSION_ALREADY_COMPLETED",
+    });
+
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: "submission-1",
+        userId: "student-1",
+        status: "IN_PROGRESS",
+      }),
+    }));
+    // The critical assertion: nothing was written into the graded attempt.
+    expect(answerUpsert).not.toHaveBeenCalled();
+  });
+
+  it("writes the answer when the attempt is still open", async () => {
+    const updateMany = jest.fn(async () => ({ count: 1 }));
+    const answerUpsert = jest.fn(async () => ({ id: "answer-1" }));
+
+    const db = {
+      submission: {
+        findUnique: jest.fn(async () => ({
+          id: "submission-1",
+          userId: "student-1",
+          testId: "test-1",
+          status: "IN_PROGRESS",
+          startedAt: new Date(Date.now() - 60_000),
+          timeSpentSeconds: 60,
+          test: {
+            id: "test-1",
+            title: "T",
+            durationMins: 60,
+            assessmentFormat: "OPEN_TEST",
+            violationLimit: 5,
+            questions: [{ id: "question-1", type: "SINGLE", options: [{ id: "option-a", isCorrect: true }] }],
+          },
+        })),
+        updateMany,
+        update: jest.fn(async () => ({ id: "submission-1" })),
+      },
+      answer: {
+        findFirst: jest.fn(async () => null),
+        findMany: jest.fn(async () => [{ questionId: "question-1", isCorrect: true }]),
+        upsert: answerUpsert,
+      },
+      violation: {
+        count: jest.fn(async () => 0),
+      },
+      question: {
+        count: jest.fn(async () => 1),
+        findUnique: jest.fn(async () => ({
+          id: "question-1",
+          testId: "test-1",
+          type: "SINGLE",
+          category: null,
+          order: 1,
+          options: [{ id: "option-a", isCorrect: true }],
+        })),
+      },
+
+      testSession: {
+        findFirst: jest.fn(async () => null),
+        findUnique: jest.fn(async () => ({
+          id: "session-1",
+          userId: "student-1",
+          testId: "test-1",
+          submissionId: "submission-1",
+          endedAt: null,
+        })),
+        upsert: jest.fn(async () => ({ id: "session-1" })),
+        updateMany: jest.fn(async () => ({ count: 1 })),
+      },
+    };
+    models.init.mockResolvedValue({ dbClient: db });
+
+    await invoke(saveAnswer, buildSaveAnswerRequest());
+
+    expect(updateMany).toHaveBeenCalled();
+    expect(answerUpsert).toHaveBeenCalledTimes(1);
   });
 });

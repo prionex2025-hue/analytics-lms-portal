@@ -539,30 +539,36 @@ const buildReportAnalyticsPayload = async (req, queryOverrides = {}) => {
   const departmentComparative = departments.map((department) => {
     const rows = studentRows.filter((row) => row.departmentId === department.id);
     const attendedDepartmentRows = rows.filter((row) => row.testsTaken > 0);
-    const deptAvg = attendedDepartmentRows.length ? attendedDepartmentRows.reduce((sum, row) => sum + row.avgScore, 0) / attendedDepartmentRows.length : 0;
-    const deptParticipation = rows.length ? (attendedDepartmentRows.length / rows.length) * 100 : 0;
-    const deptPassRate = attendedDepartmentRows.length ? (attendedDepartmentRows.filter((row) => row.avgScore >= PASS_THRESHOLD_PERCENT).length / attendedDepartmentRows.length) * 100 : 0;
+    // A metric whose denominator is the set of attempts (or the set of graded
+    // submissions) is unavailable - not 0% - when nobody attempted. Zero-filling
+    // here would report "this department scored 0%" for students who never sat
+    // the test, which is a false statement about academic performance. A metric
+    // whose denominator is the enrolled cohort (participation) keeps a real 0%
+    // whenever students are registered, and is null only when there are none.
+    const deptAvg = attendedDepartmentRows.length ? attendedDepartmentRows.reduce((sum, row) => sum + row.avgScore, 0) / attendedDepartmentRows.length : null;
+    const deptParticipation = rows.length ? (attendedDepartmentRows.length / rows.length) * 100 : null;
+    const deptPassRate = attendedDepartmentRows.length ? (attendedDepartmentRows.filter((row) => row.avgScore >= PASS_THRESHOLD_PERCENT).length / attendedDepartmentRows.length) * 100 : null;
     return {
       departmentId: department.id,
       departmentName: department.name,
-      avgScore: toPercent(deptAvg),
-      passRate: toPercent(deptPassRate),
-      participationRate: toPercent(deptParticipation),
+      avgScore: deptAvg == null ? null : toPercent(deptAvg),
+      passRate: deptPassRate == null ? null : toPercent(deptPassRate),
+      participationRate: deptParticipation == null ? null : toPercent(deptParticipation),
     };
   });
 
   const batchComparative = batches.map((batch) => {
     const rows = studentRows.filter((row) => row.batchId === batch.id || row.batchIds.includes(batch.id));
     const attendedBatchRows = rows.filter((row) => row.testsTaken > 0);
-    const value = attendedBatchRows.length ? attendedBatchRows.reduce((sum, row) => sum + row.avgScore, 0) / attendedBatchRows.length : 0;
-    const pass = attendedBatchRows.length ? (attendedBatchRows.filter((row) => row.avgScore >= PASS_THRESHOLD_PERCENT).length / attendedBatchRows.length) * 100 : 0;
-    const participation = rows.length ? (attendedBatchRows.length / rows.length) * 100 : 0;
+    const value = attendedBatchRows.length ? attendedBatchRows.reduce((sum, row) => sum + row.avgScore, 0) / attendedBatchRows.length : null;
+    const pass = attendedBatchRows.length ? (attendedBatchRows.filter((row) => row.avgScore >= PASS_THRESHOLD_PERCENT).length / attendedBatchRows.length) * 100 : null;
+    const participation = rows.length ? (attendedBatchRows.length / rows.length) * 100 : null;
     return {
       batchId: batch.id,
       batchName: batch.name,
-      avgScore: toPercent(value),
-      passRate: toPercent(pass),
-      participationRate: toPercent(participation),
+      avgScore: value == null ? null : toPercent(value),
+      passRate: pass == null ? null : toPercent(pass),
+      participationRate: participation == null ? null : toPercent(participation),
     };
   });
 
@@ -796,9 +802,11 @@ const getReportChartsDashboard = asyncHandler(async (req, res) => {
     })),
     departmentPerformance: (analytics?.departmentComparative || []).map((item) => ({
       department: item.departmentName,
-      avgScore: Number(item.avgScore || 0),
-      passRate: Number(item.passRate || 0),
-      participationRate: Number(item.participationRate || 0),
+      // Preserve "unavailable" through the export so a cohort that never
+      // attempted is not exported as a measured 0%.
+      avgScore: item.avgScore == null ? null : Number(item.avgScore),
+      passRate: item.passRate == null ? null : Number(item.passRate),
+      participationRate: item.participationRate == null ? null : Number(item.participationRate),
     })),
     topPerformers,
   });

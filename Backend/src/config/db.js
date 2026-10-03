@@ -1656,10 +1656,32 @@ dbClient.$disconnect = async () => {
   db = null;
 };
 
+let warnedAboutUnboundTransaction = false;
+
 dbClient.$transaction = async (payload) => {
   if (typeof payload === "function") {
     // Use MongoDB client sessions for real transaction support
     const session = await mongoose.connection.startSession();
+
+    // IMPORTANT: the model shim (modelClient) has no session plumbing - every
+    // operation resolves its collection from the global connection. Handing the
+    // callback `dbClient` therefore runs its reads/writes OUTSIDE the session,
+    // so `withTransaction` commits an empty transaction and the caller's writes
+    // commit individually and non-atomically. On a replica set this fails
+    // silently; on a standalone mongod it throws and falls through to the
+    // dev-only branch below. Until session support is threaded through the model
+    // shim, treat $transaction as best-effort and do not rely on it for
+    // atomicity of multi-write flows (bulk batch/student create, answer bulk
+    // upsert, test cloning).
+    if (!warnedAboutUnboundTransaction) {
+      warnedAboutUnboundTransaction = true;
+      console.warn(
+        "[db] $transaction is running WITHOUT session-bound operations: the model shim does not " +
+          "pass the session to queries, so these writes are not atomic. Tracked as a known " +
+          "data-integrity issue; see the production audit."
+      );
+    }
+
     try {
       let result;
       await session.withTransaction(async () => {
