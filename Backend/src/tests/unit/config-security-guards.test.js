@@ -45,6 +45,8 @@ const baseEnv = {
   METRICS_TOKEN: "5rG!p9Dk2Wv8xJ3hQ6bL1sF4mT0aN7cE",
   JWT_ACCESS_SECRET: "aB3$kLm9!qR2xY7pN5vC8dF1hJ6sW4tG0uE3iO9z",
   JWT_REFRESH_SECRET: "C7!qP4vM9xR2sD6nK1bW8yF3hJ5tA0eU4iG7zL2",
+  PASSWORD_RESET_DELIVERY_MODE: "resend",
+  RESEND_API_KEY: "re_test_key",
 };
 
 describe("password reset delivery mode guard", () => {
