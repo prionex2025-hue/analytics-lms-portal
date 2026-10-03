@@ -208,7 +208,22 @@ const createResponseCache = ({
   shouldCache,
   skip,
   requireAuthenticated = true,
-}) => (req, res, next) => {
+  singleFlight = true,
+  singleFlightTimeoutMs,
+}) => {
+  // Identical concurrent cache misses can otherwise each execute the same expensive
+  // query when a popular entry expires. This per-middleware promise map coalesces those
+  // requests: the first becomes the leader and followers replay its cacheable result.
+  const inflightResponses = new Map();
+  const getSingleFlightTimeoutMs = () => {
+    if (Number.isFinite(singleFlightTimeoutMs) && singleFlightTimeoutMs > 0) {
+      return singleFlightTimeoutMs;
+    }
+
+    return Math.min(Math.max(ttlSeconds * 1000, 1000), 30000);
+  };
+
+  return (req, res, next) => {
   if (!enabled || req.method !== "GET") {
     return next();
   }
@@ -269,7 +284,7 @@ const createResponseCache = ({
   };
 
   readFromCache()
-    .then((cached) => {
+    .then(async (cached) => {
       if (cached) {
         res.setHeader("X-Response-Cache", "HIT");
         if (cached.headers && typeof cached.headers === "object") {
@@ -282,35 +297,96 @@ const createResponseCache = ({
         return res.status(cached.statusCode || 200).json(cached.body);
       }
 
-      res.setHeader("X-Response-Cache", "MISS");
-      const originalJson = res.json.bind(res);
+      const cacheKey = computeCacheKey();
+      if (!cacheKey) {
+        return next();
+      }
 
-      res.json = (body) => {
-        const canStore =
-          res.statusCode >= 200 &&
-          res.statusCode < 300 &&
-          (typeof shouldCache !== "function" || shouldCache(req, res, body));
-
-        if (canStore) {
-          const tags = Array.isArray(tagsBuilder) ? tagsBuilder : typeof tagsBuilder === "function" ? tagsBuilder(req, res, body) : [];
-          const normalizedTags = Array.from(new Set(tags.filter(Boolean)));
-          const payload = {
-            statusCode: res.statusCode,
-            body,
-            headers: {
-              "Cache-Control": res.getHeader("Cache-Control") || undefined,
-            },
-          };
-
-          writeToCache(payload, normalizedTags).catch(() => {});
+      const serveSharedResponse = (shared) => {
+        res.setHeader("X-Response-Cache", "SHARED");
+        if (shared.headers && typeof shared.headers === "object") {
+          for (const [headerName, headerValue] of Object.entries(shared.headers)) {
+            if (headerValue) {
+              res.setHeader(headerName, headerValue);
+            }
+          }
         }
-
-        return originalJson(body);
+        return res.status(shared.statusCode || 200).json(shared.body);
       };
 
-      return next();
+      const startLeader = () => {
+        let resolveShared = () => {};
+        if (singleFlight) {
+          let timeoutId;
+          const sharedPromise = new Promise((resolve) => {
+            resolveShared = (result) => {
+              clearTimeout(timeoutId);
+              resolve(result);
+              if (inflightResponses.get(cacheKey) === sharedPromise) {
+                inflightResponses.delete(cacheKey);
+              }
+            };
+          });
+          timeoutId = setTimeout(() => {
+            resolveShared({ cacheable: false });
+          }, getSingleFlightTimeoutMs());
+          inflightResponses.set(cacheKey, sharedPromise);
+        }
+
+        res.setHeader("X-Response-Cache", "MISS");
+        const originalJson = res.json.bind(res);
+
+        res.json = (body) => {
+          const canStore =
+            res.statusCode >= 200 &&
+            res.statusCode < 300 &&
+            (typeof shouldCache !== "function" || shouldCache(req, res, body));
+
+          if (canStore) {
+            const tags = Array.isArray(tagsBuilder) ? tagsBuilder : typeof tagsBuilder === "function" ? tagsBuilder(req, res, body) : [];
+            const normalizedTags = Array.from(new Set(tags.filter(Boolean)));
+            const payload = {
+              statusCode: res.statusCode,
+              body,
+              headers: {
+                "Cache-Control": res.getHeader("Cache-Control") || undefined,
+              },
+            };
+
+            const completeShared = () => resolveShared({ cacheable: true, ...payload });
+            writeToCache(payload, normalizedTags).catch(() => {}).then(completeShared, completeShared);
+          } else {
+            resolveShared({ cacheable: false });
+          }
+
+          return originalJson(body);
+        };
+
+        return next();
+      };
+
+      if (singleFlight) {
+        const ongoing = inflightResponses.get(cacheKey);
+        if (ongoing) {
+          let shared;
+          try {
+            shared = await ongoing;
+          } catch {
+            return startLeader();
+          }
+
+          if (shared?.cacheable) {
+            return serveSharedResponse(shared);
+          }
+
+          return startLeader();
+        }
+      }
+
+      return startLeader();
     })
     .catch(() => next());
+  };
 };
 
 const invalidateResponseCacheByTags = async (tags = []) => {

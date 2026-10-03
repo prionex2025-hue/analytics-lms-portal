@@ -7,11 +7,12 @@ on:
     types: [completed]
     branches: [main]
 
-  # Manual dispatch is restricted to previously deployed release tags.
+  # Manual dispatch normally redeploys a previously deployed release tag.
+  # If no release tag exists yet, release/latest bootstraps from origin/main.
   workflow_dispatch:
     inputs:
       ref:
-        description: "Previously deployed release tag (release/latest or release/<timestamp>). New main commits deploy only after successful CI."
+        description: "Previously deployed release tag (release/latest or release/<timestamp>). If no release tag exists yet, release/latest bootstraps the first deploy from origin/main. New main commits otherwise deploy only after successful CI."
         required: false
         default: "release/latest"
 
@@ -86,6 +87,16 @@ jobs:
               echo "::error::Manual deploys must use a previously deployed release tag (release/latest or release/<timestamp>). New commits deploy only after successful main CI."
               exit 1
             fi
+
+            # Release tags are created only by a successful deploy, so the first
+            # manual deploy has no release/latest tag yet.
+            git fetch origin --tags --force
+            if [ "$REF" = "release/latest" ] && ! git rev-parse --verify "${REF}^{commit}" >/dev/null 2>&1; then
+              echo "No release/latest tag exists yet."
+              echo "Bootstrapping the first production deployment from origin/main."
+              git fetch origin main --force
+              REF="origin/main"
+            fi
           fi
 
           # Only allow safe Git ref characters.
@@ -95,7 +106,13 @@ jobs:
           fi
 
           # Resolve the requested ref to an actual commit.
-          SHA="$(git rev-parse --verify "${REF}^{commit}")"
+          if ! SHA="$(git rev-parse --verify "${REF}^{commit}" 2>/dev/null)"; then
+            echo "::error::Could not resolve deploy ref: ${REF}"
+            if [ "$REF" = "release/latest" ]; then
+              echo "::error::No release/latest tag is available. Push the intended commit to main and let successful CI deploy it, then retry the manual workflow."
+            fi
+            exit 1
+          fi
 
           if [ -z "$SHA" ]; then
             echo "::error::Could not resolve deploy ref: ${REF}"
