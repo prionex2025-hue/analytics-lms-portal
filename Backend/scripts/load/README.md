@@ -78,12 +78,74 @@ full run would only measure rate limiting.
 | `RUN_SUBMIT` | `true` | Set `false` to measure throughput only |
 | `DEBUG_FAILURES` | `false` | Log response bodies on failure |
 
-### Running
+Wrapper-only variables for `run-exam-load-test.sh`:
 
-`k6` is not installed on the app host by default. Either install it or use the
-official image.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `K6_CPUS` | `6,7` | `taskset` CPU list for the k6 container |
+| `PROMETHEUS_URL` | `http://127.0.0.1:9090/api/v1/write` | Remote-write endpoint |
+| `RUN_ID` | `exam-<profile>-<timestamp>` | Correlates a run across k6, Grafana and the log file |
+
+### Running on the app host
+
+`run-exam-load-test.sh` wraps the containerised run and adds the preflight
+checks that make a host-local run interpretable. Use it when the test runs on the
+same machine that serves the API.
 
 ```bash
+cd Backend
+./scripts/load/run-exam-load-test.sh --profile 500 --dry-run   # preflight only
+./scripts/load/run-exam-load-test.sh --profile 500
+```
+
+The script refuses to start when the accounts file is short of the profile size,
+warns when `K6_CPUS` names a core the host does not have, and reads
+`RATE_LIMIT_AUTH_LOGIN_MAX` out of the running `api1` container to catch the
+per-IP login ceiling before it silently throttles the whole run.
+
+#### Why k6 is pinned to specific cores
+
+`docker-compose.production.yml` already declares 9.0 CPU ceilings on an 8 vCPU
+host (mongo 2.0, redis 1.0, clamav 1.0, api1/api2/api3 1.5 each, frontend 0.5).
+An unpinned k6 competes with the API for the same cores, and the resulting
+latency figures describe the generator starving rather than the API saturating.
+The wrapper passes `--cpus 6,7` to `docker run` so the application keeps the
+other cores.
+
+Override with `K6_CPUS`, choosing the last cores on the host:
+
+```bash
+K6_CPUS=10,11 ./scripts/load/run-exam-load-test.sh --profile 500
+```
+
+#### Caveats of running on the app host
+
+This is a compromise, not a dedicated load host. Treat results as follows:
+
+- k6 shares CPU, memory bandwidth and NIC with the application, so absolute
+  latency is pessimistic versus a remote generator.
+- Every request comes from one source IP, so the per-IP auth ceilings apply as
+  they would to a single NAT'd office, not as they would from 1000 distinct
+  students.
+- The run is representative of nginx -> TLS termination -> round-robin across
+  all three replicas, which is a real advantage over hitting the API directly.
+- Check for CPU throttling while it runs. If `docker stats --no-stream` shows
+  the api containers pinned at their `cpus` ceiling, the numbers are measuring
+  the ceiling and the profile needs to be re-run on a separate host to be
+  meaningful.
+
+### Running from a separate machine
+
+Requests then bypass nginx, so the round-robin across replicas and TLS
+termination are no longer part of the measurement. Prometheus is bound to
+loopback, so tunnel it:
+
+```bash
+ssh -N -L 9090:127.0.0.1:9090 deploy@srv1986922
+```
+
+```bash
+cd Backend
 BASE_URL="https://lms.example.com" \
 K6_PROMETHEUS_RW_SERVER_URL=http://127.0.0.1:9090/api/v1/write \
 K6_PROMETHEUS_RW_TREND_STATS=p(95),p(99),max,med \
@@ -91,7 +153,7 @@ K6_PROMETHEUS_RW_LABELS="environment=production,testid=exam-500-run1" \
 npm run load:exam-full:500 -- --out experimental-prometheus-rw --tag testid=exam-500-run1
 ```
 
-Via Docker, which is how it was validated:
+Or with Docker directly, which is how the script was validated:
 
 ```bash
 docker run --rm -i \
