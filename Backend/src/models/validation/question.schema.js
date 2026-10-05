@@ -34,6 +34,8 @@ const QuestionValidationSchema = new mongoose.Schema(
     testId: { type: String, required: true, validate: referenceValidator },
     collegeId: { type: String, required: true, validate: referenceValidator },
     prompt: { type: String, required: true, trim: true, minlength: 1 },
+    normalizedPrompt: { type: String, default: null, trim: true },
+    fingerprint: { type: String, default: null, trim: true },
     type: {
       type: String,
       required: true,
@@ -64,13 +66,75 @@ const QuestionValidationSchema = new mongoose.Schema(
   }
 );
 
-QuestionValidationSchema.pre("validate", function normalizeQuestionType(next) {
+function normalizeText(text) {
+  if (!text || typeof text !== "string") return "";
+  return text
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\u00A0\u2000-\u200B\u3000]+/g, " ")
+    .replace(/[.,;:!?+\-*/=()\[\]{}]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeOptions(options) {
+  if (!Array.isArray(options)) return [];
+  return options
+    .map((opt) => normalizeText(opt))
+    .filter((opt) => opt.length > 0)
+    .sort();
+}
+
+function normalizeCorrectAnswer(answer, type) {
+  if (answer === null || answer === undefined) return "";
+  const normalized = normalizeText(String(answer));
+  if (type === "TRUE_FALSE" || type === "BOOLEAN") {
+    return normalized === "true" ? "true" : "false";
+  }
+  return normalized;
+}
+
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function generateQuestionFingerprint(doc) {
+  const normalizedPrompt = normalizeText(doc.prompt);
+  const normalizedOpts = normalizeOptions(doc.options);
+  const normalizedCorrect = normalizeCorrectAnswer(
+    doc.correctOption || doc.correctText || doc.correctBoolean,
+    doc.type
+  );
+
+  const promptHash = hashString(normalizedPrompt);
+  const optionsHash = hashString(normalizedOpts.join("|"));
+  const correctHash = hashString(normalizedCorrect);
+
+  return `${promptHash}:${optionsHash}:${correctHash}`;
+}
+
+QuestionValidationSchema.pre("validate", function normalizeQuestionFields(next) {
   if (this.type) {
     this.type = normalizeUpperEnumValue(this.type);
   }
 
   if (typeof this.explanationVideoUrl === "string" && this.explanationVideoUrl.trim() === "") {
     this.explanationVideoUrl = null;
+  }
+
+  if (this.prompt && !this.normalizedPrompt) {
+    this.normalizedPrompt = normalizeText(this.prompt);
+  }
+
+  if ((this.prompt || this.options?.length || this.correctOption || this.correctText || this.correctBoolean) && !this.fingerprint) {
+    this.fingerprint = generateQuestionFingerprint(this);
   }
 
   next();

@@ -47,6 +47,9 @@ const createIndexes = async () => {
     ["question", { testId: 1, order: 1 }],
     // MODULE_TEST module question fetch: filter by testId + category, ordered by order.
     ["question", { testId: 1, category: 1, order: 1 }],
+    // Duplicate detection indexes
+    ["question", { collegeId: 1, fingerprint: 1 }],
+    ["question", { collegeId: 1, normalizedPrompt: 1 }],
     ["answer", { submissionId: 1, questionId: 1 }, { unique: true, name: "uniq_answer_submission_question" }],
     ["violation", { submissionId: 1, createdAt: -1 }],
     ["violation", { submissionId: 1, type: 1, createdAt: -1 }],
@@ -117,6 +120,8 @@ const createIndexes = async () => {
     ["superReportJob", { "filters.collegeId": 1, status: 1, createdAt: -1 }],
     ["superReportJob", { initiatedById: 1, createdAt: -1 }],
     ["questionBank", { collegeId: 1, subjectId: 1, createdByAdminId: 1 }],
+    ["questionBank", { collegeId: 1, fingerprint: 1 }],
+    ["questionBank", { collegeId: 1, normalizedPrompt: 1 }],
     ["resource", { collegeId: 1, subjectId: 1 }],
     ["resource", { title: "text", description: "text", tags: "text" }],
     ["resource", { tags: 1 }],

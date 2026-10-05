@@ -20,6 +20,8 @@
     "load:exam-flow:1000": "k6 run -e PROFILE=1000 scripts/load/exam-flow.k6.js",
     "load:exam-flow:2000": "k6 run -e TARGET_USERS=2000 -e WARMUP_USERS=500 -e WARMUP_DURATION=5m -e HOLD_DURATION=15m -e RAMPDOWN_DURATION=3m scripts/load/exam-flow.k6.js",
     "load:exam-flow:5000": "k6 run -e PROFILE=5000 scripts/load/exam-flow.k6.js",
+    "load:exam-full:500": "k6 run -e PROFILE=500 scripts/load/exam-flow-production.k6.js",
+    "load:exam-full:1000": "k6 run -e PROFILE=1000 scripts/load/exam-flow-production.k6.js",
     "prod:check": "node scripts/prod-readiness-check.js",
     "smoke:local-production": "node scripts/local-production-smoke.js",
     "load:exam-start:win": "\"C:\\Program Files\\k6\\k6.exe\" run scripts/load/exam-start-spike.k6.js",

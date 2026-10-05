@@ -7,6 +7,10 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
       - --web.enable-lifecycle
+      # Accepts k6 metrics via `--out experimental-prometheus-rw`
+      # (see Backend/scripts/load/README.md). Off by default upstream; the
+      # port stays bound to loopback in the `ports` mapping below.
+      - --web.enable-remote-write-receiver
     volumes:
       - ./deploy/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./deploy/monitoring/prometheus/rules:/etc/prometheus/rules:ro

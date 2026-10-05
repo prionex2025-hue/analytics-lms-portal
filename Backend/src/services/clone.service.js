@@ -9,6 +9,60 @@ const {
 const { resolvePersistedTestConfiguration } = require("../services/test-config.service");
 const DEFAULT_STUDENT_YEARS = [1, 2, 3, 4];
 
+function normalizeText(text) {
+  if (!text || typeof text !== "string") return "";
+  return text
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\u00A0\u2000-\u200B\u3000]+/g, " ")
+    .replace(/[.,;:!?+\-*/=()\[\]{}]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeOptions(options) {
+  if (!Array.isArray(options)) return [];
+  return options
+    .map((opt) => normalizeText(opt))
+    .filter((opt) => opt.length > 0)
+    .sort();
+}
+
+function normalizeCorrectAnswer(answer, type) {
+  if (answer === null || answer === undefined) return "";
+  const normalized = normalizeText(String(answer));
+  if (type === "TRUE_FALSE" || type === "BOOLEAN") {
+    return normalized === "true" ? "true" : "false";
+  }
+  return normalized;
+}
+
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function generateQuestionFingerprint(doc) {
+  const normalizedPrompt = normalizeText(doc.prompt);
+  const normalizedOpts = normalizeOptions(doc.options);
+  const normalizedCorrect = normalizeCorrectAnswer(
+    doc.correctOption || doc.correctText || doc.correctBoolean,
+    doc.type
+  );
+
+  const promptHash = hashString(normalizedPrompt);
+  const optionsHash = hashString(normalizedOpts.join("|"));
+  const correctHash = hashString(normalizedCorrect);
+
+  return `${promptHash}:${optionsHash}:${correctHash}`;
+}
+
 const normalizeStudentYears = (years) => {
   const source = Array.isArray(years) ? years : DEFAULT_STUDENT_YEARS;
   const normalized = [...new Set(source
@@ -124,19 +178,24 @@ async function cloneTestToCollege({ sourceTestId, destinationCollegeId, assignme
     // Fetch and copy questions
     const questions = await tx.question.findMany({ where: { testId: sourceTestId } });
     if (Array.isArray(questions) && questions.length > 0) {
-      const rows = questions.map((q) => ({
-        testId: cloned.id,
-        collegeId: destinationCollegeId,
-        prompt: q.prompt,
-        type: q.type,
-        options: q.options || [],
-        correctOption: q.correctOption || null,
-        correctBoolean: q.correctBoolean ?? null,
-        correctText: q.correctText || null,
-        marks: q.marks,
-        category: q.category ?? null,
-        order: q.order,
-      }));
+      const rows = questions.map((q, index) => {
+        const questionDoc = {
+          testId: cloned.id,
+          collegeId: destinationCollegeId,
+          prompt: q.prompt,
+          type: q.type,
+          options: q.options || [],
+          correctOption: q.correctOption || null,
+          correctBoolean: q.correctBoolean ?? null,
+          correctText: q.correctText || null,
+          marks: q.marks,
+          category: q.category ?? null,
+          order: q.order,
+        };
+        questionDoc.normalizedPrompt = normalizeText(questionDoc.prompt);
+        questionDoc.fingerprint = generateQuestionFingerprint(questionDoc);
+        return questionDoc;
+      });
       const validatedQuestions = await validateDocuments(QuestionValidation, rows, "Cloned question");
       await tx.question.createMany({ data: validatedQuestions });
     }
@@ -225,19 +284,24 @@ async function cloneTestWithinCollege({ sourceTestId, collegeId, assignmentMetho
     // Fetch and copy questions
     const questions = await tx.question.findMany({ where: { testId: sourceTestId } });
     if (Array.isArray(questions) && questions.length > 0) {
-      const rows = questions.map((q) => ({
-        testId: cloned.id,
-        collegeId,
-        prompt: q.prompt,
-        type: q.type,
-        options: q.options || [],
-        correctOption: q.correctOption || null,
-        correctBoolean: q.correctBoolean ?? null,
-        correctText: q.correctText || null,
-        marks: q.marks,
-        category: q.category ?? null,
-        order: q.order,
-      }));
+      const rows = questions.map((q, index) => {
+        const questionDoc = {
+          testId: cloned.id,
+          collegeId,
+          prompt: q.prompt,
+          type: q.type,
+          options: q.options || [],
+          correctOption: q.correctOption || null,
+          correctBoolean: q.correctBoolean ?? null,
+          correctText: q.correctText || null,
+          marks: q.marks,
+          category: q.category ?? null,
+          order: q.order,
+        };
+        questionDoc.normalizedPrompt = normalizeText(questionDoc.prompt);
+        questionDoc.fingerprint = generateQuestionFingerprint(questionDoc);
+        return questionDoc;
+      });
       const validatedQuestions = await validateDocuments(QuestionValidation, rows, "Cloned question");
       await tx.question.createMany({ data: validatedQuestions });
     }

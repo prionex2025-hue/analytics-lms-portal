@@ -76,6 +76,9 @@ const createDb = () => {
           }),
         findMany: jest.fn(async () => [{ id: testId, collegeId }]),
       },
+      question: {
+        findMany: jest.fn(async () => []),
+      },
       admin: {
         findMany: jest.fn(async () => [{ id: "507f1f77bcf86cd799439034", collegeId }]),
       },

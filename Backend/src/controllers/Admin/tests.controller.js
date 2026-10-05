@@ -19,6 +19,10 @@ const {
 } = require("../../services/test-config.service");
 const { cloneTestWithinCollege } = require("../../services/clone.service");
 const {
+  detectDuplicatesInTest,
+  detectDuplicatesAcrossQuestionBank,
+} = require("../../services/duplicate-detection.service");
+const {
   getScopedDepartmentId,
   isCollegeAdminRequest,
 } = require("../../utils/admin-scope");
@@ -80,6 +84,90 @@ const mapQuestionType = (type) => {
   };
   return map[type];
 };
+
+function normalizeText(text) {
+  if (!text || typeof text !== "string") return "";
+  return text
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\u00A0\u2000-\u200B\u3000]+/g, " ")
+    .replace(/[.,;:!?+\-*/=()\[\]{}]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function normalizeOptions(options) {
+  if (!Array.isArray(options)) return [];
+  return options
+    .map((opt) => normalizeText(opt))
+    .filter((opt) => opt.length > 0)
+    .sort();
+}
+
+function normalizeCorrectAnswer(answer, type) {
+  if (answer === null || answer === undefined) return "";
+  const normalized = normalizeText(String(answer));
+  if (type === "TRUE_FALSE" || type === "BOOLEAN") {
+    return normalized === "true" ? "true" : "false";
+  }
+  return normalized;
+}
+
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function generateQuestionFingerprint(doc) {
+  const normalizedPrompt = normalizeText(doc.prompt);
+  const normalizedOpts = normalizeOptions(doc.options);
+  const normalizedCorrect = normalizeCorrectAnswer(
+    doc.correctOption || doc.correctText || doc.correctBoolean,
+    doc.type
+  );
+
+  const promptHash = hashString(normalizedPrompt);
+  const optionsHash = hashString(normalizedOpts.join("|"));
+  const correctHash = hashString(normalizedCorrect);
+
+  return `${promptHash}:${optionsHash}:${correctHash}`;
+}
+
+function buildQuestionData(question, index, testId, collegeId, isModuleAssessment) {
+  const prompt = question.question;
+  const type = mapQuestionType(question.type);
+  const options = Array.isArray(question.options) ? question.options : [];
+  const correctOption = question.type === "mcq" ? String(question.correctAnswer) : null;
+  const correctBoolean = question.type === "true_false" ? Boolean(question.correctAnswer) : null;
+  const correctText = question.type === "fill_blank" || question.type === "paragraph" ? String(question.correctAnswer) : null;
+
+  const questionDoc = {
+    testId,
+    collegeId,
+    prompt,
+    type,
+    options,
+    correctOption,
+    correctBoolean,
+    correctText,
+    marks: question.marks,
+    difficulty: question.difficulty || "MEDIUM",
+    topic: question.topic || null,
+    category: isModuleAssessment ? normalizeQuestionCategory(question.category) : null,
+    explanationVideoUrl: normalizeOptionalUrl(question.explanationVideoUrl),
+    order: index + 1,
+  };
+
+  questionDoc.normalizedPrompt = normalizeText(prompt);
+  questionDoc.fingerprint = generateQuestionFingerprint(questionDoc);
+
+  return questionDoc;
+}
 
 const normalizeOptionalUrl = (value) => {
   if (value == null) return null;
@@ -466,6 +554,26 @@ const createTest = asyncHandler(async (req, res) => {
   }
   await assertNoOverlap({ db, startsAt: startsAtDate, endsAt: endsAtDate, collegeId, skip: skipOverlapCheck });
 
+  const testQuestions = questions.map((question, index) => buildQuestionData(question, index, "temp", collegeId, isModuleAssessment));
+  const duplicateCheck = await detectDuplicatesInTest(collegeId, "temp", testQuestions);
+  if (!duplicateCheck.valid) {
+    const validationSummary = {
+      total: questions.length,
+      valid: duplicateCheck.summary.valid,
+      exactDuplicates: duplicateCheck.summary.exactDuplicates,
+      potentialSemanticDuplicates: duplicateCheck.summary.semanticDuplicates,
+      optionErrors: duplicateCheck.summary.optionErrors,
+    };
+    const errorResponse = {
+      valid: false,
+      duplicate: true,
+      message: "Duplicate questions detected in test",
+      details: duplicateCheck.results,
+      validation: validationSummary,
+    };
+    throw new ApiError(409, "Duplicate questions detected in test", errorResponse, "DUPLICATE_QUESTIONS_IN_TEST");
+  }
+
   const test = await db.$transaction(async (tx) => {
     const createdTest = await tx.test.create({
       data: {
@@ -509,22 +617,7 @@ const createTest = asyncHandler(async (req, res) => {
     }
 
     await tx.question.createMany({
-      data: questions.map((question, index) => ({
-        testId: createdTest.id,
-        collegeId,
-        prompt: question.question,
-        type: mapQuestionType(question.type),
-        options: Array.isArray(question.options) ? question.options : [],
-        correctOption: question.type === "mcq" ? String(question.correctAnswer) : null,
-        correctBoolean: question.type === "true_false" ? Boolean(question.correctAnswer) : null,
-        correctText: question.type === "fill_blank" || question.type === "paragraph" ? String(question.correctAnswer) : null,
-        marks: question.marks,
-        difficulty: question.difficulty || "MEDIUM",
-        topic: question.topic || null,
-        category: isModuleAssessment ? normalizeQuestionCategory(question.category) : null,
-        explanationVideoUrl: normalizeOptionalUrl(question.explanationVideoUrl),
-        order: index + 1,
-      })),
+      data: questions.map((question, index) => buildQuestionData(question, index, createdTest.id, collegeId, isModuleAssessment)),
     });
 
     await createAuditLog({
@@ -845,24 +938,29 @@ const duplicateTest = asyncHandler(async (req, res) => {
 
     if (Array.isArray(source.questions) && source.questions.length > 0) {
       await tx.question.createMany({
-        data: source.questions.map((question) => ({
-          testId: created.id,
-          collegeId,
-          prompt: question.prompt,
-          type: question.type,
-          options: Array.isArray(question.options) ? question.options : [],
-          correctOption: question.correctOption,
-          correctBoolean: question.correctBoolean,
-          correctText: question.correctText,
-          correctOptions: question.correctOptions,
-          marks: question.marks,
-          difficulty: question.difficulty,
-          topic: question.topic,
-          category: question.category ?? null,
-          explanation: question.explanation,
-          explanationVideoUrl: normalizeOptionalUrl(question.explanationVideoUrl),
-          order: question.order,
-        })),
+        data: source.questions.map((question, index) => {
+          const questionDoc = {
+            testId: created.id,
+            collegeId,
+            prompt: question.prompt,
+            type: question.type,
+            options: Array.isArray(question.options) ? question.options : [],
+            correctOption: question.correctOption,
+            correctBoolean: question.correctBoolean,
+            correctText: question.correctText,
+            correctOptions: question.correctOptions,
+            marks: question.marks,
+            difficulty: question.difficulty,
+            topic: question.topic,
+            category: question.category ?? null,
+            explanation: question.explanation,
+            explanationVideoUrl: normalizeOptionalUrl(question.explanationVideoUrl),
+            order: question.order,
+          };
+          questionDoc.normalizedPrompt = normalizeText(questionDoc.prompt);
+          questionDoc.fingerprint = generateQuestionFingerprint(questionDoc);
+          return questionDoc;
+        }),
       });
     }
 
@@ -1199,24 +1297,28 @@ const updateTest = asyncHandler(async (req, res) => {
     }
 
     if (hasQuestionMutation(req.body)) {
+      const testQuestions = req.body.questions.map((question, index) => buildQuestionData(question, index, testId, collegeId, isModuleAssessment));
+      const duplicateCheck = await detectDuplicatesInTest(collegeId, testId, testQuestions);
+      if (!duplicateCheck.valid) {
+        const validationSummary = {
+          total: req.body.questions.length,
+          valid: duplicateCheck.summary.valid,
+          exactDuplicates: duplicateCheck.summary.exactDuplicates,
+          potentialSemanticDuplicates: duplicateCheck.summary.semanticDuplicates,
+          optionErrors: duplicateCheck.summary.optionErrors,
+        };
+        const errorResponse = {
+          valid: false,
+          duplicate: true,
+          message: "Duplicate questions detected in test",
+          details: duplicateCheck.results,
+          validation: validationSummary,
+        };
+        throw new ApiError(409, "Duplicate questions detected in test", errorResponse, "DUPLICATE_QUESTIONS_IN_TEST");
+      }
       await tx.question.deleteMany({ where: { testId, collegeId } });
       await tx.question.createMany({
-        data: req.body.questions.map((question, index) => ({
-          testId,
-          collegeId,
-          prompt: question.question,
-          type: mapQuestionType(question.type),
-          options: Array.isArray(question.options) ? question.options : [],
-          correctOption: question.type === "mcq" ? String(question.correctAnswer) : null,
-          correctBoolean: question.type === "true_false" ? Boolean(question.correctAnswer) : null,
-          correctText: question.type === "fill_blank" || question.type === "paragraph" ? String(question.correctAnswer) : null,
-          marks: question.marks,
-          difficulty: question.difficulty || "MEDIUM",
-          topic: question.topic || null,
-          category: isModuleAssessment ? normalizeQuestionCategory(question.category) : null,
-          explanationVideoUrl: normalizeOptionalUrl(question.explanationVideoUrl),
-          order: index + 1,
-        })),
+        data: testQuestions,
       });
     }
 

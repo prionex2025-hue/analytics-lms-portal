@@ -1,6 +1,10 @@
 const models = require("../../models");
 const { ApiError, asyncHandler } = require("../../utils/http");
 const { getPagination } = require("../../utils/pagination");
+const {
+  detectDuplicatesInQuestionBank,
+  detectDuplicatesAcrossQuestionBank,
+} = require("../../services/duplicate-detection.service");
 
 const mapQuestionType = (type) => {
   const map = {
@@ -81,6 +85,40 @@ const addQuestionBankItem = asyncHandler(async (req, res) => {
     }
   } else {
     await assertQuestionSubject(db, { subjectId, superAdminId });
+  }
+
+  const questionData = {
+    prompt: req.body.question,
+    type: mapQuestionType(req.body.type),
+    options: req.body.options || [],
+    correctOption: req.body.type === "mcq" ? String(req.body.correctAnswer) : null,
+    correctBoolean: req.body.type === "true_false" ? Boolean(req.body.correctAnswer) : null,
+    correctText: req.body.type === "fill_blank" || req.body.type === "paragraph" ? String(req.body.correctAnswer) : null,
+    marks: req.body.marks,
+    difficulty: req.body.difficulty,
+    category: normalizeOptionalCategory(req.body.category),
+  };
+
+  const collegeId = req.body.collegeId || null;
+  const duplicateCheck = await detectDuplicatesInQuestionBank(collegeId, [questionData]);
+  if (!duplicateCheck.valid) {
+    const result = duplicateCheck.results[0];
+    const errorResponse = {
+      valid: false,
+      duplicate: true,
+      message: result.exactDuplicate ? "Exact duplicate question already exists in question bank" : "Potential duplicate question detected",
+      details: {
+        exactDuplicate: result.exactDuplicate,
+        semanticDuplicates: result.semanticDuplicates,
+        optionErrors: result.optionErrors,
+      },
+    };
+    if (result.exactDuplicate) {
+      return res.status(409).json(errorResponse);
+    }
+    if (result.semanticDuplicates.length > 0 && result.semanticDuplicates[0].type === "high_confidence_semantic") {
+      return res.status(409).json(errorResponse);
+    }
   }
 
   const item = await db.questionBank.create({
@@ -218,7 +256,35 @@ const importQuestionBankJson = asyncHandler(async (req, res) => {
     throw new ApiError(422, "items[] is required");
   }
 
-  const data = items.map((item) => {
+  const questionsToCheck = items.map((item) => ({
+    prompt: item.question,
+    type: mapQuestionType(item.type),
+    options: item.options || [],
+    correctOption: item.type === "mcq" ? String(item.correctAnswer) : null,
+    correctBoolean: item.type === "true_false" ? Boolean(item.correctAnswer) : null,
+    correctText: item.type === "fill_blank" || item.type === "paragraph" ? String(item.correctAnswer) : null,
+    marks: item.marks || 1,
+    difficulty: item.difficulty || "MEDIUM",
+    category: normalizeOptionalCategory(item.category),
+  }));
+
+  const collegeId = items[0]?.collegeId || null;
+  const duplicateCheck = await detectDuplicatesInQuestionBank(collegeId, questionsToCheck);
+  const validationSummary = {
+    total: items.length,
+    valid: duplicateCheck.summary.valid,
+    exactDuplicates: duplicateCheck.summary.exactDuplicates,
+    potentialSemanticDuplicates: duplicateCheck.summary.semanticDuplicates,
+    optionErrors: duplicateCheck.summary.optionErrors,
+    requiresReview: duplicateCheck.summary.semanticDuplicates,
+  };
+
+  const validItems = questionsToCheck
+    .map((_, index) => ({ index, valid: duplicateCheck.results[index].valid }))
+    .filter((item) => item.valid)
+    .map((item) => items[item.index]);
+
+  const data = validItems.map((item) => {
     if (!item.question || String(item.question).trim() === "") {
       throw new ApiError(422, "No empty questions allowed");
     }
@@ -257,7 +323,12 @@ const importQuestionBankJson = asyncHandler(async (req, res) => {
     skipDuplicates: true,
   });
 
-  res.status(201).json({ message: "Question bank import complete", count: data.length });
+  res.status(201).json({
+    message: "Question bank import complete",
+    count: data.length,
+    validation: validationSummary,
+    details: duplicateCheck.results,
+  });
 });
 
 const updateQuestionBankItem = asyncHandler(async (req, res) => {
