@@ -27,8 +27,8 @@
 
 set -euo pipefail
 
-PROFILE="500"
-RUN_SUBMIT="true"
+PROFILE="${PROFILE:-500}"
+RUN_SUBMIT="${RUN_SUBMIT:-true}"
 DRY_RUN="false"
 BASE_URL="${BASE_URL:-https://lms.analyticsedify.com}"
 TEST_ID="${TEST_ID:-}"
@@ -83,7 +83,14 @@ ACCOUNT_COUNT="$(node -e "
   console.log(a.length);
 ")" || die "accounts file is not a non-empty array of { identifier, password }"
 
-TARGET_USERS="${PROFILE}"
+# Catch the permission problem here rather than as a k6 "script exception" after
+# the confirmation prompt, since the container runs as $(id -u) and cannot read a
+# file the invoking user cannot read either.
+[[ -r "${ACCOUNTS_FILE}" ]] || die "cannot read ${ACCOUNTS_FILE}; the k6 container runs as uid $(id -u)"
+
+# TARGET_USERS defaults to the profile size, so an explicit export wins over it.
+TARGET_USERS="${TARGET_USERS:-${PROFILE}}"
+[[ "${TARGET_USERS}" =~ ^[0-9]+$ ]] || die "TARGET_USERS must be an integer, got '${TARGET_USERS}'"
 log "Accounts available: ${ACCOUNT_COUNT} (needed: ${TARGET_USERS})"
 [[ "${ACCOUNT_COUNT}" -ge "${TARGET_USERS}" ]] \
   || die "need ${TARGET_USERS} accounts for profile ${PROFILE}, have ${ACCOUNT_COUNT}"
@@ -132,6 +139,16 @@ K6_ARGS=(
 )
 [[ -n "${TEST_ID}" ]] && K6_ARGS+=(-e "TEST_ID=${TEST_ID}")
 
+# Forward the k6 tuning variables. Without this, exporting TARGET_USERS=1
+# EXAM_DURATION_SECONDS=30 on the wrapper command line is silently ignored:
+# the values never cross into the container, and the profile's full duration
+# runs instead.
+for kv in TARGET_USERS EXAM_DURATION_SECONDS EXAM_MARGIN_SECONDS \
+          HEARTBEAT_INTERVAL_SECONDS ACCESS_TOKEN_TTL_SECONDS \
+          TOKEN_REFRESH_RATIO FAILURE_BACKOFF_SECONDS DEBUG_FAILURES; do
+  [[ -n "${!kv:-}" ]] && K6_ARGS+=(-e "${kv}=${!kv}")
+done
+
 K6_ENV=(
   "K6_PROMETHEUS_RW_SERVER_URL=${PROMETHEUS_URL}"
   "K6_PROMETHEUS_RW_TREND_STATS=p(95),p(99),max,med"
@@ -139,16 +156,22 @@ K6_ENV=(
   "K6_PROMETHEUS_RW_PUSH_INTERVAL=5s"
 )
 
+# grafana/k6 runs as a non-root user (uid 12345). A chmod 600 accounts file
+# owned by the invoking user is therefore unreadable inside the container, which
+# k6 reports as "permission denied" from open(). Running the container as the
+# invoking uid keeps the restrictive file mode intact instead of loosening it
+# to make the credentials world-readable.
 DOCKER_ARGS=(
-  run --rm -i
+  docker run --rm -i
   --cpus "${K6_CPUS}"
+  --user "$(id -u):$(id -g)"
   -v "${BACKEND_DIR}:/work"
   -w /work
 )
 for kv in "${K6_ENV[@]}"; do DOCKER_ARGS+=(-e "${kv}"); done
 DOCKER_ARGS+=(grafana/k6)
 
-K6_COMMAND=(env "${K6_ENV[@]}" "${DOCKER_ARGS[@]}" "${K6_ARGS[@]}" "${TARGET_SCRIPT#/work/}")
+K6_COMMAND=("${DOCKER_ARGS[@]}" "${K6_ARGS[@]}" "${TARGET_SCRIPT#/work/}")
 
 log "Run id: ${RUN_ID}"
 log "Base URL: ${BASE_URL}"

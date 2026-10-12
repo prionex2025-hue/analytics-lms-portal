@@ -695,7 +695,8 @@ const createGlobalTest = asyncHandler(async (req, res) => {
     }
 
     const questionRows = payload.questions.map((question, index) => buildQuestionData(question, index, test.id, collegeId, isModuleAssessment));
-    const duplicateCheck = await detectDuplicatesInTest(collegeId, test.id, questionRows);
+    const skipDuplicateCheck = Boolean(payload.skipDuplicateCheck);
+    const duplicateCheck = await detectDuplicatesInTest(collegeId, test.id, questionRows, { skipSemantic: skipDuplicateCheck });
     if (!duplicateCheck.valid) {
       const validationSummary = {
         total: payload.questions.length,
@@ -1214,7 +1215,8 @@ const updateGlobalTest = asyncHandler(async (req, res) => {
       }
 
       const questionRows = normalizedQuestions.map((question, index) => buildQuestionData(question, index, targetTest.id, collegeId, isModuleAssessment));
-      const duplicateCheck = await detectDuplicatesInTest(collegeId, targetTest.id, questionRows);
+      const skipDuplicateCheck = Boolean(payload.skipDuplicateCheck);
+      const duplicateCheck = await detectDuplicatesInTest(collegeId, targetTest.id, questionRows, { skipSemantic: skipDuplicateCheck });
       if (!duplicateCheck.valid) {
         const validationSummary = {
           total: normalizedQuestions.length,

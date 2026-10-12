@@ -1,6 +1,11 @@
 # Credentials must NEVER be committed
 credentails.txt
 credentials.txt
+cred
+creds
+cred.txt
+cred-rotated*.txt
+*.cred
 *.credentials
 *.secret
 

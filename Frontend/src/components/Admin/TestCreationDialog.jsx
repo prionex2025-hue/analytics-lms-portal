@@ -863,7 +863,25 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
       }
       toast.success(isEditMode ? "Test updated successfully" : "Test created successfully");
     } catch (error) {
-      const message = String(error || (isEditMode ? "Failed to update test" : "Failed to create test"));
+      const message = String(error?.message || error || (isEditMode ? "Failed to update test" : "Failed to create test"));
+      
+      // Handle duplicate questions error - auto-retry with skipDuplicateCheck
+      if (error?.code === "DUPLICATE_QUESTIONS_IN_TEST" || (error?.autoRetry && error.code === "DUPLICATE_QUESTIONS_IN_TEST")) {
+        if (!nextForm.skipDuplicateCheck && nextForm.publishState !== "DRAFT" && options.allowAutoDuplicateRetry) {
+          dispatch(updateTestCreationField({ key: "skipDuplicateCheck", value: true }));
+          toast.info("Duplicate questions detected. Retrying with duplicate check disabled...");
+          await handleSubmit({ ...formOverrides, skipDuplicateCheck: true }, { allowAutoDuplicateRetry: false });
+          return;
+        }
+
+        if (!nextForm.skipDuplicateCheck) {
+          dispatch(updateTestCreationField({ key: "skipDuplicateCheck", value: true }));
+        }
+        dispatch(setTestCreationStep(3)); // Go to Questions step
+        toast.error("Duplicate questions detected. 'Allow duplicate questions' is now enabled. Review questions, then publish again if intentional.");
+        return;
+      }
+      
       if (message.includes("Overlapping active test detected")) {
         if (!nextForm.skipOverlapCheck && nextForm.publishState !== "DRAFT" && options.allowAutoOverlapRetry) {
           dispatch(updateTestCreationField({ key: "skipOverlapCheck", value: true }));
@@ -903,6 +921,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
         ...form,
         publishState: publishState || form.publishState,
         skipOverlapCheck: Boolean(form.skipOverlapCheck),
+        skipDuplicateCheck: Boolean(form.skipDuplicateCheck),
       };
       const nextState = { ...testCreation, form: nextForm };
       const allErrors = validateAllSteps(nextState);
@@ -943,7 +962,7 @@ export default function TestCreationDialog({ context = "admin", onCreated, hideT
     try {
       setPublishDialog((prev) => ({ ...prev, open: false }));
       resetBodyInteractionLock();
-      await handleSubmit({ publishState: selectedPublishState, skipOverlapCheck: Boolean(form.skipOverlapCheck) });
+      await handleSubmit({ publishState: selectedPublishState, skipOverlapCheck: Boolean(form.skipOverlapCheck), skipDuplicateCheck: Boolean(form.skipDuplicateCheck) });
     } finally {
       setIsConfirmPublishing(false);
       resetBodyInteractionLock();

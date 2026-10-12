@@ -27,9 +27,19 @@ services:
     environment:
       ALERTMANAGER_WEBHOOK_URL: ${ALERTMANAGER_WEBHOOK_URL:?ALERTMANAGER_WEBHOOK_URL is required}
     command:
-      - --config.file=/etc/alertmanager/alertmanager.yml
-      - --config.expand-env
-      - --storage.path=/alertmanager
+      # Alertmanager has no --config.expand-env (that flag belongs to Prometheus),
+      # so passing it here made the container exit 1 before reading any config.
+      # The webhook URL is therefore resolved by shell expansion into a generated
+      # config rather than by the binary.
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        sed "s#\$${ALERTMANAGER_WEBHOOK_URL}#${ALERTMANAGER_WEBHOOK_URL}#" \
+          /etc/alertmanager/alertmanager.yml > /alertmanager/alertmanager.yml
+        exec /bin/alertmanager \
+          --config.file=/alertmanager/alertmanager.yml \
+          --storage.path=/alertmanager
     volumes:
       - ./deploy/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager

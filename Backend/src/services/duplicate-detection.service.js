@@ -412,7 +412,8 @@ async function detectDuplicatesInQuestionBank(collegeId, questions, options = {}
 }
 
 async function detectDuplicatesInTest(collegeId, testId, questions, options = {}) {
-  return detectDuplicates(questions, { ...options, collegeId, scope: "test", testId });
+  const { skipSemantic = false, ...restOptions } = options;
+  return detectDuplicates(questions, { ...restOptions, collegeId, scope: "test", testId, checkSemantic: !skipSemantic });
 }
 
 async function detectDuplicatesAcrossQuestionBank(collegeId, questions, options = {}) {

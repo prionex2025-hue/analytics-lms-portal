@@ -60,6 +60,7 @@ const createDefaultForm = () => ({
   negativeMarkingEnabled: false,
   negativeMarks: 0,
   skipOverlapCheck: false,
+  skipDuplicateCheck: false,
   assignmentMethod: "department_wise",
   years: [1, 2, 3, 4],
   departmentId: "",
@@ -515,6 +516,7 @@ export const submitTestCreation = createAsyncThunk(
       negativeMarkingEnabled: Boolean(form.negativeMarkingEnabled),
       negativeMarks: form.negativeMarkingEnabled ? Number(form.negativeMarks || 0) : 0,
       skipOverlapCheck: form.publishState === "DRAFT" ? true : Boolean(form.skipOverlapCheck),
+      skipDuplicateCheck: form.publishState === "DRAFT" ? true : Boolean(form.skipDuplicateCheck),
       assignmentMethod: form.assignmentMethod,
       years: Array.isArray(form.years) ? [...new Set(form.years.map(Number).filter((year) => year >= 1 && year <= 4))] : [],
       departmentId: form.departmentId?.trim() ? form.departmentId.trim() : null,
@@ -593,6 +595,7 @@ export const submitTestCreation = createAsyncThunk(
               explanationVideoUrl: String(question.explanationVideoUrl || "").trim() || null,
             };
           }),
+          skipDuplicateCheck: payload.skipDuplicateCheck,
         };
 
         if (isSuperEditMode) {
@@ -608,6 +611,17 @@ export const submitTestCreation = createAsyncThunk(
 
       return await adminApi.createTest(payload);
     } catch (error) {
+      const allowAutoDuplicateRetry = true;
+      if (error?.code === "DUPLICATE_QUESTIONS_IN_TEST" && !payload.skipDuplicateCheck && allowAutoDuplicateRetry) {
+        // Return a special error that the UI can handle to auto-retry with skipDuplicateCheck
+        return rejectWithValue({
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          validation: error.validation,
+          autoRetry: true,
+        });
+      }
       return rejectWithValue(error.message || "Failed to create test");
     }
   },

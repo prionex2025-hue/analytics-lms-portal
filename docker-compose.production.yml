@@ -327,7 +327,10 @@ services:
     ports:
       - "127.0.0.1:${FRONTEND_BIND_PORT:-8080}:80"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost/ >/dev/null"]
+      # 127.0.0.1, not localhost: nginx.conf declares `listen 80;` with no IPv6
+      # counterpart, so `localhost` resolves to [::1] first, gets refused, and
+      # this probe marks a perfectly healthy container unhealthy.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/ >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 5

@@ -496,6 +496,7 @@ const createTest = asyncHandler(async (req, res) => {
     restrictions,
     publishState,
     skipOverlapCheck,
+    skipDuplicateCheck,
     assessmentFormat,
     modules,
   } = req.body;
@@ -555,7 +556,7 @@ const createTest = asyncHandler(async (req, res) => {
   await assertNoOverlap({ db, startsAt: startsAtDate, endsAt: endsAtDate, collegeId, skip: skipOverlapCheck });
 
   const testQuestions = questions.map((question, index) => buildQuestionData(question, index, "temp", collegeId, isModuleAssessment));
-  const duplicateCheck = await detectDuplicatesInTest(collegeId, "temp", testQuestions);
+  const duplicateCheck = await detectDuplicatesInTest(collegeId, "temp", testQuestions, { skipSemantic: skipDuplicateCheck });
   if (!duplicateCheck.valid) {
     const validationSummary = {
       total: questions.length,
@@ -1298,7 +1299,8 @@ const updateTest = asyncHandler(async (req, res) => {
 
     if (hasQuestionMutation(req.body)) {
       const testQuestions = req.body.questions.map((question, index) => buildQuestionData(question, index, testId, collegeId, isModuleAssessment));
-      const duplicateCheck = await detectDuplicatesInTest(collegeId, testId, testQuestions);
+      const skipDuplicateCheck = Boolean(req.body.skipDuplicateCheck);
+      const duplicateCheck = await detectDuplicatesInTest(collegeId, testId, testQuestions, { skipSemantic: skipDuplicateCheck });
       if (!duplicateCheck.valid) {
         const validationSummary = {
           total: req.body.questions.length,
