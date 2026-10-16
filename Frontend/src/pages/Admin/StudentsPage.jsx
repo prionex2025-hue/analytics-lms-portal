@@ -34,8 +34,8 @@ import { cn } from "@/lib/utils";
 const LINE_TAB = "flex-none rounded-none px-0.5 pt-1 pb-3 text-text-secondary data-active:text-primary after:!bottom-[-1px] after:!bg-primary";
 
 const IMPORT_SAMPLE = [
-  "fullName,email,enrollNumber,department,year,batch",
-  "Alice Doe,alice@example.com,20261001,Computer Science,1,CSE-2027-A",
+  "fullName,email,enrollNumber,department,year,expectedPassoutYear,batch",
+  "Alice Doe,alice@example.com,20261001,Computer Science,1,2027,CSE-2027-A",
 ].join("\n");
 const YEAR_OPTIONS = ["1", "2", "3", "4"];
 
@@ -73,6 +73,7 @@ export default function StudentsPage() {
     department: "",
     enrollNumber: "",
     year: "",
+    expectedPassoutYear: "",
     batch: "",
   });
   const [createdCredentials, setCreatedCredentials] = useState(null);
@@ -88,7 +89,7 @@ export default function StudentsPage() {
   const canAssignStudentsToBatch = canManageStudents && canManageBatches;
 
   const rowsToCsv = (rows) => {
-    const header = ["fullName", "email", "studentId", "enrollNumber", "department", "year", "batch"];
+    const header = ["fullName", "email", "studentId", "enrollNumber", "department", "year", "expectedPassoutYear", "batch"];
     const lines = rows.map((row) => {
       const studentId = getRowValue(row, ["studentId", "student_id", "rollNo", "rollNumber", "roll"]);
       const normalized = {
@@ -98,6 +99,7 @@ export default function StudentsPage() {
         enrollNumber: getRowValue(row, ["enrollNumber", "enroll_number", "enrollmentNumber", "enrollment_no", "enrollmentNo"]) || studentId,
         department: getRowValue(row, ["department", "departmentName", "department_name", "departmentId", "department_id", "branch", "branchName"]),
         year: getRowValue(row, ["year", "studentYear", "student_year", "academicYear", "academic_year", "yearOfStudy", "year_of_study"]),
+        expectedPassoutYear: getRowValue(row, ["expectedPassoutYear", "expected_passout_year", "passoutYear", "passout_year"]),
         batch: getRowValue(row, ["batch", "batchName", "batch_name", "batchId", "batch_id", "section"]),
       };
       return [
@@ -107,6 +109,7 @@ export default function StudentsPage() {
         toCsvCell(normalized.enrollNumber),
         toCsvCell(normalized.department),
         toCsvCell(normalized.year),
+        toCsvCell(normalized.expectedPassoutYear),
         toCsvCell(normalized.batch),
       ].join(",");
     });
@@ -231,7 +234,7 @@ export default function StudentsPage() {
     onSuccess: (payload) => {
       toast.success("Student account created");
       setCreatedCredentials(payload.credentials || null);
-      setStudentForm({ fullName: "", email: "", department: "", enrollNumber: "", year: "", batch: "" });
+      setStudentForm({ fullName: "", email: "", department: "", enrollNumber: "", year: "", expectedPassoutYear: "", batch: "" });
       setBanner({ type: "success", title: "Student created", message: "Student can login directly using email and generated password." });
       queryClient.invalidateQueries({ queryKey: ["admin-students"] });
     },
@@ -532,6 +535,7 @@ export default function StudentsPage() {
           createStudentMutation.mutate({
             ...studentForm,
             year: studentForm.year ? Number(studentForm.year) : undefined,
+            expectedPassoutYear: studentForm.expectedPassoutYear ? Number(studentForm.expectedPassoutYear) : undefined,
           });
         }}
       >
@@ -572,6 +576,12 @@ export default function StudentsPage() {
               <option value="4">4 YEAR</option>
             </select>
           </FormField>
+          <FormField label="Expected passout year" htmlFor="admin-student-passout-year" hint="March is fixed by policy" required>
+            <Input id="admin-student-passout-year" type="number" min="2000" max="2100" className="h-10 rounded-lg" value={studentForm.expectedPassoutYear} onChange={(event) => setStudentForm((prev) => ({ ...prev, expectedPassoutYear: event.target.value }))} />
+          </FormField>
+          <FormField label="Expected passout month" htmlFor="admin-student-passout-month">
+            <Input id="admin-student-passout-month" className="h-10 rounded-lg bg-muted" value="March (3)" readOnly aria-readonly="true" />
+          </FormField>
           <FormField label="Batch" htmlFor="admin-student-batch" hint="Optional">
             <select id="admin-student-batch" className="ui-select w-full" value={studentForm.batch} onChange={(event) => setStudentForm((prev) => ({ ...prev, batch: event.target.value }))}>
               <option value="">Select batch (optional)</option>
@@ -594,6 +604,7 @@ export default function StudentsPage() {
             !studentForm.department.trim() ||
             !studentForm.year ||
             !studentForm.enrollNumber.trim()
+            || !studentForm.expectedPassoutYear
           }
         >
           <UserPlus className="size-4" />
@@ -608,8 +619,8 @@ export default function StudentsPage() {
     <SectionCard title="Bulk import (Excel/CSV)" description="Upload .xlsx/.csv file or paste CSV. Runs as async job and supports large imports.">
       <div className="space-y-4">
         <Callout tone="info" title="Excel format (first row headers)">
-          <p>fullName, email, enrollNumber, department, year, batch</p>
-          <p className="mt-1">Student ID will use the enrollNumber value exactly. Example: Alice Doe, alice@example.com, 20261001, Computer Science, 1, CSE-2027-A</p>
+          <p>fullName, email, enrollNumber, department, year, expectedPassoutYear, batch</p>
+          <p className="mt-1">Expected passout month is always March (3). Example: Alice Doe, alice@example.com, 20261001, Computer Science, 1, 2027, CSE-2027-A</p>
         </Callout>
         <FormField label="Spreadsheet file" htmlFor="admin-student-import-file" hint={importFileName ? `Loaded: ${importFileName}` : ".xlsx or .csv"}>
           <Input id="admin-student-import-file" type="file" accept=".xlsx,.csv" onChange={handleImportFile} className="h-10 w-full rounded-lg" />

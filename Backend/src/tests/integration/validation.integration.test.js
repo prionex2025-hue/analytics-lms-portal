@@ -100,6 +100,7 @@ describe("Validation Services Integration Tests", () => {
             enrollmentNumber: "2024002",
             year: 1,
             departmentId: "507f1f77bcf86cd799439012",
+            expectedPassoutYear: 2027,
           },
           collegeId,
           null
@@ -112,6 +113,7 @@ describe("Validation Services Integration Tests", () => {
             enrollmentNumber: "2024003",
             year: 1,
             departmentId: "507f1f77bcf86cd799439012",
+            expectedPassoutYear: 2027,
           },
           collegeId,
           null

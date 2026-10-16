@@ -7,6 +7,7 @@ const { shutdownRedis } = require("./config/redis");
 const { initSocket, shutdownSocket, disconnectAllSockets } = require("./realtime/socket");
 const { startHeartbeatFlush, stopHeartbeatFlush } = require("./services/heartbeat-buffer.service");
 const { startTestLifecycleSweep, stopTestLifecycleSweep } = require("./services/test-lifecycle.service");
+const { startPassoutEligibilitySweep, stopPassoutEligibilitySweep } = require("./services/passout-scheduler.service");
 const { closeReportQueue, recoverPendingReportJobs } = require("./services/admin-report-queue.service");
 const { closeSuperReportQueue, recoverPendingSuperReportJobs } = require("./services/super-admin-report-queue.service");
 const { logger } = require("./utils/logger");
@@ -51,6 +52,7 @@ const runShutdown = async (signal) => {
   // 2. Stop background loops and move websocket clients to other replicas.
   stopHeartbeatFlush();
   stopTestLifecycleSweep();
+  stopPassoutEligibilitySweep();
   disconnectAllSockets();
 
   // Stop the report workers BEFORE draining HTTP. Closing them afterwards left
@@ -198,6 +200,7 @@ const startServer = async () => {
   // -> COMPLETED at endsAt, with socket notifications, instead of relying on
   // read-time derivation everywhere.
   startTestLifecycleSweep({ getDb: async () => db });
+  startPassoutEligibilitySweep({ getDb: async () => db });
 
   const recoverReportQueues = async () => {
     const [adminReports, superReports] = await Promise.all([

@@ -49,6 +49,7 @@ const AnalyticsPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmi
 const SettingsPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/SettingsPage"));
 const QuestionBankPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/QuestionBankPage"));
 const LearningResourcesPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/LearningResourcesPage"));
+const PassoutManagementPage = lazyWithSuperAdminReducers(() => import("@/pages/SuperAdmin/PassoutManagementPage"));
 
 const SuperAdminPasswordResetPage = lazy(async () => {
   const [{ default: PasswordResetPage }, { superAdminApi }] = await Promise.all([
@@ -161,6 +162,7 @@ const router = createBrowserRouter([
               { path: "/super-admin/escalations", element: <PageRoute Page={EscalationsPage} /> },
               { path: "/super-admin/analytics", element: <PageRoute Page={AnalyticsPage} /> },
               { path: "/super-admin/settings", element: <PageRoute Page={SettingsPage} /> },
+              { path: "/super-admin/passout", element: <PageRoute Page={PassoutManagementPage} /> },
             ],
           },
         ],

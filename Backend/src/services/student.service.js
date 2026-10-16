@@ -6,7 +6,13 @@ const { UserValidation } = require("../models/validation");
 const { ApiError } = require("../utils/http");
 const { createStudentPassword } = require("../utils/student-password");
 const { bumpPrincipalTokenVersion, invalidatePrincipalAuthCache } = require("./auth-revocation.service");
-const { isAlumniStatus, STUDENT_LIFECYCLE_STATUS } = require("./student-lifecycle.service");
+const {
+  isAlumniStatus,
+  STUDENT_LIFECYCLE_STATUS,
+  STUDENT_STATUS,
+  EXPECTED_PASSOUT_MONTH,
+  validateExpectedPassoutYear,
+} = require("./student-lifecycle.service");
 const { recordStudentStatusChange, STATUS_EVENT_ACTOR } = require("./student-status-history.service");
 
 const resolveStudentId = (enrollmentNumber) => String(enrollmentNumber || "").trim();
@@ -35,6 +41,12 @@ async function createStudent(payload, collegeId, adminId) {
     admin = await db.admin.findUnique({ where: { id: adminId } });
   }
 
+  // Preserve the existing duplicate-email error contract before validating
+  // the new required passout field. This keeps duplicate submissions
+  // diagnosable while still rejecting new records without a verified year.
+  await validateUniqueEmail((payload.email || "").toLowerCase(), collegeId);
+  const expectedPassoutYear = validateExpectedPassoutYear(payload.expectedPassoutYear);
+
   // Validate student using Mongoose schema
   const validated = await validateDocument(
     UserValidation,
@@ -47,6 +59,9 @@ async function createStudent(payload, collegeId, adminId) {
       batchId: payload.batchId || null,
       year: payload.year ?? null,
       isActive: payload.isActive !== false,
+      expectedPassoutYear,
+      expectedPassoutMonth: EXPECTED_PASSOUT_MONTH,
+      studentStatus: STUDENT_STATUS.ACTIVE,
     },
     "Student creation"
   );
@@ -55,8 +70,6 @@ async function createStudent(payload, collegeId, adminId) {
   const resolvedBatchIds = requestedBatchIds.length > 0
     ? requestedBatchIds
     : (validated.batchId ? [validated.batchId] : []);
-
-  await validateUniqueEmail(validated.email, collegeId);
 
   const studentId = resolveStudentId(payload.enrollmentNumber || payload.enrollNumber);
   const duplicateStudentId = await db.student.findFirst({ where: { collegeId, studentId } });
@@ -89,6 +102,9 @@ async function createStudent(payload, collegeId, adminId) {
       studentId,
       enrollmentNumber: studentId,
       passwordHash,
+      expectedPassoutYear,
+      expectedPassoutMonth: EXPECTED_PASSOUT_MONTH,
+      studentStatus: STUDENT_STATUS.ACTIVE,
       // Additional fields not in validation schema
       phoneNumber: payload.phoneNumber || null,
       preferences: payload.preferences || {},

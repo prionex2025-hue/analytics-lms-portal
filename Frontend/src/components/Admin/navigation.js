@@ -11,6 +11,7 @@ import {
   Settings,
   ShieldUser,
   Users,
+  Archive,
 } from "lucide-react";
 import { ADMIN_PERMISSIONS } from "@/features/Admin/adminPermissions";
 
@@ -39,6 +40,7 @@ export const createAdminNavGroups = (basePath) => {
       label: "People",
       items: [
         { to: `${basePath}/students`, label: "Students", icon: Users, permissions: [ADMIN_PERMISSIONS.MANAGE_STUDENTS, ADMIN_PERMISSIONS.VIEW_STUDENTS] },
+        { to: `${basePath}/passout`, label: "Passout Management", icon: Archive, permissions: [ADMIN_PERMISSIONS.MANAGE_STUDENTS] },
         { to: `${basePath}/batches`, label: "Batches", icon: Layers3, permissions: [ADMIN_PERMISSIONS.MANAGE_BATCHES, ADMIN_PERMISSIONS.VIEW_BATCHES] },
         ...(isCollegeAdmin
           ? [

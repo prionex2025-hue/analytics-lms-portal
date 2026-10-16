@@ -68,6 +68,7 @@ const createStudentSchema = z.object({
     year: z.coerce.number().int().min(1).max(4),
     batch: optionalIdSchema,
     enrollNumber: z.string().trim().min(3),
+    expectedPassoutYear: z.coerce.number().int().min(2000).max(2100),
   }),
   params: z.object({}).optional().default({}),
   query: z.object({}).optional().default({}),
@@ -261,6 +262,53 @@ const promoteStudentsYearSchema = z.object({
     academicLabel: z.string().trim().min(3).max(50).optional(),
   }),
   params: z.object({}).optional().default({}),
+  query: z.object({}).optional().default({}),
+});
+
+const passoutEligibleQuerySchema = z.object({
+  body: z.object({}).optional().default({}),
+  params: z.object({}).optional().default({}),
+  query: z.object({
+    year: z.coerce.number().int().min(2000).max(2100),
+    departmentId: idSchema.optional(),
+    batchId: idSchema.optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  }),
+});
+
+const passoutPreviewSchema = z.object({
+  body: z.object({
+    passoutYear: z.coerce.number().int().min(2000).max(2100),
+    departmentId: idSchema.optional(),
+    batchId: idSchema.optional(),
+    studentIds: z.array(idSchema).max(5000).optional().default([]),
+    scopeType: z.enum(["INDIVIDUAL", "BATCH", "YEAR"]).default("INDIVIDUAL"),
+    page: z.coerce.number().int().min(1).optional().default(1),
+    limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+  }),
+  params: z.object({}).optional().default({}),
+  query: z.object({}).optional().default({}),
+});
+
+const passoutPromoteSchema = z.object({
+  body: z.object({
+    passoutYear: z.coerce.number().int().min(2000).max(2100),
+    departmentId: idSchema.optional(),
+    studentIds: z.array(idSchema).max(5000).optional().default([]),
+    batchIds: z.array(idSchema).max(100).optional().default([]),
+    scopeType: z.enum(["INDIVIDUAL", "BATCH", "YEAR"]).default("INDIVIDUAL"),
+    reason: z.string().trim().min(3).max(500),
+    confirmation: z.literal(true),
+    inProgressAttemptPolicy: z.enum(["SKIP", "ALLOW"]).default("SKIP"),
+  }),
+  params: z.object({}).optional().default({}),
+  query: z.object({}).optional().default({}),
+});
+
+const passoutJobParamSchema = z.object({
+  body: z.object({}).optional().default({}),
+  params: z.object({ jobId: idSchema }),
   query: z.object({}).optional().default({}),
 });
 
@@ -612,6 +660,10 @@ module.exports = {
   studentIdParamSchema,
   studentBulkImportSchema,
   promoteStudentsYearSchema,
+  passoutEligibleQuerySchema,
+  passoutPreviewSchema,
+  passoutPromoteSchema,
+  passoutJobParamSchema,
   studentBulkImportJobParamSchema,
   updateAdminSettingsSchema,
   changeAdminPasswordSchema,

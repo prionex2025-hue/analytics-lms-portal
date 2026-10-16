@@ -314,6 +314,12 @@ const worker = {
   enabled: toBoolean(process.env.WORKER_ENABLED, true),
 };
 
+const passout = {
+  eligibilityDay: Math.max(1, Math.min(31, toPositiveInt(process.env.PASSOUT_ELIGIBILITY_DAY, 1))),
+  sweepIntervalMs: toPositiveInt(process.env.PASSOUT_SWEEP_INTERVAL_MS, 15 * 60 * 1000),
+  approvalRequired: toBoolean(process.env.PASSOUT_APPROVAL_REQUIRED, true),
+};
+
 const normalizeUrlBase = (value) => String(value || "").trim().replace(/\/+$/, "");
 const getUrlOrigin = (value) => {
   try {
@@ -447,4 +453,5 @@ module.exports = {
   httpServer,
   reportPdfTimeoutMs,
   worker,
+  passout,
 };

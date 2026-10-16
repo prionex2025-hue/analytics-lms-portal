@@ -38,6 +38,7 @@ const MODEL_TO_COLLECTION = {
   testInstructionAgreement: "testInstructionAgreement",
   testBatch: "testBatch",
   studentPassoutCohort: "studentPassoutCohort",
+  passoutJob: "passoutJob",
   studentStatusEvent: "studentStatusEvent",
   reportJob: "reportJob",
   superReportJob: "superReportJob",
@@ -224,6 +225,11 @@ const DEFAULTS = {
   student: {
     role: "STUDENT",
     isActive: true,
+    studentStatus: "ACTIVE",
+    expectedPassoutMonth: 3,
+    expectedPassoutYear: null,
+    archivedAt: null,
+    archivedBy: null,
     lifecycleStatus: "ACTIVE",
     disabledReason: null,
     disabledAt: null,
@@ -294,6 +300,19 @@ const DEFAULTS = {
   testInstructionAgreement: { agreedAt: () => new Date() },
   testBatch: {},
   studentPassoutCohort: { status: "PROCESSING", studentIds: [], departmentStats: [], batchStats: [] },
+  passoutJob: {
+    status: "QUEUED",
+    scopeType: "INDIVIDUAL",
+    selectedStudentIds: [],
+    selectedBatchIds: [],
+    successStudentIds: [],
+    skippedStudentIds: [],
+    failedStudentIds: [],
+    failures: [],
+    skips: [],
+    progress: { processed: 0, total: 0, percent: 0 },
+    policy: { inProgressAttemptPolicy: "SKIP", automatic: false },
+  },
   studentStatusEvent: {},
   violation: { metadata: null },
   reportJob: { status: "QUEUED" },
@@ -337,6 +356,7 @@ const OBJECT_ID_FIELDS = new Set([
   "changedBySuperAdminId",
   "archivedByAdminId",
   "archivedBySuperAdminId",
+  "archivedBy",
 ]);
 
 const isPlainObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof mongoose.Types.ObjectId);

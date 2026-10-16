@@ -43,6 +43,11 @@ const UserValidationSchema = new mongoose.Schema(
     },
     disabledAt: { type: Date, default: null },
     passoutYear: { type: Number, min: 2000, max: 2100, default: null },
+    expectedPassoutYear: { type: Number, required: false, min: 2000, max: 2100, default: null },
+    expectedPassoutMonth: { type: Number, enum: [3], default: 3 },
+    studentStatus: { type: String, enum: ["ACTIVE", "PASSOUT"], default: "ACTIVE" },
+    archivedAt: { type: Date, default: null },
+    archivedBy: { type: String, default: null, validate: optionalReferenceValidator },
     passoutCohortId: { type: String, default: null, validate: optionalReferenceValidator },
   },
   {

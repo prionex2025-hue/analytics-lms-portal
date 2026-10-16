@@ -1,4 +1,5 @@
 import {
+  Archive,
   BookOpen,
   BookOpenCheck,
   Building2,
@@ -40,6 +41,8 @@ export const SUPER_ADMIN_NAV_GROUPS = [
       { to: "/super-admin/system-admins", label: "System Administrators", icon: UserCog },
       { to: "/super-admin/admins", label: "Admins", icon: ShieldUser },
       { to: "/super-admin/students", label: "Students", icon: Users },
+      { to: "/super-admin/passout", label: "Passout Management", icon: Archive, permissions: ["manage_platform"] },
+
     ],
   },
   {

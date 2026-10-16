@@ -174,7 +174,7 @@ docker compose $CF exec api1 npm run prod:check     # MUST print "Readiness chec
 
 ```bash
 docker compose $CF exec api1 npm run create -- \
-  --name="<SuperAdmin Name>" --email="<superadmin@yourdomain.com>" --password="<generate-a-random-password>"
+  --name="Prionex" --email="prionex2025@gmail.com" --password="Prionex@2025"
 docker compose $CF exec api1 npm run verify
 ```
 
@@ -214,7 +214,7 @@ internal to the Docker network and the frontend binds only to `127.0.0.1:8080`.
 ## Step 13 — Verify it's live
 
 ```bash
-curl -fsS https://lms.yourdomain.com/api/ready
+  curl -fsS https://lms.yourdomain.com/api/ready
 ```
 
 Open `https://lms.yourdomain.com` and log in with the SuperAdmin account.

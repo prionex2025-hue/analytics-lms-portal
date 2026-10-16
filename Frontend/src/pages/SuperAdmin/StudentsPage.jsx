@@ -20,8 +20,8 @@ import TypedConfirmDialog from "@/components/SuperAdmin/TypedConfirmDialog";
 import { parseSpreadsheetRows } from "@/lib/spreadsheet";
 
 const IMPORT_SAMPLE = [
-  "fullName,email,enrollNumber,department,year,batch",
-  "Alice Doe,alice@example.com,20261001,Computer Science,1,CSE-2027-A",
+  "fullName,email,enrollNumber,department,year,expectedPassoutYear,batch",
+  "Alice Doe,alice@example.com,20261001,Computer Science,1,2027,CSE-2027-A",
 ].join("\n");
 const YEAR_OPTIONS = ["1", "2", "3", "4"];
 
@@ -86,6 +86,7 @@ export default function StudentsPage() {
     email: "",
     enrollNumber: "",
     year: "",
+    expectedPassoutYear: "",
     collegeId: "",
     departmentId: "",
     batchId: "",
@@ -161,6 +162,7 @@ export default function StudentsPage() {
       "enrollNumber",
       "department",
       "year",
+      "expectedPassoutYear",
       "batch",
     ];
     const lines = rows.map((row) => {
@@ -213,6 +215,7 @@ export default function StudentsPage() {
           "yearOfStudy",
           "year_of_study",
         ]),
+        expectedPassoutYear: getRowValue(row, ["expectedPassoutYear", "expected_passout_year", "passoutYear", "passout_year"]),
         batch: getRowValue(row, [
           "batch",
           "batchName",
@@ -229,6 +232,7 @@ export default function StudentsPage() {
         toCsvCell(normalized.enrollNumber),
         toCsvCell(normalized.department),
         toCsvCell(normalized.year),
+        toCsvCell(normalized.expectedPassoutYear),
         toCsvCell(normalized.batch),
       ].join(",");
     });
@@ -318,6 +322,7 @@ export default function StudentsPage() {
         email: "",
         enrollNumber: "",
         year: "",
+        expectedPassoutYear: "",
         collegeId: "",
         departmentId: "",
         batchId: "",
@@ -819,6 +824,7 @@ export default function StudentsPage() {
                   email: studentForm.email,
                   enrollNumber: studentForm.enrollNumber,
                   ...(studentForm.year ? { year: Number(studentForm.year) } : {}),
+                  ...(studentForm.expectedPassoutYear ? { expectedPassoutYear: Number(studentForm.expectedPassoutYear) } : {}),
                   collegeId: studentForm.collegeId,
                   departmentId: studentForm.departmentId,
                   ...(studentForm.batchId ? { batchId: studentForm.batchId } : {}),
@@ -837,6 +843,12 @@ export default function StudentsPage() {
                 </FormField>
                 <FormField label="Year" htmlFor="student-create-year" required>
                   {yearSelect("student-create-year", studentForm.year, (event) => setStudentForm((prev) => ({ ...prev, year: event.target.value })))}
+                </FormField>
+                <FormField label="Expected passout year" htmlFor="student-create-passout-year" hint="March is fixed by policy" required>
+                  <Input id="student-create-passout-year" type="number" min="2000" max="2100" className={ui.field} value={studentForm.expectedPassoutYear} onChange={(event) => setStudentForm((prev) => ({ ...prev, expectedPassoutYear: event.target.value }))} />
+                </FormField>
+                <FormField label="Expected passout month" htmlFor="student-create-passout-month">
+                  <Input id="student-create-passout-month" className={`${ui.field} bg-muted`} value="March (3)" readOnly aria-readonly="true" />
                 </FormField>
                 <FormField label="College" htmlFor="student-create-college" required>
                   <select
@@ -906,6 +918,7 @@ export default function StudentsPage() {
                   !studentForm.email.trim() ||
                   !studentForm.enrollNumber.trim() ||
                   !studentForm.year ||
+                  !studentForm.expectedPassoutYear ||
                   !studentForm.collegeId ||
                   !studentForm.departmentId
                 }
@@ -946,7 +959,7 @@ export default function StudentsPage() {
               <FormField
                 label="CSV data"
                 htmlFor="student-import-csv"
-                hint="Required columns: fullName, email, enrollNumber, department, year. Student ID will use enrollNumber exactly. Optional: batch."
+                hint="Required columns: fullName, email, enrollNumber, department, year, expectedPassoutYear. March is fixed; batch is optional."
               >
                 <Textarea id="student-import-csv" rows={8} className="rounded-lg font-mono text-xs" value={csvData} onChange={(event) => setCsvData(event.target.value)} />
               </FormField>

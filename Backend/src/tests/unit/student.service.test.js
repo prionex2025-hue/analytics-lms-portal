@@ -58,6 +58,7 @@ describe("student.service duplicate email validation", () => {
           fullName: "Duplicate Student",
           email: "DUPE@example.edu",
           enrollmentNumber: "2024001",
+          expectedPassoutYear: 2027,
         },
         "college-1",
         null
@@ -117,5 +118,32 @@ describe("student.service duplicate email validation", () => {
       },
     });
     expect(db.student.update).not.toHaveBeenCalled();
+  });
+
+  it("persists a verified expected passout year and fixed March status", async () => {
+    db.student.findFirst.mockResolvedValue(null);
+    await createStudent({
+      fullName: "Ada Student",
+      email: "ada@example.edu",
+      enrollmentNumber: "2024009",
+      expectedPassoutYear: 2027,
+    }, "college-1", null);
+
+    expect(db.student.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        expectedPassoutYear: 2027,
+        expectedPassoutMonth: 3,
+        studentStatus: "ACTIVE",
+      }),
+    }));
+  });
+
+  it("rejects an invalid expected passout year", async () => {
+    await expect(createStudent({
+      fullName: "Invalid Student",
+      email: "invalid@example.edu",
+      enrollmentNumber: "2024010",
+      expectedPassoutYear: "not-a-year",
+    }, "college-1", null)).rejects.toMatchObject({ code: "INVALID_EXPECTED_PASSOUT_YEAR" });
   });
 });

@@ -44,6 +44,7 @@ const LiveMonitoringPage = lazyWithAdminReducers(() => import("@/pages/Admin/Liv
 const QuestionBankPage = lazyWithAdminReducers(() => import("@/pages/Admin/QuestionBankPage"));
 const BatchesPage = lazyWithAdminReducers(() => import("@/pages/Admin/BatchesPage"));
 const StudentsPage = lazyWithAdminReducers(() => import("@/pages/Admin/StudentsPage"));
+const PassoutManagementPage = lazyWithAdminReducers(() => import("@/pages/Admin/PassoutManagementPage"));
 const EventsPage = lazyWithAdminReducers(() => import("@/pages/Admin/EventsPage"));
 const ReportsPage = lazyWithAdminReducers(() => import("@/pages/Admin/ReportsPage"));
 const AdminSettingsPage = lazyWithAdminReducers(() => import("@/pages/Admin/SettingsPage"));
@@ -178,6 +179,10 @@ const router = createBrowserRouter([
               {
                 element: <PermissionRoute permissions={[ADMIN_PERMISSIONS.MANAGE_STUDENTS, ADMIN_PERMISSIONS.VIEW_STUDENTS]} action="access students" />,
                 children: [{ path: "/admin/students", element: <PageRoute Page={StudentsPage} /> }],
+              },
+              {
+                element: <PermissionRoute permission={ADMIN_PERMISSIONS.MANAGE_STUDENTS} action="manage student passout archival" />,
+                children: [{ path: "/admin/passout", element: <PageRoute Page={PassoutManagementPage} /> }],
               },
               {
                 element: <PermissionRoute permissions={[ADMIN_PERMISSIONS.MANAGE_EVENTS, ADMIN_PERMISSIONS.VIEW_EVENTS]} action="access events" />,

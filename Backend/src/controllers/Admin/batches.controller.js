@@ -89,7 +89,7 @@ const getBatches = asyncHandler(async (req, res) => {
   const collegeId = req.collegeId;
 
   const batches = await db.batch.findMany({
-    where: { collegeId },
+    where: { collegeId, isArchived: { not: true }, status: { not: "ARCHIVED" } },
     include: {
       department: true,
       _count: {
@@ -340,7 +340,7 @@ const removeStudentFromBatch = asyncHandler(async (req, res) => {
   const { batchId, studentId } = req.params;
 
   const [batch, student] = await Promise.all([
-    db.batch.findFirst({ where: { id: batchId, collegeId } }),
+    db.batch.findFirst({ where: { id: batchId, collegeId, isArchived: { not: true }, status: { not: "ARCHIVED" } } }),
     db.student.findFirst({ where: { id: studentId, collegeId } }),
   ]);
 
@@ -519,7 +519,7 @@ const assignTestToDepartment = asyncHandler(async (req, res) => {
 
   // Get all batches in this department
   const batches = await db.batch.findMany({
-    where: { collegeId, departmentId },
+    where: { collegeId, departmentId, isArchived: { not: true }, status: { not: "ARCHIVED" } },
     select: { id: true },
   });
 

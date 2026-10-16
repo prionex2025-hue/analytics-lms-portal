@@ -178,6 +178,7 @@ const createStudentGlobalSchema = z.object({
     departmentId: idSchema.optional(),
     department: z.string().trim().min(2).optional(),
     batchId: optionalNullableIdSchema,
+    expectedPassoutYear: z.coerce.number().int().min(2000).max(2100),
   }).superRefine((payload, ctx) => {
     if (!payload.departmentId && !payload.department) {
       ctx.addIssue({

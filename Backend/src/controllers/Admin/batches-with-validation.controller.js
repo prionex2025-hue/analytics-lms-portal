@@ -44,7 +44,7 @@ const getBatches = asyncHandler(async (req, res) => {
   const departmentId = getScopedDepartmentId(req, { requiredForDepartmentAdmin: false });
 
   const batches = await db.batch.findMany({
-    where: { collegeId, ...(departmentId ? { departmentId } : {}) },
+    where: { collegeId, isArchived: { not: true }, status: { not: "ARCHIVED" }, ...(departmentId ? { departmentId } : {}) },
     include: {
       department: true,
       _count: {

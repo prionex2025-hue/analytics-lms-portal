@@ -53,7 +53,7 @@ const getStudents = asyncHandler(async (req, res) => {
       ? { departmentId: scopedDepartmentId }
       : (req.query.departmentId ? { departmentId: req.query.departmentId } : {})),
   };
-  const where = req.query.studentScope ? appendLifecycleFilters(baseWhere, req.query) : baseWhere;
+  const where = appendLifecycleFilters(baseWhere, req.query.studentScope ? req.query : { ...req.query, studentScope: "current" });
 
   const filters = [];
   if (req.query.batchId) {
@@ -146,6 +146,7 @@ const createStudentHandler = asyncHandler(async (req, res) => {
         year: req.body.year,
         departmentId: req.body.departmentId,
         batchId: req.body.batchId,
+        expectedPassoutYear: req.body.expectedPassoutYear,
       },
       collegeId,
       adminId

@@ -1,93 +1,134 @@
 const {
+  STUDENT_STATUS,
   ACADEMIC_STATUS,
+  STUDENT_SCOPE,
+  REPORT_STATUS_MAP,
   normalizeAcademicStatus,
+  normalizeStudentScope,
   academicStatusToStudentScope,
+  studentScopeToAcademicStatus,
   buildAcademicStatusWhere,
   buildStudentLifecycleWhere,
+  buildCurrentReportWhere,
+  buildPassoutReportWhere,
   buildReportScopeMetadata,
   resolveStudentAcademicStatus,
-  STUDENT_SCOPE,
 } = require("../../services/report-scope.service");
 
-describe("academic status normalization", () => {
-  it("accepts canonical values and aliases", () => {
-    expect(normalizeAcademicStatus("current")).toBe(ACADEMIC_STATUS.CURRENT);
-    expect(normalizeAcademicStatus("Active")).toBe(ACADEMIC_STATUS.CURRENT);
-    expect(normalizeAcademicStatus("passout")).toBe(ACADEMIC_STATUS.GRADUATED);
-    expect(normalizeAcademicStatus("alumni")).toBe(ACADEMIC_STATUS.GRADUATED);
-    expect(normalizeAcademicStatus("suspended")).toBe(ACADEMIC_STATUS.ON_HOLD);
-    expect(normalizeAcademicStatus("blocked")).toBe(ACADEMIC_STATUS.ON_HOLD);
-    expect(normalizeAcademicStatus("dropped")).toBe(ACADEMIC_STATUS.WITHDRAWN);
-    expect(normalizeAcademicStatus("transferred")).toBe(ACADEMIC_STATUS.TRANSFERRED);
-    expect(normalizeAcademicStatus("inactive")).toBe(ACADEMIC_STATUS.ARCHIVED);
-    expect(normalizeAcademicStatus("all")).toBe(ACADEMIC_STATUS.ALL);
-  });
-
-  it("returns null when no status is supplied so callers can fall back", () => {
-    expect(normalizeAcademicStatus(undefined)).toBeNull();
-    expect(normalizeAcademicStatus("")).toBeNull();
-    expect(normalizeAcademicStatus("garbage")).toBeNull();
-  });
-
-  it("maps academic status to the legacy student scope", () => {
-    expect(academicStatusToStudentScope(ACADEMIC_STATUS.GRADUATED)).toBe(STUDENT_SCOPE.PASSOUT);
-    expect(academicStatusToStudentScope(ACADEMIC_STATUS.ALL)).toBe(STUDENT_SCOPE.ALL);
-    expect(academicStatusToStudentScope(ACADEMIC_STATUS.CURRENT)).toBe(STUDENT_SCOPE.CURRENT);
-  });
-});
-
-describe("academic status where clauses", () => {
-  it("only current students match the current filter", () => {
-    const where = buildAcademicStatusWhere(ACADEMIC_STATUS.CURRENT);
-    expect(where.isActive).toBe(true);
-    expect(where.lifecycleStatus.not.in).toEqual(
-      expect.arrayContaining(["ALUMNI", "GRADUATED", "SUSPENDED", "BLOCKED", "DROPPED", "TRANSFERRED", "ARCHIVED"])
-    );
-  });
-
-  it("maps each status to its lifecycle set", () => {
-    expect(buildAcademicStatusWhere(ACADEMIC_STATUS.GRADUATED)).toEqual({ lifecycleStatus: { in: ["ALUMNI", "GRADUATED"] } });
-    expect(buildAcademicStatusWhere(ACADEMIC_STATUS.ON_HOLD)).toEqual({ lifecycleStatus: { in: ["SUSPENDED", "BLOCKED"] } });
-    expect(buildAcademicStatusWhere(ACADEMIC_STATUS.WITHDRAWN)).toEqual({ lifecycleStatus: { in: ["DROPPED"] } });
-    expect(buildAcademicStatusWhere(ACADEMIC_STATUS.TRANSFERRED)).toEqual({ lifecycleStatus: { in: ["TRANSFERRED"] } });
-    expect(buildAcademicStatusWhere(ACADEMIC_STATUS.ARCHIVED)).toEqual({ lifecycleStatus: { in: ["ARCHIVED"] } });
-    expect(buildAcademicStatusWhere(ACADEMIC_STATUS.ALL)).toEqual({});
-  });
-
-  it("prefers an explicit academicStatus over the legacy studentScope", () => {
-    const where = buildStudentLifecycleWhere({ academicStatus: ACADEMIC_STATUS.GRADUATED, studentScope: STUDENT_SCOPE.CURRENT });
-    expect(where).toEqual({ lifecycleStatus: { in: ["ALUMNI", "GRADUATED"] } });
-  });
-
-  it("falls back to the legacy studentScope when academicStatus is absent", () => {
-    expect(buildStudentLifecycleWhere({ studentScope: STUDENT_SCOPE.PASSOUT })).toEqual({
-      lifecycleStatus: { in: ["ALUMNI", "GRADUATED"] },
+describe("Canonical Student Status and Academic Status Contract", () => {
+  it("enforces canonical ACADEMIC_STATUS and STUDENT_STATUS values", () => {
+    expect(STUDENT_STATUS).toEqual({ ACTIVE: "ACTIVE", PASSOUT: "PASSOUT" });
+    expect(ACADEMIC_STATUS).toEqual({ CURRENT: "current", PASSOUT: "passout" });
+    expect(REPORT_STATUS_MAP).toEqual({
+      current: "ACTIVE",
+      passout: "PASSOUT",
     });
   });
 
-  it("keeps passout filters alongside the status", () => {
-    const where = buildStudentLifecycleWhere({ academicStatus: ACADEMIC_STATUS.GRADUATED, passoutYear: 2026 });
-    expect(where.passoutYear).toBe(2026);
-  });
-});
+  describe("academic status normalization", () => {
+    it("accepts canonical values and aliases", () => {
+      expect(normalizeAcademicStatus("current")).toBe(ACADEMIC_STATUS.CURRENT);
+      expect(normalizeAcademicStatus("Active")).toBe(ACADEMIC_STATUS.CURRENT);
+      expect(normalizeAcademicStatus("passout")).toBe(ACADEMIC_STATUS.PASSOUT);
+      expect(normalizeAcademicStatus("alumni")).toBe(ACADEMIC_STATUS.PASSOUT);
+      expect(normalizeAcademicStatus("graduated")).toBe(ACADEMIC_STATUS.PASSOUT);
+    });
 
-describe("report scope metadata", () => {
-  it("resolves an academic status even when only legacy scope is supplied", () => {
-    expect(buildReportScopeMetadata({ studentScope: STUDENT_SCOPE.PASSOUT })).toMatchObject({
-      studentScope: STUDENT_SCOPE.PASSOUT,
-      academicStatus: ACADEMIC_STATUS.GRADUATED,
+    it("returns null when no valid status is supplied", () => {
+      expect(normalizeAcademicStatus(undefined)).toBeNull();
+      expect(normalizeAcademicStatus("")).toBeNull();
+      expect(normalizeAcademicStatus("garbage")).toBeNull();
+    });
+
+    it("normalizes student scope strictly without ALL scope", () => {
+      expect(normalizeStudentScope("current")).toBe(ACADEMIC_STATUS.CURRENT);
+      expect(normalizeStudentScope("passout")).toBe(ACADEMIC_STATUS.PASSOUT);
+      expect(normalizeStudentScope("all")).toBe(ACADEMIC_STATUS.CURRENT);
+      expect(normalizeStudentScope(undefined)).toBe(ACADEMIC_STATUS.CURRENT);
+    });
+
+    it("maps academic status to student scope and vice versa", () => {
+      expect(academicStatusToStudentScope(ACADEMIC_STATUS.PASSOUT)).toBe(ACADEMIC_STATUS.PASSOUT);
+      expect(academicStatusToStudentScope(ACADEMIC_STATUS.CURRENT)).toBe(ACADEMIC_STATUS.CURRENT);
+      expect(studentScopeToAcademicStatus(STUDENT_SCOPE.PASSOUT)).toBe(ACADEMIC_STATUS.PASSOUT);
+      expect(studentScopeToAcademicStatus(STUDENT_SCOPE.CURRENT)).toBe(ACADEMIC_STATUS.CURRENT);
     });
   });
-});
 
-describe("resolveStudentAcademicStatus", () => {
-  it("derives a status from the persisted lifecycle", () => {
-    expect(resolveStudentAcademicStatus({ lifecycleStatus: "ACTIVE", isActive: true })).toBe(ACADEMIC_STATUS.CURRENT);
-    expect(resolveStudentAcademicStatus({ lifecycleStatus: "GRADUATED" })).toBe(ACADEMIC_STATUS.GRADUATED);
-    expect(resolveStudentAcademicStatus({ lifecycleStatus: "BLOCKED" })).toBe(ACADEMIC_STATUS.ON_HOLD);
-    expect(resolveStudentAcademicStatus({ lifecycleStatus: "DROPPED" })).toBe(ACADEMIC_STATUS.WITHDRAWN);
-    expect(resolveStudentAcademicStatus({ lifecycleStatus: "TRANSFERRED" })).toBe(ACADEMIC_STATUS.TRANSFERRED);
-    expect(resolveStudentAcademicStatus({ lifecycleStatus: "ARCHIVED" })).toBe(ACADEMIC_STATUS.ARCHIVED);
-    expect(resolveStudentAcademicStatus({ lifecycleStatus: "ACTIVE", isActive: false })).toBe(ACADEMIC_STATUS.ARCHIVED);
+  describe("where clauses", () => {
+    it("builds academic status where strictly by studentStatus", () => {
+      expect(buildAcademicStatusWhere(ACADEMIC_STATUS.CURRENT)).toEqual({ studentStatus: STUDENT_STATUS.ACTIVE });
+      expect(buildAcademicStatusWhere(ACADEMIC_STATUS.PASSOUT)).toEqual({ studentStatus: STUDENT_STATUS.PASSOUT });
+    });
+
+    it("builds current report where", () => {
+      const where = buildCurrentReportWhere({ collegeId: "col1", departmentId: "dept1", batchId: "b1" });
+      expect(where).toEqual({
+        studentStatus: STUDENT_STATUS.ACTIVE,
+        collegeId: "col1",
+        departmentId: "dept1",
+        batchId: "b1",
+      });
+    });
+
+    it("builds passout report where with passoutYear and passoutCohortId", () => {
+      const where = buildPassoutReportWhere({ collegeId: "col1", passoutYear: 2026, passoutCohortId: "coh1" });
+      expect(where).toEqual({
+        studentStatus: STUDENT_STATUS.PASSOUT,
+        collegeId: "col1",
+        passoutYear: 2026,
+        passoutCohortId: "coh1",
+      });
+    });
+
+    it("buildStudentLifecycleWhere prioritizes studentStatus then academicStatus", () => {
+      expect(buildStudentLifecycleWhere({ studentStatus: "PASSOUT" })).toEqual({
+        studentStatus: STUDENT_STATUS.PASSOUT,
+      });
+      expect(buildStudentLifecycleWhere({ studentStatus: "ACTIVE" })).toEqual({
+        studentStatus: STUDENT_STATUS.ACTIVE,
+      });
+      expect(buildStudentLifecycleWhere({ academicStatus: "passout", passoutYear: 2025 })).toEqual({
+        studentStatus: STUDENT_STATUS.PASSOUT,
+        passoutYear: 2025,
+      });
+      expect(buildStudentLifecycleWhere({ studentScope: "passout" })).toEqual({
+        studentStatus: STUDENT_STATUS.PASSOUT,
+      });
+      // Default is strictly Current / ACTIVE
+      expect(buildStudentLifecycleWhere({})).toEqual({
+        studentStatus: STUDENT_STATUS.ACTIVE,
+      });
+    });
+  });
+
+  describe("report scope metadata", () => {
+    it("resolves metadata with canonical mapping", () => {
+      expect(buildReportScopeMetadata({ studentScope: "passout", passoutYear: 2026 })).toEqual({
+        studentScope: ACADEMIC_STATUS.PASSOUT,
+        academicStatus: ACADEMIC_STATUS.PASSOUT,
+        studentStatus: STUDENT_STATUS.PASSOUT,
+        passoutYear: 2026,
+        passoutCohortId: null,
+      });
+
+      expect(buildReportScopeMetadata({})).toEqual({
+        studentScope: ACADEMIC_STATUS.CURRENT,
+        academicStatus: ACADEMIC_STATUS.CURRENT,
+        studentStatus: STUDENT_STATUS.ACTIVE,
+        passoutYear: null,
+        passoutCohortId: null,
+      });
+    });
+  });
+
+  describe("resolveStudentAcademicStatus", () => {
+    it("derives canonical status strictly from studentStatus with legacy fallback", () => {
+      expect(resolveStudentAcademicStatus({ studentStatus: "ACTIVE" })).toBe(ACADEMIC_STATUS.CURRENT);
+      expect(resolveStudentAcademicStatus({ studentStatus: "PASSOUT" })).toBe(ACADEMIC_STATUS.PASSOUT);
+      expect(resolveStudentAcademicStatus({ lifecycleStatus: "ALUMNI" })).toBe(ACADEMIC_STATUS.PASSOUT);
+      expect(resolveStudentAcademicStatus({ disabledReason: "PASSOUT" })).toBe(ACADEMIC_STATUS.PASSOUT);
+      expect(resolveStudentAcademicStatus({})).toBe(ACADEMIC_STATUS.CURRENT);
+    });
   });
 });

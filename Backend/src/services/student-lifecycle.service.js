@@ -24,6 +24,28 @@ const COHORT_STATUS = {
   FAILED: "FAILED",
 };
 
+const STUDENT_STATUS = Object.freeze({ ACTIVE: "ACTIVE", PASSOUT: "PASSOUT" });
+const EXPECTED_PASSOUT_MONTH = 3;
+
+const normalizeStudentStatus = (status) => {
+  const normalized = String(status || STUDENT_STATUS.ACTIVE).trim().toUpperCase();
+  return Object.values(STUDENT_STATUS).includes(normalized) ? normalized : STUDENT_STATUS.ACTIVE;
+};
+
+const validateExpectedPassoutYear = (value) => {
+  const year = Number(value);
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+    throw new ApiError(422, "expectedPassoutYear must be a valid integer between 2000 and 2100", null, "INVALID_EXPECTED_PASSOUT_YEAR");
+  }
+  return year;
+};
+
+const getEligibilityDate = (year, day = 1) => {
+  const normalizedYear = validateExpectedPassoutYear(year);
+  const normalizedDay = Math.max(1, Math.min(31, Number(day) || 1));
+  return new Date(Date.UTC(normalizedYear, EXPECTED_PASSOUT_MONTH - 1, normalizedDay, 0, 0, 0, 0));
+};
+
 const normalizeStudentLifecycleStatus = (status) => {
   const normalized = String(status || STUDENT_LIFECYCLE_STATUS.ACTIVE).trim().toUpperCase();
   if (normalized === LEGACY_LIFECYCLE_STATUS.GRADUATED) return STUDENT_LIFECYCLE_STATUS.ALUMNI;
@@ -36,12 +58,17 @@ const isAlumniStatus = (status) =>
   [STUDENT_LIFECYCLE_STATUS.ALUMNI, LEGACY_LIFECYCLE_STATUS.GRADUATED].includes(String(status || "").trim().toUpperCase());
 
 const canStudentAuthenticate = (student = {}) => {
+  if (Object.prototype.hasOwnProperty.call(student, "studentStatus")) {
+    return normalizeStudentStatus(student.studentStatus) === STUDENT_STATUS.ACTIVE && student.isActive !== false;
+  }
   const lifecycleStatus = normalizeStudentLifecycleStatus(student.lifecycleStatus);
   return lifecycleStatus === STUDENT_LIFECYCLE_STATUS.ACTIVE && student.isActive !== false;
 };
 
 const isCurrentStudent = (student = {}) =>
-  normalizeStudentLifecycleStatus(student.lifecycleStatus) === STUDENT_LIFECYCLE_STATUS.ACTIVE && student.isActive !== false;
+  (Object.prototype.hasOwnProperty.call(student, "studentStatus")
+    ? normalizeStudentStatus(student.studentStatus) === STUDENT_STATUS.ACTIVE
+    : normalizeStudentLifecycleStatus(student.lifecycleStatus) === STUDENT_LIFECYCLE_STATUS.ACTIVE) && student.isActive !== false;
 
 const normalizePassoutYear = (value) => {
   if (value == null || value === "") return new Date().getFullYear();
@@ -290,6 +317,11 @@ module.exports = {
   canStudentAuthenticate,
   isAlumniStatus,
   isCurrentStudent,
+  STUDENT_STATUS,
+  EXPECTED_PASSOUT_MONTH,
+  normalizeStudentStatus,
+  validateExpectedPassoutYear,
+  getEligibilityDate,
   buildAcademicLabel,
   buildStudentPassoutSnapshot,
   promoteStudentsForPassout,

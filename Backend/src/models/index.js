@@ -60,6 +60,7 @@ function buildModelMap() {
     Answer: dbClient.answer,
     Violation: dbClient.violation,
     StudentPassoutCohort: dbClient.studentPassoutCohort,
+    PassoutJob: dbClient.passoutJob,
     // Keep raw dbClient available for direct access
     dbClient,
   };

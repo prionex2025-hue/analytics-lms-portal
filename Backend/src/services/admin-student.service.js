@@ -136,12 +136,13 @@ const processBulkImportJob = async ({ jobId, collegeId, adminId, adminDepartment
       const requestedStudentId = getRowValue(row, ["studentId", "student_id", "rollNo", "rollNumber", "roll"]);
       const enrollNumber = getRowValue(row, ["enrollNumber", "enroll_number", "enrollmentNumber", "enrollment_no", "enrollmentNo"]) || requestedStudentId;
       const year = parseStudentYear(getRowValue(row, ["year", "studentYear", "student_year", "academicYear", "academic_year", "yearOfStudy", "year_of_study"]));
+      const expectedPassoutYear = Number(getRowValue(row, ["expectedPassoutYear", "expected_passout_year", "passoutYear", "passout_year"]));
       const departmentLookup = getRowValue(row, ["departmentId", "department_id", "department", "departmentName", "department_name", "branch", "branchName"]);
       const batchLookup = getRowValue(row, ["batchId", "batch_id", "batch", "batchName", "batch_name", "section"]);
 
-      if (!fullName || !email || (!departmentLookup && !adminDepartmentId) || !enrollNumber || !year) {
+      if (!fullName || !email || (!departmentLookup && !adminDepartmentId) || !enrollNumber || !year || !Number.isInteger(expectedPassoutYear) || expectedPassoutYear < 2000 || expectedPassoutYear > 2100) {
         result.failed += 1;
-        result.errors.push({ row: row.__row, reason: "Missing required columns: fullName, email, enrollNumber, department, year" });
+        result.errors.push({ row: row.__row, reason: "Required columns: fullName, email, enrollNumber, department, year, expectedPassoutYear (2000-2100)" });
         continue;
       }
 
@@ -187,6 +188,9 @@ const processBulkImportJob = async ({ jobId, collegeId, adminId, adminDepartment
           collegeId,
           departmentId: department.id,
           year,
+          expectedPassoutYear,
+          expectedPassoutMonth: 3,
+          studentStatus: "ACTIVE",
           batchId: resolvedBatchId,
           batchIds: resolvedBatchId ? [resolvedBatchId] : [],
         },
@@ -255,7 +259,7 @@ const listStudents = async (collegeId, opts = {}) => {
     ...(opts.departmentId ? { departmentId: opts.departmentId } : {}),
     ...(year !== undefined && Number.isFinite(year) ? { year } : {}),
   };
-  const where = opts.studentScope ? appendLifecycleFilters(baseWhere, opts) : baseWhere;
+  const where = appendLifecycleFilters(baseWhere, opts.studentScope ? opts : { ...opts, studentScope: "current" });
 
   const filters = [];
   if (opts.batchId) {
@@ -319,7 +323,7 @@ const listStudents = async (collegeId, opts = {}) => {
 const createStudent = async (collegeId, adminId, payload) => {
   const m = await models.init();
   const db = m.dbClient;
-  const { fullName, email, department, enrollNumber, year, batch: batchId } = payload;
+  const { fullName, email, department, enrollNumber, year, batch: batchId, expectedPassoutYear } = payload;
   const studentId = resolveStudentId(enrollNumber);
 
   const [duplicateEmail, duplicateStudentId] = await Promise.all([
@@ -344,6 +348,10 @@ const createStudent = async (collegeId, adminId, payload) => {
   const resolvedBatchId = batchRecord?.id || null;
   const numericYear = Number(year);
   const resolvedYear = Number.isFinite(numericYear) ? numericYear : null;
+  const numericPassoutYear = Number(expectedPassoutYear);
+  if (!Number.isInteger(numericPassoutYear) || numericPassoutYear < 2000 || numericPassoutYear > 2100) {
+    throw new ApiError(422, "expectedPassoutYear must be a valid integer between 2000 and 2100", null, "INVALID_EXPECTED_PASSOUT_YEAR");
+  }
 
   const student = await db.student.create({
     data: {
@@ -355,6 +363,9 @@ const createStudent = async (collegeId, adminId, payload) => {
       collegeId,
       departmentId: departmentRecord.id,
       year: resolvedYear,
+      expectedPassoutYear: numericPassoutYear,
+      expectedPassoutMonth: 3,
+      studentStatus: "ACTIVE",
       batchId: resolvedBatchId,
       batchIds: resolvedBatchId ? [resolvedBatchId] : [],
     },

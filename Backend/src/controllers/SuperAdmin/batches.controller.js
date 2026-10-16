@@ -87,6 +87,8 @@ const getBatchesGlobal = asyncHandler(async (req, res) => {
 
   const where = {
     ...(collegeId ? { collegeId } : {}),
+    isArchived: { not: true },
+    status: { not: "ARCHIVED" },
     ...(and.length ? { AND: and } : {}),
   };
 

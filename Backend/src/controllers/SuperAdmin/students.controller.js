@@ -191,12 +191,13 @@ const processBulkImportJob = async ({ jobId, collegeId, superAdminId, csvData })
       const requestedStudentId = getRowValue(row, ["studentId", "student_id", "rollNo", "rollNumber"]);
       const enrollNumber = getRowValue(row, ["enrollNumber", "enroll_number", "enrollmentNumber", "enrollment_no"]) || requestedStudentId;
       const year = parseStudentYear(getRowValue(row, ["year", "studentYear", "student_year", "academicYear"]));
+      const expectedPassoutYear = Number(getRowValue(row, ["expectedPassoutYear", "expected_passout_year", "passoutYear", "passout_year"]));
       const departmentLookup = getRowValue(row, ["departmentId", "department_id", "department", "departmentName", "department_name", "branch", "branchName"]);
       const batchLookup = getRowValue(row, ["batchId", "batch_id", "batch", "batchName", "batch_name", "section"]);
 
-      if (!fullName || !email || !departmentLookup || !enrollNumber || !year) {
+      if (!fullName || !email || !departmentLookup || !enrollNumber || !year || !Number.isInteger(expectedPassoutYear) || expectedPassoutYear < 2000 || expectedPassoutYear > 2100) {
         result.failed += 1;
-        result.errors.push({ row: row.__row, reason: "Missing required columns: fullName, email, enrollNumber, department, year" });
+        result.errors.push({ row: row.__row, reason: "Required columns: fullName, email, enrollNumber, department, year, expectedPassoutYear (2000-2100)" });
         continue;
       }
 
@@ -242,6 +243,9 @@ const processBulkImportJob = async ({ jobId, collegeId, superAdminId, csvData })
           collegeId,
           departmentId: department.id,
           year,
+          expectedPassoutYear,
+          expectedPassoutMonth: 3,
+          studentStatus: "ACTIVE",
           batchId: batch?.id || null,
           batchIds: batch?.id ? [batch.id] : [],
         },
@@ -447,7 +451,7 @@ const toggleStudentStatus = asyncHandler(async (req, res) => {
     }
   }
 
-  if (req.body.isActive === true && isAlumniStatus(existing.lifecycleStatus)) {
+  if (req.body.isActive === true && (existing.studentStatus === "PASSOUT" || isAlumniStatus(existing.lifecycleStatus))) {
     throw new ApiError(409, "Alumni accounts cannot be reactivated from status toggle", null, "ALUMNI_STUDENT_REACTIVATION_BLOCKED");
   }
 
@@ -525,7 +529,7 @@ const createStudentGlobal = asyncHandler(async (req, res) => {
   const m = await models.init();
   const db = m.dbClient;
   const superAdminId = req.superAdmin.id;
-  const { fullName, email, enrollNumber, year, collegeId, departmentId, department, batchId } = req.body;
+  const { fullName, email, enrollNumber, year, collegeId, departmentId, department, batchId, expectedPassoutYear } = req.body;
 
   const college = await db.college.findUnique({ where: { id: collegeId } });
   if (!college || !college.isActive) {
@@ -593,6 +597,9 @@ const createStudentGlobal = asyncHandler(async (req, res) => {
       batchId: resolvedBatchId,
       batchIds: resolvedBatchId ? [resolvedBatchId] : [],
       year,
+      expectedPassoutYear,
+      expectedPassoutMonth: 3,
+      studentStatus: "ACTIVE",
     },
     include: {
       college: true,
